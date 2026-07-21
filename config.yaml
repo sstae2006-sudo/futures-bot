@@ -1,0 +1,37 @@
+# Futures bot settings. Copy to config.yaml and edit.
+# All prices are in index points; all money is in US dollars.
+
+contract: MES          # MES, MNQ, M2K, MYM
+mode: paper            # backtest | paper | live
+
+risk:
+  contracts_per_trade: 1
+  stop_loss_points: 10        # MES: 10 pts = $50
+  take_profit_points: 20      # MES: 20 pts = $100
+  daily_max_loss: 120         # kill switch, dollars
+  max_trades_per_session: 3
+  account_size: 2500          # used for the risk warnings at startup
+
+session:
+  start_ct: "08:30"                  # no entries before this (Central Time)
+  end_ct: "15:00"                    # no entries after this
+  flatten_before_close_minutes: 15   # force flat before the 16:00 CT close
+  trade_on_weekends: false
+
+broker:
+  name: paper                 # paper | tradovate | ibkr  (only paper implemented)
+  slippage_ticks: 1           # adverse ticks applied to every market fill
+  commission_per_side: 0.62   # dollars per contract per side
+  starting_cash: 2500
+
+logging:
+  level: INFO
+  directory: logs
+  log_every_decision: true    # also log holds and blocked signals
+
+strategy_name: ema_crossover  # reference strategy; replace with the real one
+strategy_params:
+  fast_period: 9
+  slow_period: 21
+
+state_file: state/bot_state.json
