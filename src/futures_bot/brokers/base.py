@@ -19,7 +19,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from ..models import Bar, Fill, Order, Position, Side
+from ..models import Bar, Fill, Order, Position, Side, Trade
 
 
 class BrokerError(RuntimeError):
@@ -70,6 +70,24 @@ class Broker(ABC):
         """Close any open position at market and cancel resting orders."""
 
     @abstractmethod
+    def modify_stop_loss(self, new_stop: Decimal) -> bool:
+        """Moves the resting protective stop for the open position.
+
+        Returns True if the stop actually moved, False if the requested level
+        rounds to the same tick it was already at (a normal, frequent
+        no-op -- not every bar's trail candidate clears a full tick).
+
+        Must reject (raise BrokerError) a move that would loosen the stop
+        further from price than it already is, or that crosses to the wrong
+        side of the current price -- a trailing or breakeven stop should only
+        ever ratchet toward the position, never away from it. Adapters that
+        cannot modify a resting stop order should raise rather than silently
+        no-op, for the same reason a missing broker-side stop at entry is a
+        hard failure: an unenforced trail is a stop that looks tighter in the
+        strategy's own bookkeeping than it actually is at the exchange.
+        """
+
+    @abstractmethod
     def cancel_all(self) -> None:
         """Cancel every working order, leaving positions alone."""
 
@@ -77,3 +95,23 @@ class Broker(ABC):
     @abstractmethod
     def cash(self) -> Decimal:
         """Account cash balance."""
+
+    def poll_closed_trade(self, now: datetime) -> Optional[Trade]:
+        """If a position this adapter was tracking closed since the last
+        call -- a stop or target filled *at the broker*, independent of any
+        call this process made -- return the completed :class:`Trade` so the
+        engine can record it (P&L, the daily-loss kill switch, the decision
+        journal). Return ``None`` otherwise.
+
+        The default here is a no-op, correct for adapters like
+        :class:`~futures_bot.brokers.paper.PaperBroker` that resolve fills
+        synchronously inside the same call that reports the bar (see its own
+        ``on_bar``, which the engine calls instead of this for that adapter
+        specifically). A live adapter connected to a real exchange, where a
+        resting stop or target can fill at any moment rather than only when
+        this process happens to check, **must** override this. Without it, a
+        real fill would never reach ``RiskManager.record_trade`` -- the
+        kill switch would silently stop enforcing the daily loss limit the
+        moment a position closes on its own.
+        """
+        return None

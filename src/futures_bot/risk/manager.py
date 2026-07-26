@@ -74,9 +74,13 @@ class RiskManager:
         if not is_market_open(now):
             return RiskDecision(False, "Market is closed (weekend or 16:00–17:00 CT halt).")
 
-        state = self.store.session(session_date(now))
+        sd = session_date(now)
+        state = self.store.session(sd)
 
         if state.halted:
+            # "Missed opportunity after shutdown" -- the strategy still
+            # wanted to enter, but the session already ended for the day.
+            self.store.record_missed_opportunity(sd)
             return RiskDecision(False, f"Session halted: {state.halt_reason}")
 
         # Checked before the window test so a breach halts the session rather
@@ -84,12 +88,54 @@ class RiskManager:
         limit = self.settings.risk.daily_max_loss
         if state.realized_pnl <= -limit:
             self.store.halt(
-                session_date(now),
+                sd,
                 f"Daily loss limit reached (realized ${state.realized_pnl}, limit ${-limit}).",
+                category="daily_loss", at=now,
             )
+            self.store.record_missed_opportunity(sd)
             return RiskDecision(
                 False, f"Daily loss limit reached: realized ${state.realized_pnl} vs limit ${-limit}."
             )
+
+        # The mirror image of the loss limit: stop for the day once the
+        # profit target is reached, same "checked before the window test so
+        # a breach halts the session" reasoning.
+        target = self.settings.risk.profit_target
+        if target is not None and state.realized_pnl >= target:
+            self.store.record_target_hit(sd, now)
+            self.store.halt(
+                sd,
+                f"Profit target reached (realized ${state.realized_pnl}, target ${target}).",
+                category="profit_target", at=now,
+            )
+            self.store.record_missed_opportunity(sd)
+            return RiskDecision(
+                False, f"Profit target reached: realized ${state.realized_pnl} vs target ${target}."
+            )
+
+        max_losses = self.settings.risk.max_consecutive_losses
+        if max_losses is not None and state.consecutive_losses >= max_losses:
+            self.store.halt(
+                sd,
+                f"{state.consecutive_losses} consecutive losses reached (limit {max_losses}).",
+                category="consecutive_losses", at=now,
+            )
+            self.store.record_missed_opportunity(sd)
+            return RiskDecision(
+                False, f"{state.consecutive_losses} consecutive losses reached (limit {max_losses})."
+            )
+
+        # A pause, not a session end: trading resumes on its own once the
+        # cooldown elapses, so this never touches `halted`.
+        cooldown = self.settings.risk.cooldown_minutes_after_loss
+        if cooldown and state.last_loss_at is not None:
+            elapsed = now - datetime.fromisoformat(state.last_loss_at)
+            remaining = timedelta(minutes=cooldown) - elapsed
+            if remaining > timedelta(0):
+                return RiskDecision(
+                    False,
+                    f"Cooldown after a loss: {remaining.total_seconds() / 60:.1f} more minute(s).",
+                )
 
         if state.trade_count >= self.settings.risk.max_trades_per_session:
             return RiskDecision(
@@ -152,15 +198,40 @@ class RiskManager:
     # --- Bookkeeping ---
 
     def record_trade(self, now: datetime, trade: Trade) -> None:
-        """Record a completed round turn and trip the kill switch if breached."""
+        """Record a completed round turn and trip the kill switch (daily
+        loss, profit target, or consecutive-loss cap) if breached -- the
+        primary point any of these fire; `can_enter`'s copies of the same
+        checks are defensive redundancy, matching the pattern the daily-loss
+        check already established."""
         sd = session_date(now)
         state = self.store.record_pnl(sd, trade.net_pnl)
+
+        if trade.net_pnl < 0:
+            self.store.mark_loss(sd, now)
 
         limit = self.settings.risk.daily_max_loss
         if state.realized_pnl <= -limit and not state.halted:
             self.store.halt(
                 sd,
                 f"Daily loss limit reached (realized ${state.realized_pnl}, limit ${-limit}).",
+                category="daily_loss", at=now,
+            )
+
+        target = self.settings.risk.profit_target
+        if target is not None and state.realized_pnl >= target and not state.halted:
+            self.store.record_target_hit(sd, now)
+            self.store.halt(
+                sd,
+                f"Profit target reached (realized ${state.realized_pnl}, target ${target}).",
+                category="profit_target", at=now,
+            )
+
+        max_losses = self.settings.risk.max_consecutive_losses
+        if max_losses is not None and state.consecutive_losses >= max_losses and not state.halted:
+            self.store.halt(
+                sd,
+                f"{state.consecutive_losses} consecutive losses reached (limit {max_losses}).",
+                category="consecutive_losses", at=now,
             )
 
     def describe(self, now: datetime) -> str:

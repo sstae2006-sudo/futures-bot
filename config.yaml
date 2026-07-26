@@ -6,10 +6,10 @@ mode: paper            # backtest | paper | live
 
 risk:
   contracts_per_trade: 1
-  stop_loss_points: 10        # MES: 10 pts = $50
-  take_profit_points: 20      # MES: 20 pts = $100
-  daily_max_loss: 120         # kill switch, dollars
-  max_trades_per_session: 3
+  stop_loss_points: 5      # MES: 10 pts = $50
+  take_profit_points: 10      # MES: 20 pts = $100
+  daily_max_loss: 300       # kill switch, dollars
+  max_trades_per_session: 20
   account_size: 2500          # used for the risk warnings at startup
 
 session:
@@ -19,19 +19,94 @@ session:
   trade_on_weekends: false
 
 broker:
-  name: paper                 # paper | tradovate | ibkr  (only paper implemented)
+  name: paper                 # paper | tradovate | ibkr  (ibkr not implemented yet)
   slippage_ticks: 1           # adverse ticks applied to every market fill
   commission_per_side: 0.62   # dollars per contract per side
   starting_cash: 2500
+  # tradovate_symbol: MESZ5   # required if name: tradovate -- see config.example.yaml
 
 logging:
   level: INFO
   directory: logs
   log_every_decision: true    # also log holds and blocked signals
 
-strategy_name: ema_crossover  # reference strategy; replace with the real one
+# Available: ema_crossover | opening_range_breakout | vwap_reversion | trend_pullback
+# All are standard published setups or reference implementations, not proven
+# edges. Backtest before assuming anything.
+strategy_name: opening_range_breakout
+
 strategy_params:
-  fast_period: 9
-  slow_period: 21
+  # --- opening_range_breakout ---
+  range_minutes: 30
+  earliest_entry_ct: "10:00" 
+  latest_entry_ct: "11:00"             # length of the opening range window
+  session_start_ct: "08:30"      # when the range starts building (RTH open)
+  max_entries_per_session: 1     # usually 1; the first break is the signal
+  require_close_beyond: true     # ignore wick-only pokes through the level
+  min_range_points: 2            # skip days too tight to read
+  max_range_points: 40           # skip days that already made their move
+  stop_at_range_opposite: false  # true = stop at the far side of the range
+
+  # --- ema_crossover ---
+  # fast_period: 9
+  # slow_period: 21
+
+  # --- vwap_reversion ---
+  # std_devs: 2                  # how far price must stretch before fading it
+  # min_bars: 20                 # bars into the session before trading
+  # exit_at_vwap: true           # target is the return to VWAP
+  # max_entries_per_session: 3
+
+  # --- trend_pullback (5-minute MES bars) ---
+  # A full multi-filter trend-following system: trade only with the EMA50/
+  # EMA200 regime, wait for a pullback to EMA21 rather than entering on the
+  # raw cross, confirm with RSI/ADX/volume, then manage the exit with an
+  # ATR-scaled stop/target, a trailing stop, a breakeven ratchet, and four
+  # independent exit triggers. See strategy/trend_pullback/ for the module
+  # breakdown. Every threshold below is a constructor parameter -- nothing
+  # is hardcoded in the strategy itself.
+  #
+  # ema_fast: 9
+  # ema_mid: 21
+  # ema_slow: 50
+  # ema_trend: 200
+  # atr_period: 14
+  # rsi_period: 14
+  # adx_period: 14
+  # volume_sma_period: 20
+  # slope_lookback_bars: 5        # bars back for the EMA50/EMA200 slope feature
+  #
+  # rsi_long_min: 55
+  # rsi_short_max: 45
+  # adx_min: 20                   # trend strength floor
+  # volume_multiplier: 1.25       # volume must clear this x the 20-bar average
+  # atr_min: 0.5                  # skip bars too quiet to trust
+  # trading_sessions:             # [["HH:MM","HH:MM"], ...] in CT; omit for no window filter
+  #   - ["08:30", "10:30"]
+  #   - ["13:30", "15:00"]
+  #
+  # pullback_distance: 3          # points from EMA21 that counts as "pulled back"
+  # max_arm_bars: 6               # an armed setup older than this goes stale
+  #
+  # atr_stop_mult: 1.5            # initial stop = entry -/+ ATR * this
+  # atr_target_mult: 3.0          # initial target = entry +/- ATR * this
+  # trailing_atr_mult: 2.0        # trailing stop trails price by ATR * this
+  # breakeven_trigger_points: 8   # move stop to breakeven after this much profit
+  # breakeven_buffer_points: 0.5  # breakeven stop sits this far past entry
+  # max_bars_in_trade: 24         # force an exit after this many bars
+  # vwap_loss_enabled: true       # exit if price falls back through session VWAP
+  # ema_reversal_enabled: true    # exit if EMA9/EMA21 cross against the position
 
 state_file: state/bot_state.json
+
+# Phase 8B: autonomous research server. Requires MASSIVE_API_KEY in the
+# environment (see docs/RESEARCH_SERVER.md); otherwise the API just logs a
+# warning and boots normally without it.
+research_server:
+  enabled: true
+  paper_strategies: [ema_crossover, trend_pullback, opening_range_breakout, vwap_reversion]   # e.g. [ema_crossover, trend_pullback] -- strategies to auto-paper-trade concurrently
+  resolution: 5min
+  poll_seconds: 30
+  data_sync_products: [MES]   # product codes to keep synced via the data scheduler
+  nightly_job_hour_ct: 2       # 24h, Central Time
+  weekly_report_weekday: 6     # Monday=0 .. Sunday=6 -- also runs a full strategy comparison

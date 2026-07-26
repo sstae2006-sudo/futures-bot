@@ -132,6 +132,139 @@ class TestKillSwitch:
         assert "past the" in decision.reason
 
 
+class TestProfitTargetAndConsecutiveLosses:
+    """The daily-session simulation layer's stop rules -- profit target
+    (mirrors daily_max_loss), max consecutive losses, and the post-loss
+    cooldown. All off by default; each test turns on only the one rule
+    it's exercising."""
+
+    def test_stops_for_the_day_once_profit_target_reached(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), profit_target=Decimal("40"),
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+
+        rm.record_trade(now, make_trade(Decimal("25"), now))
+        assert rm.can_enter(now, None).allowed, "under target should not halt"
+
+        rm.record_trade(now, make_trade(Decimal("20"), now))
+        assert rm.is_halted(now)
+        decision = rm.can_enter(now, None)
+        assert not decision.allowed
+        assert "halted" in decision.reason.lower()
+
+    def test_target_hit_is_recorded_once(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), profit_target=Decimal("40"),
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("50"), now))
+        state = store.session(session_date(now))
+        assert state.target_hit_at is not None
+        assert state.halt_category == "profit_target"
+
+    def test_missed_opportunities_counted_after_target_shutdown(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), profit_target=Decimal("40"),
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("50"), now))
+        assert rm.is_halted(now)
+
+        for _ in range(3):
+            rm.can_enter(now, None)  # strategy keeps trying after shutdown
+
+        assert store.session(session_date(now)).missed_opportunities == 3
+
+    def test_halts_after_consecutive_loss_cap(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), max_consecutive_losses=2,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+        assert rm.can_enter(now, None).allowed, "one loss should not halt"
+
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+        assert rm.is_halted(now)
+        assert store.session(session_date(now)).halt_category == "consecutive_losses"
+
+    def test_a_win_resets_the_consecutive_loss_streak(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), max_consecutive_losses=2,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+        rm.record_trade(now, make_trade(Decimal("5"), now))  # win resets the streak
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+        assert not rm.is_halted(now), "streak was reset by the win in between"
+
+    def test_daily_loss_limit_takes_priority_over_consecutive_losses(self, store):
+        """When both breach on the same trade, the more fundamental reason
+        (money, not streak count) is what gets recorded."""
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("15"), account_size=Decimal("2500"), max_consecutive_losses=1,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("-20"), now))
+        assert store.session(session_date(now)).halt_category == "daily_loss"
+
+
+class TestCooldownAfterLoss:
+    def test_blocks_entry_immediately_after_a_loss(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), cooldown_minutes_after_loss=15,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+
+        decision = rm.can_enter(now + timedelta(minutes=5), None)
+        assert not decision.allowed
+        assert "cooldown" in decision.reason.lower()
+
+    def test_allows_entry_once_cooldown_elapses(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), cooldown_minutes_after_loss=15,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+
+        decision = rm.can_enter(now + timedelta(minutes=16), None)
+        assert decision.allowed, decision.reason
+
+    def test_a_win_does_not_trigger_cooldown(self, store):
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), cooldown_minutes_after_loss=15,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("10"), now))
+
+        decision = rm.can_enter(now + timedelta(minutes=1), None)
+        assert decision.allowed, decision.reason
+
+    def test_cooldown_does_not_count_as_a_missed_opportunity(self, store):
+        """Cooldown is a temporary pause, not a session shutdown -- distinct
+        from the "missed opportunities after shutdown" metric."""
+        rm = RiskManager(make_settings(risk=RiskSettings(
+            contracts_per_trade=1, stop_loss_points=Decimal("10"), take_profit_points=Decimal("20"),
+            daily_max_loss=Decimal("300"), account_size=Decimal("2500"), cooldown_minutes_after_loss=15,
+        )), store)
+        now = ct(2026, 7, 21, 10, 0)
+        rm.record_trade(now, make_trade(Decimal("-10"), now))
+        rm.can_enter(now + timedelta(minutes=5), None)
+        assert store.session(session_date(now)).missed_opportunities == 0
+
+
 class TestSessionFilters:
     def test_rejects_when_market_closed(self, store):
         rm = RiskManager(make_settings(), store)

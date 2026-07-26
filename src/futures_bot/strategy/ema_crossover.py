@@ -1,98 +1,153 @@
-"""A reference strategy.
-
-**This is not the client's strategy.** It exists so the framework can be run,
-tested, and backtested end to end before the real rules arrive, and to show
-what implementing :class:`Strategy` looks like. Delete it or ignore it once the
-actual signal logic is specified.
-
-The rules are deliberately plain: enter on an EMA crossover, exit on the
-opposite cross. Stops and targets come from settings rather than from the
-strategy, so risk stays in one place.
-"""
-
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Optional, Sequence
 
 from ..models import Bar, Position, Side, Signal
 from .base import Strategy, StrategyRegistry
-
-
-def ema(values: Sequence[Decimal], period: int) -> list[Decimal]:
-    """Exponential moving average, seeded with a simple average.
-
-    Returns a list the same length as ``values``; entries before the seed is
-    available are ``None``-free by construction because the caller checks
-    ``warmup_bars`` first.
-    """
-    if len(values) < period:
-        return []
-
-    k = Decimal(2) / Decimal(period + 1)
-    seed = sum(values[:period]) / Decimal(period)
-
-    out: list[Decimal] = [seed]
-    for value in values[period:]:
-        out.append(value * k + out[-1] * (1 - k))
-    return out
+from .indicators import IncrementalEMA
 
 
 @StrategyRegistry.register("ema_crossover")
 class EmaCrossover(Strategy):
-    """Long when fast EMA crosses above slow, short on the reverse."""
+    """
+    EMA crossover with a higher-timeframe trend filter.
 
-    def __init__(self, contract, fast_period: int = 9, slow_period: int = 21, **params):
-        super().__init__(contract, fast_period=fast_period, slow_period=slow_period, **params)
-        if fast_period >= slow_period:
-            raise ValueError(
-                f"fast_period ({fast_period}) must be below slow_period ({slow_period})"
-            )
+    Features:
+    - 8 EMA / 34 EMA crossover
+    - 200 EMA trend filter
+    - EMA separation filter
+    - Trend slope filter
+    - Long-only (shorts disabled for testing)
+    """
+
+    def __init__(
+        self,
+        contract,
+        fast_period: int = 8,
+        slow_period: int = 34,
+        trend_period: int = 200,
+        min_ema_distance: float = 1.5,
+        **params,
+    ):
+        super().__init__(
+            contract,
+            fast_period=fast_period,
+            slow_period=slow_period,
+            trend_period=trend_period,
+            min_ema_distance=min_ema_distance,
+            **params,
+        )
+
         self.fast_period = fast_period
         self.slow_period = slow_period
-        # One extra bar so the previous cross state can be compared.
-        self.warmup_bars = slow_period + 2
+        self.trend_period = trend_period
+        self.min_ema_distance = min_ema_distance
 
-    def on_bar(self, bars: Sequence[Bar], position: Optional[Position]) -> Signal:
+        self.warmup_bars = trend_period + 5
+
+        # Incremental EMA state -- updated one bar at a time instead of
+        # rescanning the full close history on every call (see
+        # `IncrementalEMA`'s docstring). `_trend_ema` keeps a 5-value
+        # lookback because `trend_rising`/`trend_falling` compare against
+        # the value from 5 bars ago, not just the previous one.
+        self._fast_ema = IncrementalEMA(fast_period, history=2)
+        self._slow_ema = IncrementalEMA(slow_period, history=2)
+        self._trend_ema = IncrementalEMA(trend_period, history=5)
+
+    def on_bar(
+        self,
+        bars: Sequence[Bar],
+        position: Optional[Position],
+    ) -> Signal:
+        # Fed every bar, warmup or not -- these are recurrences that need to
+        # see the whole history from bar zero to stay in sync with the batch
+        # `ema_series` equivalent.
+        self._fast_ema.update(bars[-1].close)
+        self._slow_ema.update(bars[-1].close)
+        self._trend_ema.update(bars[-1].close)
+
         if len(bars) < self.warmup_bars:
-            return self.hold(f"Warming up ({len(bars)}/{self.warmup_bars} bars).")
+            return self.hold(
+                f"Warming up ({len(bars)}/{self.warmup_bars})"
+            )
 
-        closes = [b.close for b in bars]
-        fast = ema(closes, self.fast_period)
-        slow = ema(closes, self.slow_period)
+        fast_now = self._fast_ema.lookback(1)
+        fast_prev = self._fast_ema.lookback(2)
 
-        # The two series have different lengths; align them on their tails.
-        span = min(len(fast), len(slow))
-        if span < 2:
-            return self.hold("Not enough EMA history to detect a cross.")
+        slow_now = self._slow_ema.lookback(1)
+        slow_prev = self._slow_ema.lookback(2)
 
-        fast_now, fast_prev = fast[-1], fast[-2]
-        slow_now, slow_prev = slow[-1], slow[-2]
+        trend_now = self._trend_ema.lookback(1)
+        trend_then = self._trend_ema.lookback(5)
 
-        crossed_up = fast_prev <= slow_prev and fast_now > slow_now
-        crossed_down = fast_prev >= slow_prev and fast_now < slow_now
+        price = bars[-1].close
+
+        crossed_up = (
+            fast_prev <= slow_prev
+            and fast_now > slow_now
+        )
+
+        crossed_down = (
+            fast_prev >= slow_prev
+            and fast_now < slow_now
+        )
+
+        bullish_trend = price > trend_now
+        bearish_trend = price < trend_now
+
+        trend_rising = trend_now > trend_then
+        trend_falling = trend_now < trend_then
+
+        ema_distance = abs(fast_now - slow_now)
+
+        if ema_distance < self.min_ema_distance:
+            return self.hold(
+                f"EMAs too close ({ema_distance:.2f})"
+            )
 
         if position is not None:
-            if position.side is Side.LONG and crossed_down:
-                return self.exit(f"Fast EMA crossed below slow ({fast_now:.2f} < {slow_now:.2f}).")
-            if position.side is Side.SHORT and crossed_up:
-                return self.exit(f"Fast EMA crossed above slow ({fast_now:.2f} > {slow_now:.2f}).")
-            return self.hold(
-                f"Holding {position.side.value}; no opposing cross "
-                f"(fast {fast_now:.2f}, slow {slow_now:.2f})."
-            )
 
-        if crossed_up:
+            if (
+                position.side == Side.LONG
+                and crossed_down
+            ):
+                return self.exit("EMA reversal exit")
+
+            if (
+                position.side == Side.SHORT
+                and crossed_up
+            ):
+                return self.exit("EMA reversal exit")
+
+            return self.hold("Holding position")
+
+        if (
+            crossed_up
+            and bullish_trend
+            and trend_rising
+        ):
             return self.enter_long(
-                f"Fast EMA crossed above slow ({fast_now:.2f} > {slow_now:.2f}).",
+                "Bullish EMA cross above 200 EMA",
                 fast=float(fast_now),
                 slow=float(slow_now),
-            )
-        if crossed_down:
-            return self.enter_short(
-                f"Fast EMA crossed below slow ({fast_now:.2f} < {slow_now:.2f}).",
-                fast=float(fast_now),
-                slow=float(slow_now),
+                trend=float(trend_now),
+                distance=float(ema_distance),
             )
 
-        return self.hold(f"No cross (fast {fast_now:.2f}, slow {slow_now:.2f}).")
+        # Shorts intentionally disabled while testing.
+        # Uncomment below if you want to enable them again.
+
+        # if (
+        #     crossed_down
+        #     and bearish_trend
+        #     and trend_falling
+        # ):
+        #     return self.enter_short(
+        #         "Bearish EMA cross below 200 EMA",
+        #         fast=float(fast_now),
+        #         slow=float(slow_now),
+        #         trend=float(trend_now),
+        #         distance=float(ema_distance),
+        #     )
+
+        return self.hold("No setup")
