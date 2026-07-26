@@ -217,7 +217,7 @@ For a quick, config-free sweep across *all four* bundled strategies at
 once with sensible default grids:
 
 ```bash
-python optimize.py data/your_data.csv --top 15
+python tools/optimize.py data/your_data.csv --top 15
 ```
 
 This is a thin wrapper around the same optimizer — see

@@ -34,6 +34,11 @@ part_*.csv
 data_MES*.csv
 data_MESH6*.csv
 
+# Local-only scratch scripts -- not reusable tooling, kept on this machine only.
+find_mes.py
+json_to_csv.py
+compare_strategies.ps1
+
 # Phase 9: trained ML model artifacts (joblib/torch files)
 ml_models/
 
