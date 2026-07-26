@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Runtime state (see docs/ARCHITECTURE.md -- these must never be committed;
+# state.py/journal.py write to them, and they're specific to one machine's run)
+logs/
+state/
+decisions.jsonl
+
+# Phase 6A: research API artifacts
+research.db
+api_reports/
+
+# Local market-data caches and generated backtest reports -- large,
+# machine-specific, and regenerable via tools/ and the fetch/convert scripts.
+market_data*.db
+data/
+turtle_raw/
+turtle_converted/
+reports/
+
+# Root-level scratch CSVs from manual CLI testing / data-pipeline debugging.
+test.csv
+test2.csv
+test3.csv
+test_mnq.csv
+test_old.csv
+test_mes.csv
+live_test.csv
+part_*.csv
+data_MES*.csv
+data_MESH6*.csv
+
+# Phase 9: trained ML model artifacts (joblib/torch files)
+ml_models/
+
+# Phase 10.1: uploaded client trade-import files awaiting confirmation
+import_staging/
+
+# Phase 10.2: config.yaml backups taken before every param deploy/rollback
+config_backups/
+
+# Frontend (Phase 6A)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Secrets -- config.yaml itself is tracked (it holds no credentials by
+# design; see brokers/tradovate.py's module docstring), but a local .env
+# some shells may source for TRADOVATE_*/MASSIVE_API_KEY should never be.
+.env
