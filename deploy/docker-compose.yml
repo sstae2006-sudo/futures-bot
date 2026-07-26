@@ -1,0 +1,97 @@
+# Generic compose setup. Works on any Docker host, and translates directly to
+# Railway/Fly/Render's own volume + restart settings.
+#
+# Two independent services -- run either, both, or neither:
+#   futures-bot      Phase 5 CLI-only live-trading bot (Dockerfile)
+#   futures-bot-api   Phases 6-8B research API + dashboard (Dockerfile.api)
+# `docker compose up -d futures-bot-api` starts only the dashboard, for
+# example. They don't share a container, but can share a host if you want
+# the dashboard watching the same product the CLI bot is trading live --
+# point both at the same MASSIVE_API_KEY and give them separate volumes
+# (already set up below) so one's state can never clobber the other's.
+
+services:
+  futures-bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: futures-bot
+
+    # Restart on crash, but not after a deliberate stop. A bot that resurrects
+    # itself when you stopped it on purpose is its own hazard.
+    restart: unless-stopped
+
+    volumes:
+      # The kill switch lives here. Without this line, a container restart
+      # wipes the halt flag and the daily loss tally.
+      - bot-state:/data
+      # Config mounted read-only: the bot never rewrites its own settings.
+      - ../config.yaml:/app/config.yaml:ro
+
+    environment:
+      - TZ=America/Chicago
+      - FUTURES_BOT_CONFIG=/app/config.yaml
+      # Broker credentials come from the environment, never from the image
+      # or the repo.
+      # - BROKER_API_KEY=${BROKER_API_KEY}
+      # - BROKER_API_SECRET=${BROKER_API_SECRET}
+
+    # Bounded logs: an unbounded json-file driver will fill the disk over
+    # a few months of per-decision logging and take the bot down with it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # A runaway loop shouldn't be able to starve the host.
+    mem_limit: 512m
+    cpus: 1.0
+
+  futures-bot-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: futures-bot-api
+    restart: unless-stopped
+
+    volumes:
+      # SQLite databases, logs, and per-strategy paper-trading state --
+      # everything not here is erased on container restart/redeploy.
+      - bot-api-data:/data
+      - ../config.yaml:/app/config.yaml:ro
+
+    environment:
+      - TZ=America/Chicago
+      - FUTURES_BOT_CONFIG=/app/config.yaml
+      # Required for market-data sync and the autonomous research server;
+      # not required just to browse a dashboard with no data synced yet.
+      # - MASSIVE_API_KEY=${MASSIVE_API_KEY}
+
+    ports:
+      # Bound to loopback on the HOST -- reachable only from this machine,
+      # regardless of the container's own 0.0.0.0 bind inside (see
+      # Dockerfile.api). Put a reverse proxy with auth (or a VPN) in front
+      # and change this to "8000:8000" behind it before this needs to be
+      # reachable from anywhere else -- this API has no authentication of
+      # its own. See DEPLOYMENT.md.
+      - "127.0.0.1:8000:8000"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # Backtests/optimizer sweeps are real (if bounded) CPU work, and the
+    # in-memory bar history + several concurrent paper-trading strategies
+    # cost more than the CLI bot's single strategy -- this service gets a
+    # correspondingly larger ceiling.
+    mem_limit: 1g
+    cpus: 2.0
+
+volumes:
+  bot-state:
+    driver: local
+  bot-api-data:
+    driver: local

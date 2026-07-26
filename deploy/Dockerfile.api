@@ -1,0 +1,70 @@
+# Deployment image for the FastAPI research API + React dashboard (Phases
+# 6-8B: backtests, optimizer, trade analysis, reports, the dashboard-
+# controlled paper-trading Live Session, and the opt-in autonomous Research
+# Server). This is a *different* product from `Dockerfile` (the Phase 5
+# CLI-only live-trading bot) -- see DEPLOYMENT.md's "Research API /
+# dashboard" section for which one you actually want.
+#
+# Two stages: build the React dashboard to static files, then a Python
+# runtime image that serves both the API and those static files from one
+# process on one port (see api/app.py's `_maybe_mount_frontend`). One
+# container, one port, no separate nginx just to reach the dashboard, and
+# no CORS configuration needed either -- the built bundle calls the API
+# with relative paths (`VITE_API_BASE_URL=` below), so browser and API
+# always share one origin regardless of what host/port this ends up on.
+#
+# This process has NO AUTHENTICATION in front of it (see api/app.py's
+# module docstring) -- it must never be reachable from the public internet
+# without something in front of it that adds auth (a reverse proxy, a VPN).
+# `python -m futures_bot.api` refuses to bind a non-loopback host without
+# `--allow-network-exposure` (see api/__main__.py); this image passes that
+# flag because *inside* the container 0.0.0.0 is required for Docker's own
+# port publishing to reach it at all -- the flag is not itself an auth
+# layer, and the actual exposure boundary is whatever you put in front of
+# the published port. Read DEPLOYMENT.md before publishing it anywhere
+# wider than `127.0.0.1:8000:8000` on the host.
+
+FROM node:22-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN VITE_API_BASE_URL= npm run build
+
+FROM python:3.12-slim AS api
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir .
+
+COPY --from=frontend-build /frontend/dist ./frontend/dist
+
+RUN useradd --create-home --shell /bin/bash bot \
+    && mkdir -p /data/state /data/logs /data/db \
+    && chown -R bot:bot /data /app
+
+USER bot
+
+# Both SQLite databases and all logging/state live here -- everything not
+# on this volume is erased on container restart/redeploy, same requirement
+# `Dockerfile`'s docstring spells out for the kill-switch state file.
+VOLUME ["/data"]
+
+ENV FUTURES_BOT_CONFIG=/app/config.yaml \
+    FUTURES_BOT_FRONTEND_DIST=/app/frontend/dist \
+    FUTURES_BOT_RESEARCH_DB=/data/db/research.db \
+    FUTURES_BOT_MARKET_DATA_DB=/data/db/market_data.db
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=5)" || exit 1
+
+ENTRYPOINT ["python", "-m", "futures_bot.api"]
+CMD ["--host", "0.0.0.0", "--port", "8000", "--allow-network-exposure"]

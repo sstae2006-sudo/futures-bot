@@ -1,0 +1,75 @@
+# systemd unit for the FastAPI research API + React dashboard (Phases
+# 6-8B) on a plain Linux VPS -- a different product from
+# futures-bot.service (the Phase 5 CLI-only live-trading bot); run either,
+# both, or neither. See DEPLOYMENT.md's "Research API / dashboard" section.
+#
+# Install:
+#   sudo cp deploy/futures-bot-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now futures-bot-api
+#
+# Watch it:
+#   systemctl status futures-bot-api
+#   journalctl -u futures-bot-api -f
+
+[Unit]
+Description=Futures Trading Bot -- Research API / Dashboard
+Documentation=file:///opt/futures-bot/README.md
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+StartLimitBurst=5
+StartLimitIntervalSec=600
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/futures-bot
+
+Environment="PYTHONUNBUFFERED=1"
+Environment="TZ=America/Chicago"
+Environment="FUTURES_BOT_CONFIG=/opt/futures-bot/config.yaml"
+# Where `cd frontend && npm ci && VITE_API_BASE_URL= npm run build` put its
+# output -- see DEPLOYMENT.md. Omit this (or point it somewhere with no
+# index.html) to run the API alone, dashboard-less.
+Environment="FUTURES_BOT_FRONTEND_DIST=/opt/futures-bot/frontend/dist"
+Environment="FUTURES_BOT_RESEARCH_DB=/opt/futures-bot/data/research.db"
+Environment="FUTURES_BOT_MARKET_DATA_DB=/opt/futures-bot/data/market_data.db"
+# MASSIVE_API_KEY (required for market-data sync and the autonomous
+# research server) belongs in this root-owned, mode-600 file, not here --
+# unit files are world-readable. Same file futures-bot.service uses; both
+# units can share it.
+EnvironmentFile=-/etc/futures-bot/env
+
+# Loopback only -- reachable from this host alone, matching this API
+# having no authentication of its own. Put a reverse proxy (nginx/Caddy)
+# with auth in front, listening on the public interface and proxying to
+# 127.0.0.1:8000, before this is reachable from anywhere else. See
+# DEPLOYMENT.md.
+ExecStart=/opt/futures-bot/.venv/bin/python -m futures_bot.api --host 127.0.0.1 --port 8000
+
+Restart=on-failure
+RestartSec=15s
+
+# No SIGINT/flatten-position handling needed here the way
+# futures-bot.service has -- this process's own paper-trading positions
+# are PaperBroker-simulated, not real orders; TimeoutStopSec still gives
+# in-flight requests and background sync threads time to wind down cleanly.
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/futures-bot/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=futures-bot-api
+
+[Install]
+WantedBy=multi-user.target

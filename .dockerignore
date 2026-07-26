@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+logs/
+state/
+config.yaml
+.git/
+.github/
+
+# Dockerfile.api's frontend-build stage runs its own `npm ci` and `COPY
+# frontend/ ./` after that -- a host-local node_modules/dist here (e.g.
+# built on a different OS/arch than the image) would otherwise get copied
+# in and silently clobber what npm ci just installed inside the container.
+frontend/node_modules/
+frontend/dist/

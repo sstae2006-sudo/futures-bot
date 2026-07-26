@@ -1,0 +1,74 @@
+# systemd unit for running the bot on a plain Linux VPS.
+#
+# Install:
+#   sudo cp deploy/futures-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now futures-bot
+#
+# Watch it:
+#   systemctl status futures-bot
+#   journalctl -u futures-bot -f
+
+[Unit]
+Description=Futures Trading Bot
+Documentation=file:///opt/futures-bot/README.md
+# Do not start before the clock is right. Session boundaries and the daily
+# loss reset are time-derived; starting with a skewed clock puts the bot in
+# the wrong trading session.
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+# If it fails 5 times in 10 minutes, stop trying. Something is wrong that
+# restarting will not fix, and a bot in a crash loop against a live broker
+# is worse than one that is simply down.
+# (These are [Unit] directives -- systemd ignores them under [Service].)
+StartLimitBurst=5
+StartLimitIntervalSec=600
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/futures-bot
+
+Environment="PYTHONUNBUFFERED=1"
+Environment="TZ=America/Chicago"
+# Secrets belong in a root-owned file with mode 600, not in this unit —
+# unit files are world-readable. Must define MASSIVE_API_KEY (the live data
+# feed's credential) and, if config.yaml's broker.name is 'tradovate', the
+# full TRADOVATE_* set -- see brokers/tradovate.py's module docstring for
+# that list and, critically, its safety checklist before TRADOVATE_ENV=live.
+EnvironmentFile=-/etc/futures-bot/env
+
+ExecStartPre=/opt/futures-bot/.venv/bin/python -m futures_bot.cli --config /opt/futures-bot/config.yaml --check
+# --live-symbol is the DATA VENDOR's symbol for the current contract expiry
+# (e.g. MESH6) -- futures expire quarterly, so this line needs updating each
+# roll, independently of config.yaml's broker.tradovate_symbol (the same
+# expiry's symbol at the broker, which is not always spelled the same way).
+ExecStart=/opt/futures-bot/.venv/bin/python -m futures_bot.cli --config /opt/futures-bot/config.yaml --live --live-symbol MESH6
+
+# Restart on failure, but stay down after a clean exit or a manual stop.
+Restart=on-failure
+RestartSec=15s
+
+# SIGINT so the engine's shutdown path runs and flattens any open position,
+# rather than being killed mid-trade.
+KillSignal=SIGINT
+TimeoutStopSec=60
+
+# Sandboxing. The bot needs to read its config and write its state; nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/futures-bot/state /opt/futures-bot/logs
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=futures-bot
+
+[Install]
+WantedBy=multi-user.target
