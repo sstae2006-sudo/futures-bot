@@ -1,5 +1,5 @@
 """The Market Context Engine -- foundation phase (2026-07-27), Session
-Context implemented (2026-07-27).
+Context (2026-07-27) and Volatility Context (2026-07-27) implemented.
 
 Builds ``MarketContext`` snapshots from market data. Provides information
 *to* strategies; never makes a trade decision and never holds a reference
@@ -9,14 +9,14 @@ the full rationale and the target layering:
 
     Market Data -> Context Engine -> Strategy Engine -> Risk Engine -> Execution
 
-**Scope, deliberately:** ``_classify_session`` is now real (see
-``session.py``). The other five ``_classify_*`` methods below are still
-stubs returning ``UNKNOWN`` with no confidence recorded -- that's
-explicitly a follow-up phase (see ROADMAP.md), not this one. This class
-exists so the *shape* of that future work has an obvious, already-typed
-home instead of being designed from scratch under time pressure later,
-and so nothing calling it today needs to change when real classification
-logic lands for the rest.
+**Scope, deliberately:** ``_classify_session`` and ``_classify_volatility``
+are now real (see ``session.py``/``volatility.py``). The other four
+``_classify_*`` methods below are still stubs returning ``UNKNOWN`` with
+no confidence recorded -- that's explicitly a follow-up phase (see
+ROADMAP.md), not this one. This class exists so the *shape* of that
+future work has an obvious, already-typed home instead of being designed
+from scratch under time pressure later, and so nothing calling it today
+needs to change when real classification logic lands for the rest.
 
 **Not wired into ``TradingEngine`` yet.** Nothing in ``engine.py``,
 ``strategy/``, or ``risk/`` imports this module. Building it standalone
@@ -39,6 +39,7 @@ from .models import (
     VolatilityState,
 )
 from .session import SessionContext, classify_session
+from .volatility import VolatilityContext, analyze_volatility
 
 
 class ContextEngine:
@@ -67,14 +68,25 @@ class ContextEngine:
         want a context before any history exists yet (session start), in
         which case every classification is ``UNKNOWN`` regardless.
 
-        Session classification is real (see ``session.py``); the other
-        five below are still stubs, so this returns all-``UNKNOWN`` for
-        those with zero confidence. See the module docstring for why,
-        and docs/ARCHITECTURE.md for what a real implementation should
-        reuse instead of re-deriving.
+        Session and volatility classification are real (see
+        ``session.py``/``volatility.py``); the other four below are
+        still stubs, so this returns ``UNKNOWN`` for those with zero
+        confidence. See the module docstring for why, and
+        docs/ARCHITECTURE.md for what a real implementation should reuse
+        instead of re-deriving.
         """
         bars = bars or ()
         session_ctx = self._classify_session(timestamp)
+        volatility_ctx = self._classify_volatility(timestamp, bars)
+
+        confidence_scores = {"session": 1.0}
+        if volatility_ctx.state is not VolatilityState.UNKNOWN:
+            # Real confidence only once there's actually enough history
+            # to have computed a ratio -- an UNKNOWN reading (missing
+            # data) stays out of confidence_scores entirely, same
+            # contract as the four still-stubbed dimensions below.
+            confidence_scores["volatility"] = 1.0
+
         return MarketContext(
             timestamp=timestamp,
             symbol=self.symbol,
@@ -82,18 +94,12 @@ class ContextEngine:
             session=session_ctx.session,
             session_context=session_ctx,
             market_regime=self._classify_regime(bars),
-            volatility_state=self._classify_volatility(bars),
+            volatility_state=volatility_ctx.state,
+            volatility_context=volatility_ctx,
             trend_state=self._classify_trend(bars),
             liquidity_state=self._classify_liquidity(bars),
             risk_state=self._classify_risk(bars),
-            #: Session classification is deterministic given a timestamp
-            #: (no uncertainty -- we either know the calendar or we
-            #: don't), so it earns a real confidence entry rather than
-            #: being left out of confidence_scores like the five still-
-            #: UNKNOWN dimensions. Their absence is exactly what
-            #: MarketContext.confidence's docstring means by "no
-            #: confidence recorded for that dimension."
-            confidence_scores={"session": 1.0},
+            confidence_scores=confidence_scores,
         )
 
     # --- Classification methods ---
@@ -114,12 +120,17 @@ class ContextEngine:
         trending-vs-ranging signal already available in this codebase."""
         return MarketRegime.UNKNOWN
 
-    def _classify_volatility(self, bars: Sequence[Bar]) -> VolatilityState:
-        """Future phase: ``research.regime.classify_volatility`` already
-        does ATR-tercile bucketing for this exact purpose (currently
-        applied post-trade; the math doesn't change if it's called
-        pre-decision instead)."""
-        return VolatilityState.UNKNOWN
+    def _classify_volatility(
+        self, timestamp: datetime, bars: Sequence[Bar]
+    ) -> VolatilityContext:
+        """Real, as of 2026-07-27 -- delegates entirely to
+        ``volatility.analyze_volatility``, which reuses
+        ``strategy.indicators.atr_series`` and compares the latest ATR
+        reading against a trailing historical average. See that module
+        for why ``research.regime.classify_volatility``'s tercile
+        approach isn't reused as-is (whole-series, not look-ahead-safe
+        for real-time use)."""
+        return analyze_volatility(timestamp, self.symbol, self.timeframe, bars)
 
     def _classify_trend(self, bars: Sequence[Bar]) -> TrendState:
         """Future phase: ``research.regime.classify_trend`` (start-to-end

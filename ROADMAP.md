@@ -59,12 +59,22 @@ Engine" section for the full rationale.
   calendar logic and `research/regime.py`'s exact RTH boundaries.
   Wired into `MarketContext`/`ContextEngine`. 31 new tests
   (`tests/test_context_session.py`).
-- **Phase 2b — regime/volatility/trend.** Implement
-  `_classify_regime`/`_classify_volatility`/`_classify_trend` by
-  reusing `research/regime.py` (`classify_trend`/`classify_volatility`,
-  currently applied post-trade for analytics) and
-  `strategy/indicators.py` (`adx`, `ema_series`, `atr`) — not by
-  re-deriving the same math a second time.
+- **Phase 2b — Volatility Context (done, 2026-07-27).**
+  `context/volatility.py`'s `analyze_volatility`/`VolatilityContext` —
+  real ATR-ratio-based classification (`current_atr`/`average_atr`
+  from a trailing window, `volatility_ratio`, `VolatilityState`),
+  reusing `strategy.indicators.atr_series`. Deliberately did not reuse
+  `research/regime.py`'s `classify_volatility` tercile approach as-is —
+  its whole-series `sorted()` cutoffs aren't look-ahead-safe for
+  real-time use; see `docs/ARCHITECTURE.md`'s "Volatility Context"
+  writeup. Wired into `MarketContext`/`ContextEngine`. 22 new tests
+  (`tests/test_context_volatility.py`), including a dedicated
+  no-future-leakage test.
+- **Phase 2c — regime/trend.** Implement
+  `_classify_regime`/`_classify_trend` by reusing `research/regime.py`
+  (`classify_trend`, currently applied post-trade for analytics) and
+  `strategy/indicators.py` (`adx`, `ema_series`) — not by re-deriving
+  the same math a second time.
 - **Phase 3 — new dimensions.** `_classify_liquidity`/`_classify_risk`
   have no existing equivalent to reuse; genuinely new work.
 - **Phase 4 — wire it in.** Decide how `TradingEngine.on_bar` actually
@@ -110,6 +120,6 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine, Phases 1 and 2a (foundation + Session
-  Context) (2026-07-27) — see "Market Context Engine (phased)" above
-  for what's left.
+- Market Context Engine, Phases 1, 2a, and 2b (foundation + Session
+  Context + Volatility Context) (2026-07-27) — see "Market Context
+  Engine (phased)" above for what's left.

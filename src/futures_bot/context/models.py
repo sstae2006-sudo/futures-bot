@@ -25,12 +25,14 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 if TYPE_CHECKING:
-    # Deferred: session.py imports SessionPhase from *this* module, so a
-    # real (non-TYPE_CHECKING) import here would be circular. Safe only
-    # because `from __future__ import annotations` above means every
-    # annotation in this file is a string at runtime -- never actually
-    # evaluated, just available to static type checkers/IDEs.
+    # Deferred: session.py/volatility.py import from *this* module (e.g.
+    # VolatilityState), so a real (non-TYPE_CHECKING) import here would be
+    # circular. Safe only because `from __future__ import annotations`
+    # above means every annotation in this file is a string at runtime --
+    # never actually evaluated, just available to static type
+    # checkers/IDEs.
     from .session import SessionContext
+    from .volatility import VolatilityContext
 
 
 class SessionPhase(str, Enum):
@@ -135,6 +137,12 @@ class MarketContext:
     #: only needs the phase, not the full detail; see
     #: ContextEngine._classify_session.
     session_context: Optional["SessionContext"] = None
+    #: The rich volatility snapshot (current_atr, average_atr,
+    #: volatility_ratio, realized_volatility) from context/volatility.py's
+    #: analyze_volatility(). ``None`` until a caller sets it --
+    #: ``volatility_state`` above (the bare enum) is kept in sync
+    #: separately, same pattern as ``session``/``session_context``.
+    volatility_context: Optional["VolatilityContext"] = None
     #: Per-dimension confidence in [0.0, 1.0], keyed by the same names as
     #: the Enum fields above (e.g. {"market_regime": 0.82}). Missing a key
     #: means "no confidence recorded for that dimension" -- see
@@ -179,6 +187,9 @@ class MarketContext:
             "liquidity_state": self.liquidity_state.value,
             "risk_state": self.risk_state.value,
             "session_context": self.session_context.to_dict() if self.session_context else None,
+            "volatility_context": (
+                self.volatility_context.to_dict() if self.volatility_context else None
+            ),
             "confidence_scores": dict(self.confidence_scores),
             "confidence": self.confidence,
         }
@@ -200,10 +211,18 @@ class MarketContext:
 
             session_context = SessionContext.from_dict(session_context_data)
 
+        volatility_context_data = data.get("volatility_context")
+        volatility_context = None
+        if volatility_context_data is not None:
+            from .volatility import VolatilityContext  # local: see the TYPE_CHECKING import above
+
+            volatility_context = VolatilityContext.from_dict(volatility_context_data)
+
         kwargs: dict[str, Any] = {
             "timestamp": timestamp,
             "symbol": data["symbol"],
             "session_context": session_context,
+            "volatility_context": volatility_context,
             "timeframe": data["timeframe"],
             "confidence_scores": dict(data.get("confidence_scores", {})),
         }

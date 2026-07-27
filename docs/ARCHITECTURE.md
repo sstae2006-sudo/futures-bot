@@ -116,11 +116,44 @@ MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
 (session/regime/volatility/trend/liquidity/risk state, each an Enum with an
 `UNKNOWN` member so a context can always be constructed safely even with
 nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
-whose `build_context()` wires everything together. **Session classification
-is real** (`session.py`'s `classify_session`, wired through
-`_classify_session`) — the other five `_classify_*` methods are still
-stubs returning `UNKNOWN`. No indicator math, no regime/volatility/trend
+whose `build_context()` wires everything together. **Session and
+volatility classification are real** (`session.py`'s `classify_session`
+and `volatility.py`'s `analyze_volatility`, wired through
+`_classify_session`/`_classify_volatility`) — the other four `_classify_*`
+methods are still stubs returning `UNKNOWN`. No regime/trend/liquidity/risk
 detection yet — that remains a follow-up phase.
+
+**Volatility Context (`volatility.py`, 2026-07-27):** `analyze_volatility`
+reuses `strategy/indicators.py`'s `atr_series` (the same Wilder's-smoothing
+ATR every strategy already uses) rather than re-deriving true-range math.
+`current_atr` is the last value of that series; `average_atr` is the mean
+of a trailing window of ATR values ending at that same last value (default
+20, a documented/overridable constant, not a magic number); `volatility_ratio
+= current_atr / average_atr` is classified into `VolatilityState` via fixed
+thresholds (`<0.75` LOW, `[0.75,1.25)` NORMAL, `[1.25,2.0)` HIGH, `>=2.0`
+EXTREME — chosen so the task's own worked example, ratio 1.5, lands on
+HIGH). `realized_volatility` (stdev of simple close-to-close returns over
+the same trailing window, unannualized) is new — no prior equivalent
+existed. Missing/insufficient history (fewer than `atr_period + 1` bars)
+returns every numeric field as `None` with `state=UNKNOWN`, never an
+exception or a fabricated value.
+
+Deliberately **not** reused as-is: `research/regime.py`'s
+`classify_volatility`/`compute_regimes`, even though it already does
+ATR-based volatility bucketing. It computes its low/high tercile cutoffs
+with `sorted()` over the *entire* `bars` series passed to it, up front —
+correct for its own post-hoc, read-only trade-labeling use case, but not
+look-ahead-safe if reused verbatim for real-time classification "as of
+timestamp T" (a trade at T would be labeled relative to volatility that
+hasn't happened yet). `analyze_volatility` instead only ever reads a
+*trailing* window ending at the last bar it's given, so a caller that
+(per this codebase's established convention — see `Strategy.on_bar` and
+`ContextEngine.build_context`) only ever passes bars up to "now" can never
+leak a future ATR value into the result — verified directly by
+`tests/test_context_volatility.py`'s `TestNoFutureDataLeakage` (a
+truncated-history reading is provably unaffected by bars appended after
+it). The output shape also differs on purpose: a ratio-based four-state
+result, not tercile buckets over a whole dataset.
 
 `session.py`'s seven `SessionPhase` values (`OVERNIGHT`, `PRE_MARKET`,
 `OPENING_RANGE`, `MORNING_SESSION`, `LUNCH_SESSION`, `POWER_HOUR`,
@@ -162,17 +195,19 @@ already keeps a `Strategy` from placing its own orders** (see "Why
 strategies cannot execute trades directly" below).
 
 **Reuse, don't duplicate, when the remaining classification is
-implemented:** `research/regime.py` already classifies trend/volatility —
-`classify_trend` (start-to-end % move over a lookback), `classify_volatility`
-(ATR terciles) — but applies them **after** a trade closes, for analytics
-(`GET /api/regime/performance`), never in the live decision path.
-`strategy/indicators.py` already has the primitives a real `ContextEngine`
-would need (`atr`, `adx` for trend-vs-range strength, `ema_series`, `rsi`,
-`vwap_bands`). The next phase should call these existing functions from
-`_classify_regime`/`_classify_volatility`/`_classify_trend` rather than
-re-deriving the same math a second time — that duplication risk is exactly
-why this phase stops at stubs for those five instead of guessing at real
-thresholds.
+implemented:** `research/regime.py` already classifies trend —
+`classify_trend` (start-to-end % move over a lookback) — but applies it
+**after** a trade closes, for analytics (`GET /api/regime/performance`),
+never in the live decision path. `strategy/indicators.py` already has the
+primitives a real `ContextEngine` would need (`adx` for trend-vs-range
+strength, `ema_series`, `rsi`, `vwap_bands`). The next phase should call
+these existing functions from `_classify_regime`/`_classify_trend` rather
+than re-deriving the same math a second time — that duplication risk is
+exactly why this phase stops at stubs for those two (plus liquidity/risk)
+instead of guessing at real thresholds. (Volatility is no longer in this
+list — see "Volatility Context" above for what it reuses and why its
+tercile-based cousin in `research/regime.py` specifically wasn't reused
+as-is.)
 
 **Not addressed this phase, by design:** no database persistence (a
 schema change needs explicit approval per `CLAUDE.md` section 8, and

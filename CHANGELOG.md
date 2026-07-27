@@ -4,6 +4,78 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine: Volatility Context (Phase 2b)
+
+**Added**
+- `src/futures_bot/context/volatility.py`: `analyze_volatility(timestamp,
+  symbol, timeframe, bars, atr_period=14, average_lookback=20)` and
+  `VolatilityContext` (`current_atr`, `average_atr`, `volatility_ratio`,
+  `realized_volatility`, `state`). Reuses
+  `strategy.indicators.atr_series` for ATR (no true-range math
+  re-derived); `average_atr` is the mean of a trailing window of ATR
+  values ending at the last bar given; `volatility_ratio =
+  current_atr / average_atr` classified into `VolatilityState`
+  (`LOW`/`NORMAL`/`HIGH`/`EXTREME`/`UNKNOWN`, unchanged since Phase 1)
+  via fixed, documented thresholds (`<0.75`/`[0.75,1.25)`/
+  `[1.25,2.0)`/`>=2.0` — matches the task's own worked example, ratio
+  1.5 → HIGH). `realized_volatility` (stdev of simple close-to-close
+  returns over the same trailing window, unannualized) is newly
+  implemented — no existing equivalent. `classify_volatility_ratio`
+  exported standalone for direct threshold testing. `to_dict`/`from_dict`.
+- `tests/test_context_volatility.py` (22 tests): low-volatility period,
+  high-volatility period (including an exact match against the task's
+  worked example shape), an extreme spike, missing/insufficient data
+  (no bars, fewer bars than `atr_period`, a single bar), a dedicated
+  no-future-leakage class (`TestNoFutureDataLeakage` — proves a
+  truncated-history reading is unaffected by bars appended after it,
+  and that the trailing average doesn't get pulled toward an
+  unrelated, much-wider earlier regime), serialization, and
+  integration into `MarketContext` across multiple symbols/timeframes.
+
+**Changed**
+- `src/futures_bot/context/models.py`: added
+  `MarketContext.volatility_context: Optional[VolatilityContext]`
+  (`TYPE_CHECKING`-guarded import, same pattern as `session_context`);
+  `to_dict`/`from_dict` updated to serialize it.
+- `src/futures_bot/context/context_engine.py`: `_classify_volatility`
+  is now real (delegates to `volatility.analyze_volatility`);
+  `build_context` adds `confidence_scores["volatility"] = 1.0` only
+  once `analyze_volatility` actually produced a non-`UNKNOWN` reading
+  (i.e. enough history existed) — an `UNKNOWN` reading stays out of
+  `confidence_scores` entirely, same contract the four still-stubbed
+  dimensions already follow. The other four `_classify_*` methods are
+  unchanged stubs.
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section updated —
+  new "Volatility Context" subsection explaining what's reused
+  (`atr_series`), what's new (`realized_volatility`), and specifically
+  why `research/regime.py`'s `classify_volatility` tercile approach
+  was *not* reused as-is (whole-series `sorted()` cutoffs aren't
+  look-ahead-safe for real-time classification).
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. `volatility_context` is purely additive (defaults to `None`);
+  `VolatilityState` itself is unchanged from Phase 1.
+
+**Verified:** full suite green (1002 passed, 0 failed — 980 + 22 new).
+`git status`/`git diff` confirm zero changes to `strategy/`,
+`engine.py`, `risk/`, `brokers/`, `backtest/`, `research/regime.py` —
+only `context/`, its new test file, and docs changed. Manually verified
+the task's own worked example shape (`current_atr=18, average_atr=12,
+volatility_ratio=1.5 → HIGH`) and the no-look-ahead property via
+`TestNoFutureDataLeakage` before trusting it as a passing test.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
 ## 2026-07-27 — Market Context Engine: Session Context (Phase 2a)
 
 **Added**
@@ -86,7 +158,7 @@ hold: zero references to `futures_bot.context` outside itself, zero
 orders succeed with no cycle.
 
 **Commit hashes**
-- Not yet committed as of this entry.
+- `b9b2cc3`.
 
 ---
 

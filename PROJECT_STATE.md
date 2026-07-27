@@ -25,8 +25,8 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: 980 tests as of 2026-07-27 (949 + 31 new Session Context
-  tests), full suite green (980 passed, 0 failed). One test
+- Test suite: 1002 tests as of 2026-07-27 (980 + 22 new Volatility
+  Context tests), full suite green (1002 passed, 0 failed). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
   known flake, not a new regression, until it's root-caused. Requires
@@ -70,13 +70,14 @@ version is bumped by hand.
   option; ML research workstation (dataset build, training, prediction).
 - Market Context Engine **in progress** (2026-07-27,
   `src/futures_bot/context/`): typed `MarketContext` value object +
-  `ContextEngine`. **Session classification is real**
+  `ContextEngine`. **Session and volatility classification are real**
   (`session.py`'s `classify_session`, using `contracts.py`'s existing
-  CME calendar logic, wired through `ContextEngine`/`MarketContext`);
-  the other five classification dimensions are still stubs returning
-  `UNKNOWN`. Not wired into `TradingEngine`/`Strategy` yet. See
-  `docs/ARCHITECTURE.md`'s "Market Context Engine" section and
-  ROADMAP.md for the follow-up phases.
+  CME calendar logic; `volatility.py`'s `analyze_volatility`, reusing
+  `strategy.indicators.atr_series`; both wired through
+  `ContextEngine`/`MarketContext`); the other four classification
+  dimensions are still stubs returning `UNKNOWN`. Not wired into
+  `TradingEngine`/`Strategy` yet. See `docs/ARCHITECTURE.md`'s "Market
+  Context Engine" section and ROADMAP.md for the follow-up phases.
 - FastAPI research server + React dashboard covering all of the above,
   plus an autonomous paper-trading/nightly-jobs layer
   (`research_server/`).
@@ -96,6 +97,35 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: implemented Volatility Context (`src/futures_bot/context/volatility.py`,
+`analyze_volatility`/`VolatilityContext`) — real ATR-ratio-based volatility
+classification (`VolatilityState`: LOW/NORMAL/HIGH/EXTREME/UNKNOWN,
+unchanged since Phase 1). Reuses `strategy.indicators.atr_series` (the same
+Wilder's-smoothing ATR every strategy already uses) rather than
+re-deriving true-range math; `current_atr` is the series' last value,
+`average_atr` is the mean of a trailing window ending at that same value
+(default lookback 20), `volatility_ratio = current_atr / average_atr`
+classified via fixed, documented thresholds (matches the task's own
+worked example: ratio 1.5 → HIGH). Also computes `realized_volatility`
+(stdev of simple returns over the same window, unannualized — new, no
+prior equivalent). Deliberately did **not** reuse
+`research/regime.py`'s `classify_volatility`/`compute_regimes` as-is:
+its tercile cutoffs are computed via `sorted()` over the *entire* bars
+series up front, which is correct for its own post-hoc trade-labeling
+use case but not look-ahead-safe for real-time "as of timestamp T"
+classification — `analyze_volatility` only ever reads a trailing window
+ending at the last bar it's given, verified directly by a dedicated
+no-look-ahead test (`tests/test_context_volatility.py`'s
+`TestNoFutureDataLeakage`: a truncated-history reading is provably
+unaffected by bars appended after it). Wired into `MarketContext` (new
+`volatility_context` field, `ContextEngine._classify_volatility` now
+real, confidence recorded only once enough history exists to compute a
+ratio). 22 new tests (`tests/test_context_volatility.py`, covering low-vol,
+high-vol, missing/insufficient data, no-future-leakage, serialization,
+and multi-symbol/timeframe support). Full suite green (1002 passed, 0
+failed, 22 new). The other four `MarketContext` dimensions
+(regime/trend/liquidity/risk) remain stubs — out of scope this phase.
 
 2026-07-27: implemented Session Context (`src/futures_bot/context/session.py`,
 `classify_session`/`SessionContext`) — real classification of the seven
@@ -189,11 +219,13 @@ breakdown.
 ## Recommended Next Task
 
 Decide the next Market Context Engine phase: implement real
-`_classify_regime`/`_classify_volatility`/`_classify_trend` by reusing
+`_classify_regime`/`_classify_trend` by reusing
 `research/regime.py`/`strategy/indicators.py` (see
-`docs/ARCHITECTURE.md`), and decide how `TradingEngine.on_bar` should
-actually pass a `MarketContext` to strategies (likely a `Strategy.on_bar`
-signature change — needs explicit approval per CLAUDE.md section 8).
+`docs/ARCHITECTURE.md`), then `_classify_liquidity`/`_classify_risk`
+(genuinely new — no existing equivalent), and decide how
+`TradingEngine.on_bar` should actually pass a `MarketContext` to
+strategies (likely a `Strategy.on_bar` signature change — needs
+explicit approval per CLAUDE.md section 8).
 Otherwise: decide whether to fix `kill-vite.js`'s self-kill bug directly (would
 fix manual `npm run dev` too, but is a change to existing frontend
 code) or leave `scripts\start.ps1`'s workaround as the standing
