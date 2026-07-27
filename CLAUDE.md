@@ -148,7 +148,7 @@ futures_bot.api`, `npm run dev`).
 | `src/futures_bot/market_data/` | Market-data sync/scheduler/store and the vendor contracts client. |
 | `src/futures_bot/brokers/` | Paper broker (used everywhere except live CLI trading) and the Tradovate live broker adapter. |
 | `src/futures_bot/risk/` | Risk manager — daily loss kill switch, trade caps, trading-hours filter, force-flat. |
-| `src/futures_bot/context/` | Market Context Engine (in progress, 2026-07-27) — `MarketContext` value object, `ContextEngine`, `session.py`'s `SessionContext`/`classify_session`, `volatility.py`'s `VolatilityContext`/`analyze_volatility`, `regime.py`'s `RegimeContext`/`classify_regime`, `timeframe.py`'s `TimeframeAlignment`/`classify_timeframe_alignment`, and `structure.py`'s `StructureContext`/`analyze_structure` (all real; trend/liquidity/risk are still stubs). Not wired into `TradingEngine`/`Strategy` yet. See section 8 and `docs/ARCHITECTURE.md`'s "Market Context Engine" section. |
+| `src/futures_bot/context/` | Market Context Engine — **complete as an independent subsystem as of Phase 8 (2026-07-27)**, every dimension real: `MarketContext` value object, `ContextEngine` (configurable via `scoring_config`), `session.py`, `volatility.py`, `regime.py`, `timeframe.py`, `structure.py`, `trend.py`, `liquidity.py`, `risk.py` (all classification dimensions), `scoring.py` (`EnvironmentScore`, configurable weights via `ScoringConfig`), `analytics.py` (dev/research distribution reports). Not wired into `TradingEngine`/`Strategy` yet — deliberately, pending explicit approval. See section 8, `docs/ARCHITECTURE.md`'s "Market Context Engine" section, and `docs/CONTEXT_ENGINE_COVERAGE.md`/`CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`/`CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`/`CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md`. |
 | `deploy/` | Dockerfiles, docker-compose, systemd units. |
 | `docs/` | Architecture, research server, ML workstation, strategy authoring, trade importer, trading workflow, user manual. |
 | `tools/` | Data-maintenance/ops scripts (contract building, schema fixes, backup/merge/restore). Not part of the installable package. |
@@ -163,13 +163,14 @@ system-layer diagram (frontend → API → core engine → research layer →
 persistence) and dependency-direction rules — keep it current when
 architecture changes.
 
-**Target layering (in progress):** Market Data → Context Engine →
-Strategy Engine → Risk Engine → Execution. `context/` exists but isn't
-wired in yet; session, volatility, regime, multi-timeframe-alignment,
-and structure classification are real, trend/liquidity/risk are still
-stubs — see `docs/ARCHITECTURE.md`'s "Market
-Context Engine" section for the exact integration point before
-touching `engine.py`, `strategy/`, or `risk/` to wire it in.
+**Target layering (Context Engine complete, integration not started):**
+Market Data → Context Engine → Strategy Engine → Risk Engine →
+Execution. `context/` is fully built and validated (every dimension
+real, no stubs remain) but deliberately **not wired in yet** — see
+`docs/ARCHITECTURE.md`'s "Market Context Engine" section for the exact
+integration point, the configuration system, and the known limitations
+before touching `engine.py`, `strategy/`, or `risk/` to wire it in
+(needs explicit approval per the protected list below).
 
 **Never change without explicit approval:**
 

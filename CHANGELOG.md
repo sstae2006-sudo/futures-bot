@@ -4,6 +4,227 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine Phase 8: Completion and Validation
+
+An 11-part phase making the Market Context Engine production-ready as
+an **independent, unintegrated subsystem**. Explicitly did not touch
+`TradingEngine`/`Strategy`/`RiskEngine`/backtesting/live trading/broker
+code — confirmed by `git diff` and dedicated tests (see Part 8 below).
+
+**Added**
+- `src/futures_bot/context/trend.py`: `analyze_trend`/`TrendContext` —
+  standalone `TrendState` (BULLISH/BEARISH/NEUTRAL/UNKNOWN), simpler
+  and available with far less history than `regime.py`'s
+  volatility-coupled `MarketRegime` composite. Reuses
+  `research.regime.classify_trend` (direction) and
+  `strategy.indicators.adx` + `regime.py`'s own
+  `ADX_TRENDING_THRESHOLD`/`ADX_CONFIDENCE_SCALE` (confidence, same
+  scale as `regime.py`'s). 14 new tests.
+- `src/futures_bot/context/liquidity.py`: `analyze_liquidity`/
+  `LiquidityContext` — `LiquidityState` (THIN/NORMAL/DEEP/UNKNOWN) from
+  relative volume (current bar vs. trailing average), reusing
+  `strategy.indicators.sma`. Genuinely new classification logic (no
+  existing general-purpose liquidity classifier anywhere in this
+  codebase — `strategy/trend_pullback/strategy.py`'s own `volume_ratio`
+  is strategy-local analytics, not reusable without an inappropriate
+  `context/` → `strategy/` dependency), following the same
+  trailing-window-ratio shape `volatility.py` already established. 19
+  new tests.
+- `src/futures_bot/context/risk.py`: `assess_risk`/`RiskContext` —
+  `RiskState` (LOW/ELEVATED/HIGH/UNKNOWN) as a **pure composite** of
+  already-real `volatility_state`/`market_regime` — no new market-data
+  analysis, exactly what this method's own Phase-1 stub docstring
+  anticipated. Unrelated to, and never consulted by,
+  `risk.manager.RiskManager` (naming collision only, verified by an
+  import-inspection test). 17 new tests.
+- `src/futures_bot/context/scoring.py`: `ScoringConfig` dataclass
+  centralizing all six scoring weights (previously hardcoded module
+  constants) — `trend_weight`/`volatility_weight`/`session_weight`/
+  `structure_weight`/`liquidity_weight`/`risk_weight`.
+  `DEFAULT_SCORING_CONFIG` reproduces every pre-Phase-8 scoring
+  behavior exactly (verified: all 21 pre-existing scoring tests pass
+  unchanged). `score_environment`/`with_environment_score` gained an
+  optional `config` parameter; `ContextEngine.__init__` gained an
+  optional `scoring_config` parameter. 9 new tests
+  (`TestConfigurableScoring`).
+- `src/futures_bot/context/analytics.py`: `analyze_context_batch`/
+  `ContextAnalyticsReport` — developer/research distribution analytics
+  over a batch of already-built `MarketContext` snapshots: session/
+  regime/volatility/trend/liquidity/risk distributions, environment-
+  score and confidence numeric summaries (min/max/mean/median/stdev),
+  and UNKNOWN-frequency per dimension, plus a human-readable `.render()`
+  text report. No UI, not wired into `ContextEngine` (a separate,
+  post-hoc analysis layer, the same relationship
+  `market_data/validation.py` has to the sync pipeline). 12 new tests.
+- `tests/test_context_engine_validation.py` (16 tests): no-circular-
+  imports (every `context/` submodule imports standalone in a fresh
+  subprocess), no-duplicated-logic (ATR/ADX/SMA/`classify_trend` each
+  defined exactly once, everywhere else only imports them), no-
+  duplicated-calendars/session/regime/volatility-state enum
+  definitions, module independence from `risk.manager`/`brokers`/
+  `engine.py` (checked in both directions), determinism (identical
+  inputs produce an identical `MarketContext`; no wall-clock or
+  randomness anywhere in `context/`), missing-data safety, `UNKNOWN`
+  correctness, and confidence validity across many scenarios.
+- `tools/benchmark_context_engine.py`: measures
+  `ContextEngine.build_context`'s average/worst-case timing and peak
+  memory across 50–50,000-bar histories. Results in
+  `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`.
+- Four new documentation reports:
+  `docs/CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md` (module-by-module look-ahead
+  reasoning for all 8 dimensions plus the combined score — no issues
+  found), `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`,
+  `docs/CONTEXT_ENGINE_COVERAGE.md` (status/tests/confidence-model/
+  dependencies/integration-readiness table), and
+  `docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` (final confirmation the
+  engine remains a pure, unintegrated information layer).
+
+**Changed**
+- `src/futures_bot/context/models.py`: added `trend_context`/
+  `liquidity_context`/`risk_context` fields to `MarketContext`
+  (`TYPE_CHECKING`-guarded imports, same pattern as every other nested
+  `*Context` field); `to_dict`/`from_dict` updated.
+- `src/futures_bot/context/context_engine.py`: `_classify_trend`/
+  `_classify_liquidity`/`_classify_risk` are now real (were `UNKNOWN`
+  stubs); `ContextEngine.__init__` gained an optional `scoring_config`
+  parameter (default `None` → `scoring.DEFAULT_SCORING_CONFIG`).
+- `src/futures_bot/context/liquidity.py`: performance fix found during
+  Part 5's benchmark — `analyze_liquidity` now converts only the
+  trailing `lookback` bars to `Decimal` instead of the entire history
+  passed in, since `sma()` only ever used the trailing slice anyway.
+  Verified output-identical: all pre-existing liquidity tests pass
+  unchanged, plus a new dedicated large-history equivalence test.
+- `tests/test_context.py`: one assertion updated (a "few bars" fixture
+  now correctly classifies `trend_state` as `NEUTRAL` rather than
+  `UNKNOWN`, since `TrendState` is real now and only needs 2 closes);
+  one new regression test for backward-compatible `from_dict`
+  deserialization of a pre-Phase-8-shaped dict (missing the newer
+  context keys entirely, not just null).
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section substantially
+  rewritten — new Trend/Liquidity/Risk subsections, the configurable
+  scoring system, a consolidated "Validation guarantees" summary, a
+  "Known limitations" summary, and a "Future integration plan" section,
+  per this phase's own documentation requirements.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. Every new field defaults to `None`/`UNKNOWN`; `ScoringConfig`
+  parameters all default to the pre-Phase-8 values; the liquidity
+  optimization is output-identical.
+
+**Verified:** full suite green (1163 passed, 0 failed — 1074 + 89 new).
+`git status`/`git diff` confirm zero changes outside `context/`,
+`tests/test_context*.py`, `tools/benchmark_context_engine.py`, and the
+five persistent documentation files plus `docs/` — verified in both
+directions (nothing outside `context/` references it either). Found
+and fixed one real bug during this phase's own audit work: an early
+draft of the circular-import check used `importlib.reload()`, which
+mints duplicate Enum class objects and silently broke `is`-identity for
+every test running afterward in the same process — caught by a test
+failure, root-caused, and replaced with genuine subprocess isolation
+before being trusted.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
+## 2026-07-27 — Market Context Engine: Context Scoring System (Phase 2f)
+
+**Added**
+- `src/futures_bot/context/scoring.py`: `score_environment(context:
+  MarketContext) -> EnvironmentScore` and `EnvironmentScore` (`score`
+  0-100, `confidence`, `reasons`, `breakdown`). Combines every existing
+  `MarketContext` dimension into one reading of how favorable current
+  conditions look for a systematic strategy to operate in *generally* --
+  **not a directional (bullish/bearish) signal**. Six dimensions each
+  contribute a signed value scaled by a documented maximum weight:
+  Trend 20, Volatility 15, Session 10, Structure 20, Liquidity 15, Risk
+  -10 -- chosen to reproduce the task's own worked example exactly
+  (`20+15+10+20+15-10 == 70`, manually verified against the live module
+  with a hand-built `MarketContext` before trusting it as a test
+  assertion). Trend combines whichever of `regime_context.confidence`
+  (only when the regime is directional) and
+  `timeframe_alignment.alignment_score` are available, rather than
+  picking one. Volatility/session/structure/liquidity/risk each read one
+  existing field (`volatility_state`, `session_context.liquidity_expectation`,
+  `structure_context`, `liquidity_state`, `risk_state`) through a small
+  lookup table. The total is clamped to `[0, 100]`. A dimension with no
+  data (`UNKNOWN`, or its sub-context missing) contributes exactly `0.0`
+  and is excluded from both `reasons` and the `confidence` fraction --
+  never a fabricated guess. `confidence` is the fraction of the six
+  dimensions that actually had data, independent of whether the score
+  itself is high or low (a dedicated test constructs a "full data,
+  worst possible readings" scenario proving this explicitly).
+  `reasons` matches the task's own second worked example verbatim for
+  the scenario it describes ("Strong trend alignment", "Normal
+  volatility", "Good liquidity"). `to_dict`/`from_dict`.
+- **Real "missing data" case, not hypothetical:** `liquidity_state`/
+  `risk_state` are still `UNKNOWN` stubs everywhere else in this
+  codebase (`ContextEngine._classify_liquidity`/`_classify_risk`), so
+  they *always* contribute `0.0` through the real engine today. A
+  dedicated test asserts today's practical score ceiling (65, not 100)
+  as a result -- an honest reflection of incomplete data, not a bug,
+  and something this module needs zero changes to pick up correctly
+  once those two phases land with real classification.
+- `tests/test_context_scoring.py` (20 tests): the exact worked example
+  (`70/100` with the exact per-dimension breakdown), the reason-phrasing
+  example, confidence aggregation (full data, zero data, partial data,
+  and the "full data but all-bad readings still full confidence" case),
+  clamping at both the 0 and 100 ends, missing-data handling (including
+  today's real liquidity/risk stub ceiling), full `MarketContext`
+  integration (`to_dict`/`from_dict` round-trip through
+  `ContextEngine.build_context`), `EnvironmentScore` serialization, and
+  an explicit "information only, never decides trades" check that
+  inspects both `scoring.py`'s own imports and confirms `engine.py`/
+  `strategy/base.py` don't import it either.
+
+**Changed**
+- `src/futures_bot/context/models.py`: added
+  `MarketContext.environment_score: Optional[EnvironmentScore]`
+  (`TYPE_CHECKING`-guarded import, same pattern as the other nested
+  `*Context` fields); `to_dict`/`from_dict` updated to serialize it.
+- `src/futures_bot/context/context_engine.py`: `build_context` now
+  constructs the `MarketContext` in two steps -- the base
+  `MarketContext(...)` call with every other field, then
+  `scoring.with_environment_score` (a `dataclasses.replace`) to fill in
+  `environment_score`, since the score necessarily depends on every
+  other field already being set and cannot be computed inside the same
+  constructor call that produces those fields.
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section updated — new
+  "Context Scoring System" subsection covering the weight design, the
+  information-only guarantee, and today's real liquidity/risk-stub
+  ceiling.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. `environment_score` is purely additive (defaults to `None`).
+
+**Verified:** full suite green (1074 passed, 0 failed -- 1054 + 20 new).
+`git status`/`git diff` confirm zero changes to `strategy/`,
+`engine.py`, `risk/`, `brokers/`, `backtest/`, `research/regime.py` --
+only `context/`, its new test file, and docs changed. Manually verified
+the task's own worked example (hand-built `MarketContext` reproducing
+`70/100` exactly) and the second reasons-only example before trusting
+them as passing tests.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
 ## 2026-07-27 — Market Context Engine: Market Structure Context (Phase 2e)
 
 **Added**
@@ -93,7 +314,7 @@ uptrend/downtrend zigzag fixtures and the confirmation-lag scenario
 against the live module before trusting them as passing tests.
 
 **Commit hashes**
-- Not yet committed as of this entry.
+- `a95b4df`.
 
 ## 2026-07-27 — Market Context Engine: Multi-Timeframe Context (Phase 2d)
 

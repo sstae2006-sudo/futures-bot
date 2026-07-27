@@ -101,34 +101,124 @@ Everything from the journal down is read-only with respect to what already
 happened: nothing past that point can change a trade that has already
 closed.
 
-## Market Context Engine (in progress, 2026-07-27 — not wired in yet)
+## Market Context Engine (complete as an independent subsystem, 2026-07-27 — not wired in yet)
 
 `futures_bot.context` (`models.py`'s `MarketContext`, `context_engine.py`'s
 `ContextEngine`, `session.py`'s `SessionContext`, `volatility.py`'s
 `VolatilityContext`, `regime.py`'s `RegimeContext`, `timeframe.py`'s
-`TimeframeAlignment`, `structure.py`'s `StructureContext`) is the
-foundation for a future layer between market data and the strategy,
-matching the target shape:
+`TimeframeAlignment`, `structure.py`'s `StructureContext`, `trend.py`'s
+`TrendContext`, `liquidity.py`'s `LiquidityContext`, `risk.py`'s
+`RiskContext`, `scoring.py`'s `EnvironmentScore`, `analytics.py`'s
+`ContextAnalyticsReport`) is a complete, standalone information layer
+between market data and the strategy, matching the target shape:
 
 ```
 MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
 ```
 
-**What exists today:** a typed, immutable `MarketContext` value object
-(session/regime/volatility/trend/liquidity/risk state, each an Enum with an
-`UNKNOWN` member so a context can always be constructed safely even with
-nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
-whose `build_context()` wires everything together. **Session, volatility,
-regime, multi-timeframe-alignment, and structure classification are
-real** (`session.py`'s `classify_session`, `volatility.py`'s
+**Every dimension `MarketContext` defines a field for is now real** — a
+typed, immutable value object (session/regime/volatility/trend/
+liquidity/risk state, each an Enum with an `UNKNOWN` member so a
+context can always be constructed safely even with nothing known yet,
+plus a `confidence_scores` dict and a combined `environment_score`) and
+a `ContextEngine` whose `build_context()` wires everything together:
+`session.py`'s `classify_session`, `volatility.py`'s
 `analyze_volatility`, `regime.py`'s `classify_regime`, `timeframe.py`'s
-`classify_timeframe_alignment`, and `structure.py`'s
-`analyze_structure`, wired through
-`_classify_session`/`_classify_volatility`/`_classify_regime`/
-`_classify_timeframe_alignment`/`_classify_structure`) — the other three
-`_classify_*` methods (trend, liquidity, risk) are still stubs returning
-`UNKNOWN`. No standalone trend/liquidity/risk detection yet — that
-remains a follow-up phase.
+`classify_timeframe_alignment`, `structure.py`'s `analyze_structure`,
+`trend.py`'s `analyze_trend`, `liquidity.py`'s `analyze_liquidity`, and
+`risk.py`'s `assess_risk`. Phase 8 (2026-07-27) completed the final
+three (trend, liquidity, risk — see their own subsections below),
+added configurable scoring weights, and performed a full internal
+validation, look-ahead audit, performance benchmark, and architecture
+review before considering the engine production-ready as an
+independent subsystem — see:
+
+- `docs/CONTEXT_ENGINE_COVERAGE.md` — every dimension's status, test
+  count, confidence model, dependencies, integration readiness.
+- `docs/CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md` — why each of the eight
+  dimensions (plus the combined score) is or isn't susceptible to
+  look-ahead bias, module by module.
+- `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md` — timing/memory/
+  scaling numbers and the one real optimization this phase found and
+  fixed (`liquidity.py`).
+- `docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` — the final "is this
+  still a pure, unintegrated information layer" check.
+
+**Context Scoring System (`scoring.py`, Phase 7 2026-07-27, made
+configurable Phase 8 2026-07-27):** `score_environment` combines every
+dimension already on a built `MarketContext` into a single
+`EnvironmentScore` — a 0-100 reading of how favorable current
+conditions look for a systematic strategy to operate in *generally*
+(clear trend, normal volatility, a liquid session, confirmed structure,
+ample liquidity, manageable risk). **This is not a directional
+(bullish/bearish) signal, and information only — it does not decide
+trades**; `EnvironmentScore` carries no broker/risk-manager/engine
+reference of any kind, verified directly by a test that inspects the
+module's own imports. Six dimensions each contribute a signed value
+scaled by a maximum weight — **now a field on `ScoringConfig`, not a
+hardcoded constant** (`trend_weight`/`volatility_weight`/
+`session_weight`/`structure_weight`/`liquidity_weight`/`risk_weight`),
+supporting future weighting experimentation with zero code changes:
+construct a different `ScoringConfig` and pass it to
+`score_environment`/`with_environment_score`/`ContextEngine`'s own
+`scoring_config` constructor argument. `DEFAULT_SCORING_CONFIG` holds
+the values this phase's own worked example was built against (Trend
+20, Volatility 15, Session 10, Structure 20, Liquidity 15, Risk -10 —
+`20 + 15 + 10 + 20 + 15 - 10 == 70`); calling `score_environment`/
+`ContextEngine(...)` with no config argument reproduces every
+pre-Phase-8 test's behavior exactly (verified directly by
+`tests/test_context_scoring.py`'s `TestConfigurableScoring`). The total
+is clamped to `[0, 100]`. A dimension with no data (`UNKNOWN`, or its
+sub-context missing) contributes exactly `0.0` and is left out of both
+`reasons` and the `confidence` fraction, regardless of which config is
+in effect — never a fabricated guess. `confidence` is the fraction of
+the six dimensions that actually had data, independent of whether the
+score itself is high or low. Because the score is computed from the
+*rest* of an already-built `MarketContext`, `ContextEngine.build_context`
+constructs the object in two steps — the base `MarketContext(...)` call,
+then `scoring.with_environment_score` (a `dataclasses.replace`) to fill
+in the one field that depends on everything else.
+
+**Trend State (`trend.py`, Phase 8 2026-07-27):** `analyze_trend`
+classifies pure trend *direction* (`TrendState`: BULLISH/BEARISH/
+NEUTRAL/UNKNOWN) — a simpler, standalone reading than `regime.py`'s
+volatility-coupled `MarketRegime` composite, available with far less
+history (just 2 closes for direction; `regime.py` needs enough bars for
+ATR too, or it returns `UNKNOWN` outright). Reuses
+`research.regime.classify_trend` (the same function `regime.py`/
+`timeframe.py` already reuse) for direction, and `strategy.indicators.adx`
+plus `regime.py`'s own `ADX_TRENDING_THRESHOLD`/`ADX_CONFIDENCE_SCALE`
+constants for confidence — the "how strong is this direction" scale
+matches `regime.py`'s exactly rather than a second, subtly different one.
+
+**Liquidity State (`liquidity.py`, Phase 8 2026-07-27):**
+`analyze_liquidity` classifies relative volume (`LiquidityState`:
+THIN/NORMAL/DEEP/UNKNOWN) — current bar's volume vs. a trailing average,
+reusing `strategy.indicators.sma` for the average (the same primitive
+`strategy/trend_pullback/strategy.py` uses for its own, strategy-local
+`volume_ratio` analytics field — reusing that strategy's specific code
+directly would create an inappropriate `context/` → `strategy/`
+dependency, so this module instead reuses the underlying generic
+primitive and builds a new, general-purpose classifier from it).
+Genuinely new classification logic (no existing liquidity/relative-
+volume classifier anywhere in this codebase), following the same
+trailing-window-ratio *shape* `volatility.py` already established for
+this package. Optimized during Phase 8's performance benchmark to
+convert only the trailing `lookback` bars to `Decimal`, not the entire
+history — see `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`.
+
+**Risk State (`risk.py`, Phase 8 2026-07-27):** `assess_risk` is a
+**pure composite of two already-computed signals** —
+`volatility_state` and `market_regime` — exactly what this method's own
+Phase-1 stub docstring anticipated ("likely a composite of the other
+classifications above ... decided once real thresholds exist for those
+inputs"). No new market-data analysis, no bars read at all: `assess_risk`
+takes only the two enum values and returns a `RiskState` (LOW/ELEVATED/
+HIGH/UNKNOWN) plus a confidence that's higher when driven directly by
+`volatility_state` and lower when falling back to `market_regime` alone
+(only relevant when volatility itself is `UNKNOWN`). Unrelated to, and
+never consulted by, `risk.manager.RiskManager` — naming collision only,
+verified by a test inspecting the module's own imports.
 
 **Multi-Timeframe Context (`timeframe.py`, 2026-07-27):**
 `classify_timeframe_alignment` combines trend direction across five
@@ -288,23 +378,65 @@ reference to the broker or risk manager, the same hard boundary that
 already keeps a `Strategy` from placing its own orders** (see "Why
 strategies cannot execute trades directly" below).
 
-**Reuse, don't duplicate, when the remaining classification is
-implemented:** `research/regime.py`'s `classify_trend` (start-to-end %
-move over a lookback) is now reused directly by `regime.py` for trend
-*direction* — see "Market Regime Detection" above — but a real,
-standalone `trend_state`/`_classify_trend` (the separate `TrendState`
-enum: BULLISH/BEARISH/NEUTRAL) is still a stub; the next phase can reuse
-the same `classify_trend` call (or `strategy/indicators.py`'s
-`ema_series` slope) rather than re-deriving a second trend definition.
-`liquidity_state`/`risk_state` have no existing equivalent to reuse —
-genuinely new work, likely a composite of the other dimensions once
-their thresholds are trusted.
+**Reuse, don't duplicate — final state as of Phase 8:** every dimension
+that could reuse existing logic does. `research/regime.py`'s
+`classify_trend` is reused by three modules now (`regime.py`,
+`timeframe.py`, `trend.py`); `strategy.indicators.adx` by two
+(`regime.py`, `trend.py`); `strategy.indicators.atr_series` by one
+(`volatility.py`, which `regime.py` then reuses in turn rather than
+recomputing ATR itself); `strategy.indicators.sma` by one
+(`liquidity.py`). `risk.py` reuses no market data at all — it's a pure
+composite of `volatility_state`/`market_regime`, both already real.
+Only `structure.py` (swing/support-resistance) and `liquidity.py`
+(relative-volume classification) are genuinely new logic, and both say
+exactly why in their own module docstrings.
 
-**Not addressed this phase, by design:** no database persistence (a
-schema change needs explicit approval per `CLAUDE.md` section 8, and
-there's no trading/analytics need for one yet), no `trend_state`/
-`liquidity_state`/`risk_state` real classification, no change to
-`Strategy`, `TradingEngine`, or `RiskManager`.
+**Configuration system (Phase 8):** `scoring.ScoringConfig` centralizes
+every scoring weight; see "Context Scoring System" above.
+`ContextEngine.__init__`'s `scoring_config` parameter (default `None` →
+`scoring.DEFAULT_SCORING_CONFIG`) is the only other configuration
+surface in the engine — every classifier's own tunables
+(`atr_period`, `swing_window`, `average_lookback`, etc.) remain plain
+keyword arguments on their respective `analyze_*`/`classify_*`
+functions, documented and overridable per-call, not centralized (they
+were never asked to be, and centralizing them would mean threading
+per-dimension config through `ContextEngine` for no requested benefit).
+
+**Validation guarantees (Phase 8, Part 3):** no circular imports (every
+`context/` submodule imports standalone), no duplicated ATR/ADX/SMA/
+trend-direction math, no duplicated CME calendar/session/regime/
+volatility-state definitions, no dependency in either direction between
+`context/` and `engine.py`/`strategy/`/`risk/manager.py`/`brokers/`,
+deterministic output for identical input (no wall-clock reads, no
+randomness anywhere in the package), missing data always handled
+safely, `UNKNOWN` states always carry zero confidence and no fabricated
+reason/value, and every confidence value across every dimension stays
+in `[0.0, 1.0]` — all encoded as executable tests in
+`tests/test_context_engine_validation.py`, not just claimed.
+
+**Known limitations:** no database persistence (a schema change needs
+explicit approval per `CLAUDE.md` section 8, and isn't decided); four
+dimensions (`volatility`/`regime`/`trend`/`timeframe`) plus `structure`
+are O(n) in the number of bars passed per call, so a future integration
+should pass a bounded trailing window rather than accumulating full
+history (see `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`);
+`TrendState` and `MarketRegime` are two independent trend readings that
+can legitimately disagree (by design, not a bug — see `trend.py`'s
+docstring); `ScoringConfig`'s default weights are illustrative, not
+derived from any backtest of which dimensions actually predict
+performance.
+
+**Future integration plan (not started, needs explicit approval):**
+wire `MarketContext` into `TradingEngine.on_bar` at the integration
+point described above — most likely a `Strategy.on_bar` signature
+change — decide whether/how `EnvironmentScore` should influence
+position sizing or trade filtering (a strategy-level decision, not
+something `context/` itself should ever make), and decide whether
+`MarketContext`/`EnvironmentScore` snapshots get persisted for research
+(a database schema change). None of this is proposed or started here —
+see "The exact integration point" above and
+`docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` for the current, purely
+observational state this phase leaves the engine in.
 
 ## Why strategies cannot execute trades directly
 

@@ -31,10 +31,14 @@ if TYPE_CHECKING:
     # because `from __future__ import annotations` above means every
     # annotation in this file is a string at runtime -- never actually
     # evaluated, just available to static type checkers/IDEs.
+    from .liquidity import LiquidityContext
     from .regime import RegimeContext
+    from .risk import RiskContext
+    from .scoring import EnvironmentScore
     from .session import SessionContext
     from .structure import StructureContext
     from .timeframe import TimeframeAlignment
+    from .trend import TrendContext
     from .volatility import VolatilityContext
 
 
@@ -163,6 +167,23 @@ class MarketContext:
     #: caller sets it -- ``market_regime`` above (the bare enum) is kept
     #: in sync separately, same pattern as session/volatility.
     regime_context: Optional["RegimeContext"] = None
+    #: The rich, standalone trend-direction snapshot (direction, adx,
+    #: confidence) from context/trend.py's analyze_trend() --
+    #: independent of regime_context's volatility-coupled composite.
+    #: ``None`` until a caller sets it -- ``trend_state`` above (the
+    #: bare enum) is kept in sync separately, same pattern as session/
+    #: volatility/regime.
+    trend_context: Optional["TrendContext"] = None
+    #: The rich liquidity snapshot (current_volume, average_volume,
+    #: volume_ratio) from context/liquidity.py's analyze_liquidity().
+    #: ``None`` until a caller sets it -- ``liquidity_state`` above (the
+    #: bare enum) is kept in sync separately.
+    liquidity_context: Optional["LiquidityContext"] = None
+    #: The rich risk snapshot (a composite of volatility_state and
+    #: market_regime) from context/risk.py's assess_risk(). ``None``
+    #: until a caller sets it -- ``risk_state`` above (the bare enum) is
+    #: kept in sync separately.
+    risk_context: Optional["RiskContext"] = None
     #: Trend agreement across the five canonical timeframes (1m/5m/15m/
     #: 1h/1d) from context/timeframe.py's classify_timeframe_alignment().
     #: ``None`` until a caller sets it.
@@ -171,6 +192,13 @@ class MarketContext:
     #: resistance, distance from them) from context/structure.py's
     #: analyze_structure(). ``None`` until a caller sets it.
     structure_context: Optional["StructureContext"] = None
+    #: The combined 0-100 market-environment score from
+    #: context/scoring.py's score_environment() -- computed from every
+    #: other field above, so necessarily set after the rest of this
+    #: object already exists (see scoring.with_environment_score).
+    #: ``None`` until a caller sets it. Information only -- never
+    #: consulted for a trade decision.
+    environment_score: Optional["EnvironmentScore"] = None
     #: Per-dimension confidence in [0.0, 1.0], keyed by the same names as
     #: the Enum fields above (e.g. {"market_regime": 0.82}). Missing a key
     #: means "no confidence recorded for that dimension" -- see
@@ -219,11 +247,19 @@ class MarketContext:
                 self.volatility_context.to_dict() if self.volatility_context else None
             ),
             "regime_context": self.regime_context.to_dict() if self.regime_context else None,
+            "trend_context": self.trend_context.to_dict() if self.trend_context else None,
+            "liquidity_context": (
+                self.liquidity_context.to_dict() if self.liquidity_context else None
+            ),
+            "risk_context": self.risk_context.to_dict() if self.risk_context else None,
             "timeframe_alignment": (
                 self.timeframe_alignment.to_dict() if self.timeframe_alignment else None
             ),
             "structure_context": (
                 self.structure_context.to_dict() if self.structure_context else None
+            ),
+            "environment_score": (
+                self.environment_score.to_dict() if self.environment_score else None
             ),
             "confidence_scores": dict(self.confidence_scores),
             "confidence": self.confidence,
@@ -260,6 +296,27 @@ class MarketContext:
 
             regime_context = RegimeContext.from_dict(regime_context_data)
 
+        trend_context_data = data.get("trend_context")
+        trend_context = None
+        if trend_context_data is not None:
+            from .trend import TrendContext  # local: see the TYPE_CHECKING import above
+
+            trend_context = TrendContext.from_dict(trend_context_data)
+
+        liquidity_context_data = data.get("liquidity_context")
+        liquidity_context = None
+        if liquidity_context_data is not None:
+            from .liquidity import LiquidityContext  # local: see the TYPE_CHECKING import above
+
+            liquidity_context = LiquidityContext.from_dict(liquidity_context_data)
+
+        risk_context_data = data.get("risk_context")
+        risk_context = None
+        if risk_context_data is not None:
+            from .risk import RiskContext  # local: see the TYPE_CHECKING import above
+
+            risk_context = RiskContext.from_dict(risk_context_data)
+
         timeframe_alignment_data = data.get("timeframe_alignment")
         timeframe_alignment = None
         if timeframe_alignment_data is not None:
@@ -274,14 +331,25 @@ class MarketContext:
 
             structure_context = StructureContext.from_dict(structure_context_data)
 
+        environment_score_data = data.get("environment_score")
+        environment_score = None
+        if environment_score_data is not None:
+            from .scoring import EnvironmentScore  # local: see the TYPE_CHECKING import above
+
+            environment_score = EnvironmentScore.from_dict(environment_score_data)
+
         kwargs: dict[str, Any] = {
             "timestamp": timestamp,
             "symbol": data["symbol"],
             "session_context": session_context,
             "volatility_context": volatility_context,
             "regime_context": regime_context,
+            "trend_context": trend_context,
+            "liquidity_context": liquidity_context,
+            "risk_context": risk_context,
             "timeframe_alignment": timeframe_alignment,
             "structure_context": structure_context,
+            "environment_score": environment_score,
             "timeframe": data["timeframe"],
             "confidence_scores": dict(data.get("confidence_scores", {})),
         }

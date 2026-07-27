@@ -120,11 +120,14 @@ class TestMissingValuesHandledSafely:
         # Session classification is real as of 2026-07-27 (see
         # test_context_session.py) and doesn't need bars at all -- only
         # a timestamp -- so it's no longer part of what "safe with no
-        # data" means here. Volatility and regime are also real now
-        # (test_context_volatility.py / test_context_regime.py) but
-        # still return UNKNOWN with zero bars -- not because they're
-        # stubbed, but because there's genuinely no data to classify.
-        # Trend/liquidity/risk remain actual stubs.
+        # data" means here. Every other dimension is real too as of
+        # Phase 8 (test_context_regime.py / test_context_volatility.py /
+        # test_context_trend.py / test_context_liquidity.py /
+        # test_context_risk.py) but still returns UNKNOWN with zero
+        # bars -- not because anything is stubbed anymore, but because
+        # there's genuinely no data to classify (risk additionally needs
+        # neither volatility nor regime to be known, both of which are
+        # themselves bar-dependent).
         engine = ContextEngine(symbol="MES", timeframe="5min")
         ctx = engine.build_context(timestamp=datetime(2026, 1, 5, tzinfo=timezone.utc))
         assert ctx.market_regime is MarketRegime.UNKNOWN
@@ -137,13 +140,15 @@ class TestMissingValuesHandledSafely:
         # 3 bars is nowhere near enough history for volatility (needs
         # atr_period + 1) or regime (needs that plus 2 * adx_period for
         # ADX) -- both correctly stay UNKNOWN, same "insufficient data
-        # handled safely" contract as with zero bars. trend_state is a
-        # genuine stub regardless of bars.
+        # handled safely" contract as with zero bars. trend_state, by
+        # contrast, only needs 2 closes (see context/trend.py) and IS
+        # classifiable here -- these fixture bars are all equal price,
+        # so it reads NEUTRAL, not UNKNOWN; that's correct, not a stub.
         engine = ContextEngine(symbol="MES", timeframe="5min")
         bars = [_bar("2026-01-05"), _bar("2026-01-06"), _bar("2026-01-07")]
         ctx = engine.build_context(timestamp=bars[-1].timestamp, bars=bars)
         assert ctx.market_regime is MarketRegime.UNKNOWN
-        assert ctx.trend_state is TrendState.UNKNOWN
+        assert ctx.trend_state is TrendState.NEUTRAL
         assert ctx.volatility_state is VolatilityState.UNKNOWN
 
     def test_from_dict_with_only_required_keys(self):
@@ -152,6 +157,29 @@ class TestMissingValuesHandledSafely:
         })
         assert ctx.session is SessionPhase.UNKNOWN
         assert ctx.confidence_scores == {}
+
+    def test_from_dict_accepts_a_pre_phase_8_dict_missing_the_newer_context_keys(self):
+        # A dict shaped like what Phase 2a (session-only) would have
+        # produced -- entirely missing the trend_context/
+        # liquidity_context/risk_context/environment_score keys Phase 8
+        # added, not just present-but-null. Forward/backward
+        # compatibility of stored/logged MarketContext JSON depends on
+        # this still working.
+        old_format = {
+            "timestamp": "2026-01-05T00:00:00+00:00",
+            "symbol": "MES",
+            "timeframe": "5min",
+            "session": "OPENING_RANGE",
+        }
+        ctx = MarketContext.from_dict(old_format)
+        assert ctx.session is SessionPhase.OPENING_RANGE
+        assert ctx.trend_context is None
+        assert ctx.liquidity_context is None
+        assert ctx.risk_context is None
+        assert ctx.environment_score is None
+        assert ctx.trend_state is TrendState.UNKNOWN
+        assert ctx.liquidity_state is LiquidityState.UNKNOWN
+        assert ctx.risk_state is RiskState.UNKNOWN
 
 
 class TestSerialization:

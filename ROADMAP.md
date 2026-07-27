@@ -105,19 +105,61 @@ Engine" section for the full rationale.
   documented as distinct from a look-ahead violation. Wired into
   `MarketContext`/`ContextEngine`. 17 new tests
   (`tests/test_context_structure.py`).
-- **Phase 3 — trend/liquidity/risk.** A real, standalone
-  `_classify_trend`/`TrendState` (can reuse `research/regime.py`'s
-  `classify_trend`, already wired into `regime.py`/`timeframe.py` for
-  trend direction) plus `_classify_liquidity`/`_classify_risk`, which
-  have no existing equivalent to reuse — genuinely new work.
+- **Phase 2f — Context Scoring System (done, 2026-07-27).**
+  `context/scoring.py`'s `score_environment`/`EnvironmentScore` —
+  combines every existing dimension into a single 0-100 "Market
+  Environment Score" (Trend/Volatility/Session/Structure/Liquidity/Risk,
+  weights chosen to reproduce the task's own worked example exactly:
+  `20+15+10+20+15-10 == 70`), plus a `confidence` (fraction of
+  dimensions with real data) and a `reasons` explanation list.
+  Information only, never a trading signal — verified by an
+  import-boundary test. At the time this phase landed,
+  `liquidity_state`/`risk_state` were still stubs (contributing `0.0`
+  always) — both are real as of Phase 8 below. Wired into
+  `MarketContext` (new `environment_score` field, always populated). 20
+  new tests (`tests/test_context_scoring.py`).
+- **Phase 3 — trend/liquidity/risk (done, 2026-07-27, as part of
+  Phase 8).** `context/trend.py` (`TrendState`, reusing
+  `research.regime.classify_trend` + `regime.py`'s ADX confidence
+  constants), `context/liquidity.py` (`LiquidityState` from relative
+  volume, reusing `strategy.indicators.sma` — genuinely new
+  classification logic), `context/risk.py` (`RiskState` as a pure
+  composite of `volatility_state`/`market_regime` — no new market-data
+  analysis). 50 new tests. See "Phase 8" below for the full scope this
+  landed alongside.
 - **Phase 4 — wire it in.** Decide how `TradingEngine.on_bar` actually
   gets a `MarketContext` to a strategy — most likely a `Strategy.on_bar`
   signature change. **Needs explicit approval per CLAUDE.md section 8**
-  (protected: the strategy interface).
+  (protected: the strategy interface). **Not started** — Phase 8 was
+  explicitly a completion/validation phase for the engine as an
+  independent subsystem, not an integration phase.
 - **Phase 5 — persistence (maybe).** Whether `MarketContext` snapshots
   get stored for research/backtesting analysis. Would be a database
   schema change — needs explicit approval per CLAUDE.md section 8 —
   and isn't decided yet; don't assume it's wanted.
+- **Phase 8 — completion and validation (done, 2026-07-27).** An
+  11-part phase making the engine production-ready as an independent
+  subsystem before any integration: Part 1 (trend/liquidity/risk, see
+  "Phase 3" above), Part 2 (configurable scoring —
+  `scoring.ScoringConfig` centralizes all six weights, previously
+  hardcoded constants; `ContextEngine.__init__` gained an optional
+  `scoring_config` parameter; default config verified to reproduce
+  every pre-Phase-8 test exactly), Part 3 (engine validation — no
+  circular imports/duplicated logic/duplicated calendars, module
+  independence, determinism, missing-data safety, confidence validity,
+  all encoded as executable tests in
+  `tests/test_context_engine_validation.py`), Part 4 (look-ahead audit
+  — `docs/CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`, no issues found), Part 5
+  (performance benchmark — `tools/benchmark_context_engine.py`,
+  `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`; found and fixed one
+  real inefficiency in `liquidity.py`), Part 6 (`context/analytics.py`'s
+  developer/research distribution reports), Part 7
+  (`docs/CONTEXT_ENGINE_COVERAGE.md`), Part 8
+  (`docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` — confirmed zero
+  changes outside `context/`/tests/docs/tools across this entire
+  multi-phase effort). 89 new tests this phase (1074 → 1163 total).
+  **Integration into `TradingEngine`/`Strategy` explicitly not started**
+  — see Phase 4 above, needs its own approval.
 
 ## Completed
 
@@ -153,7 +195,11 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine, Phases 1, 2a, 2b, 2c, 2d, and 2e (foundation +
-  Session Context + Volatility Context + Market Regime Detection +
-  Multi-Timeframe Context + Market Structure Context) (2026-07-27) —
-  see "Market Context Engine (phased)" above for what's left.
+- Market Context Engine — **complete as an independent subsystem**
+  through Phase 8 (foundation + Session/Volatility/Regime/
+  Multi-Timeframe/Structure/Trend/Liquidity/Risk + configurable
+  Context Scoring + engine validation + look-ahead audit + performance
+  benchmark + context analytics + coverage report + architecture
+  review) (2026-07-27) — see "Market Context Engine (phased)" above;
+  only Phase 4 (wiring into `TradingEngine`/`Strategy`, needs approval)
+  and Phase 5 (persistence, maybe) remain.

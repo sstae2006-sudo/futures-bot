@@ -25,8 +25,10 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: 1054 tests as of 2026-07-27 (1037 + 17 new Market
-  Structure Context tests), full suite green (1054 passed, 0 failed). One test
+- Test suite: 1163 tests as of 2026-07-27 (1074 + 89 new Market Context
+  Engine Phase 8 tests — Trend/Liquidity/Risk State, configurable
+  scoring, engine validation, and context analytics), full suite green
+  (1163 passed, 0 failed). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
   known flake, not a new regression, until it's root-caused. Requires
@@ -68,22 +70,28 @@ version is bumped by hand.
   contracts and flat-file APIs.
 - Grid-search optimizer with train/validation split and walk-forward
   option; ML research workstation (dataset build, training, prediction).
-- Market Context Engine **in progress** (2026-07-27,
-  `src/futures_bot/context/`): typed `MarketContext` value object +
-  `ContextEngine`. **Session, volatility, regime, multi-timeframe-
-  alignment, and structure classification are real** (`session.py`'s
-  `classify_session`, using `contracts.py`'s existing CME calendar
-  logic; `volatility.py`'s `analyze_volatility`, reusing
-  `strategy.indicators.atr_series`; `regime.py`'s `classify_regime`,
-  reusing `strategy.indicators.adx`, `research.regime.classify_trend`,
-  and `volatility.analyze_volatility`; `timeframe.py`'s
-  `classify_timeframe_alignment`, reusing `research.regime.classify_trend`
-  per timeframe; `structure.py`'s `analyze_structure`, genuinely new
-  swing-point/support-resistance detection — all five wired through
-  `ContextEngine`/`MarketContext`); trend, liquidity, and risk
-  classification are still stubs returning `UNKNOWN`. Not wired into
-  `TradingEngine`/`Strategy` yet. See `docs/ARCHITECTURE.md`'s "Market
-  Context Engine" section and ROADMAP.md for the follow-up phases.
+- Market Context Engine **complete as an independent subsystem**
+  (Phase 8, 2026-07-27, `src/futures_bot/context/`): typed
+  `MarketContext` value object + `ContextEngine`. **Every dimension is
+  real** — `session.py`, `volatility.py`, `regime.py`, `timeframe.py`,
+  `structure.py`, `trend.py`, `liquidity.py`, `risk.py` — plus a
+  combined 0-100 informational score (`scoring.py`'s
+  `score_environment`, weights configurable via `ScoringConfig`, never
+  consulted for a trade decision) and developer analytics
+  (`analytics.py`'s `analyze_context_batch`, distribution reports over
+  a batch of contexts). Internally validated (no circular imports, no
+  duplicated logic, deterministic, missing-data-safe — see
+  `tests/test_context_engine_validation.py`), audited for look-ahead
+  bias with no issues found (`docs/CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`),
+  and benchmarked (`docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`,
+  `tools/benchmark_context_engine.py`). **Not wired into
+  `TradingEngine`/`Strategy` yet — deliberately, pending explicit
+  approval** (verified: zero changes to `strategy/`/`engine.py`/`risk/`/
+  `brokers/`/`backtest/` across every phase of building this — see
+  `docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md`). See
+  `docs/ARCHITECTURE.md`'s "Market Context Engine" section and
+  `docs/CONTEXT_ENGINE_COVERAGE.md` for the full per-dimension
+  breakdown.
 - FastAPI research server + React dashboard covering all of the above,
   plus an autonomous paper-trading/nightly-jobs layer
   (`research_server/`).
@@ -103,6 +111,124 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: **Market Context Engine Phase 8 — completion and
+validation** (11-part phase; the engine is now considered
+production-ready as an independent, unintegrated subsystem):
+
+- **Part 1 — the final three dimensions, real:** `context/trend.py`
+  (standalone `TrendState`, reusing `research.regime.classify_trend` +
+  `regime.py`'s ADX confidence constants — independent of
+  `regime.py`'s volatility-coupled composite, available with far less
+  history); `context/liquidity.py` (`LiquidityState` from relative
+  volume, reusing `strategy.indicators.sma` — genuinely new
+  classification logic, documented why); `context/risk.py`
+  (`RiskState` as a pure composite of already-real `volatility_state`/
+  `market_regime`, exactly as this method's own Phase-1 stub docstring
+  anticipated — no new market-data analysis at all). Wired into
+  `MarketContext` (new `trend_context`/`liquidity_context`/
+  `risk_context` fields). 50 new tests
+  (`test_context_trend.py`/`test_context_liquidity.py`/
+  `test_context_risk.py`).
+- **Part 2 — configurable scoring:** `scoring.ScoringConfig`
+  centralizes all six weights (previously hardcoded module constants);
+  `DEFAULT_SCORING_CONFIG` reproduces every pre-Phase-8 scoring test
+  exactly (verified — zero test changes needed for the 21 pre-existing
+  scoring tests to keep passing). `ContextEngine.__init__` gained an
+  optional `scoring_config` parameter. 9 new tests.
+- **Part 3 — engine validation:** `tests/test_context_engine_validation.py`
+  (16 tests) encodes no-circular-imports, no-duplicated-logic (ATR/ADX/
+  SMA/classify_trend each defined exactly once), no-duplicated-
+  calendars/enums, module independence from `risk.manager`/`brokers`/
+  `engine.py`, determinism, missing-data safety, `UNKNOWN` correctness,
+  and confidence validity as lasting, executable checks. Found and
+  fixed a real bug **in the validation test itself**: an early draft
+  used `importlib.reload()` to check standalone-importability, which
+  mints duplicate Enum class objects and broke `is`-identity for every
+  later test in the same process — replaced with genuine subprocess
+  isolation.
+- **Part 4 — look-ahead bias audit:** `docs/CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`
+  — explicit module-by-module reasoning for all 8 dimensions plus the
+  combined score. No issues found; every module was already built
+  under a "trailing-window-only" / "confirmation lag ≠ leakage" / "no
+  bars read at all" discipline, each with its own dedicated test.
+- **Part 5 — performance benchmark:** `tools/benchmark_context_engine.py`
+  measured avg/worst-case timing and peak memory across 50–50,000 bars
+  (results in `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`). Found
+  and fixed one real inefficiency: `liquidity.py` was converting every
+  bar's volume to `Decimal` even though only the trailing `lookback`
+  bars are ever used — fixed to slice first, verified output-identical.
+  ATR/ADX-based dimensions remain O(n) by necessity (Wilder's smoothing
+  is seed-sensitive to truncation) — documented, not silently
+  approximated.
+- **Part 6 — context analytics:** `context/analytics.py`'s
+  `analyze_context_batch`/`ContextAnalyticsReport` — session/regime/
+  volatility/trend/liquidity/risk distributions, environment-score and
+  confidence numeric summaries, and UNKNOWN-frequency-per-dimension
+  over a batch of already-built contexts. Dev/research tool, no UI, not
+  wired into `ContextEngine`. 12 new tests.
+- **Part 7 — coverage report:** `docs/CONTEXT_ENGINE_COVERAGE.md` — a
+  table of every dimension's status/test-count/confidence-model/
+  dependencies/integration-readiness.
+- **Part 8 — architecture review:** `docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md`
+  — confirmed via `git status`/`git diff` and source-inspection tests
+  that zero files outside `context/`/`tests/test_context*.py`/`docs/`/
+  `tools/benchmark_context_engine.py` changed across this entire
+  multi-phase effort, and that nothing outside `context/` references it
+  either (checked in both directions).
+- **Part 9 — testing:** 89 new tests this phase (1074 → 1163), full
+  suite green throughout every part. One backward-compatibility edge
+  case discovered and covered: `MarketContext.from_dict` correctly
+  handles a dict shaped like an earlier phase's output (missing the
+  newer `trend_context`/`liquidity_context`/`risk_context`/
+  `environment_score` keys entirely, not just null) — new regression
+  test in `test_context.py`.
+- **Part 10 — documentation:** `CLAUDE.md`, `PROJECT_STATE.md`,
+  `ROADMAP.md`, `docs/ARCHITECTURE.md`, `CHANGELOG.md` all updated;
+  four new dedicated docs (coverage/lookahead-audit/performance-
+  benchmark/architecture-review) plus the benchmark tool.
+
+**Not done, deliberately:** no integration into `TradingEngine`,
+`Strategy`, `RiskEngine`, backtesting, live trading, or broker code —
+explicitly out of scope for this phase, needs its own explicit
+approval per CLAUDE.md section 8.
+
+2026-07-27: implemented the Context Scoring System
+(`src/futures_bot/context/scoring.py`,
+`score_environment`/`EnvironmentScore`) — combines every existing
+`MarketContext` dimension into a single 0-100 "Market Environment
+Score": how favorable current conditions look for a systematic strategy
+to operate in *generally* (clear trend, normal volatility, a liquid
+session, confirmed structure, ample liquidity, manageable risk) --
+**not a directional signal, information only, per the task's own
+instructions**: `EnvironmentScore` carries no broker/risk-manager/
+engine reference of any kind, verified by a test inspecting the
+module's own imports. Six dimensions each contribute a signed value
+scaled by a documented maximum weight (Trend 20, Volatility 15, Session
+10, Structure 20, Liquidity 15, Risk -10 -- chosen to reproduce the
+task's own worked example exactly: `20+15+10+20+15-10 == 70`,
+manually verified against the live module before trusting it as a test
+assertion); the total is clamped to `[0, 100]`. A dimension with no
+data contributes exactly `0.0` and is excluded from both the `reasons`
+explanation list and the `confidence` fraction. Since
+`liquidity_state`/`risk_state` are still `UNKNOWN` stubs everywhere
+else in this codebase, they always contribute `0.0` through
+`ContextEngine` today -- a real, already-exercised "missing data"
+case, covered by a test asserting today's practical score ceiling (65,
+not 100). `confidence` is the fraction of the six dimensions that
+actually had data, independent of the score's own value (a test
+constructs a "full data, worst possible readings" scenario to prove
+this explicitly). Wired into `MarketContext` (new `environment_score`
+field, always populated by `ContextEngine.build_context` via a
+two-step construction: the base `MarketContext(...)` call, then
+`scoring.with_environment_score` -- a `dataclasses.replace` -- since
+the score depends on every other field already being set). 20 new
+tests (`tests/test_context_scoring.py`, covering the exact worked
+example, the reason-phrasing example, confidence aggregation,
+clamping at both ends, missing-data handling, full `MarketContext`
+integration, and the information-only import-boundary check). Full
+suite green (1074 passed, 0 failed, 20 new). Trend (standalone),
+liquidity, and risk remain stubs -- out of scope this phase.
 
 2026-07-27: implemented Market Structure Context
 (`src/futures_bot/context/structure.py`,
@@ -322,14 +448,18 @@ breakdown.
 
 ## Recommended Next Task
 
-Decide the next Market Context Engine phase: implement a real, standalone
-`_classify_trend`/`TrendState` (BULLISH/BEARISH/NEUTRAL — can reuse
-`research.regime.classify_trend`, already wired into `regime.py` for
-regime direction), then `_classify_liquidity`/`_classify_risk` (genuinely
-new — no existing equivalent), and decide how `TradingEngine.on_bar`
-should actually pass a `MarketContext` to strategies (likely a
-`Strategy.on_bar` signature change — needs explicit approval per
-CLAUDE.md section 8).
+The Market Context Engine is now complete and validated as an
+independent subsystem (Phase 8, 2026-07-27) — every dimension real,
+internally validated, look-ahead-audited, benchmarked, and documented.
+The next decision is **integration**: how `TradingEngine.on_bar` should
+actually pass a `MarketContext` to strategies (likely a
+`Strategy.on_bar` signature change), and whether/how `EnvironmentScore`
+should influence a strategy's own decisions — **needs explicit approval
+per CLAUDE.md section 8** (the strategy interface is a protected
+surface); see `docs/ARCHITECTURE.md`'s "Market Context Engine" section
+("The exact integration point") and
+`docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` for the current,
+purely-observational state to preserve until that approval is given.
 Otherwise: decide whether to fix `kill-vite.js`'s self-kill bug directly (would
 fix manual `npm run dev` too, but is a change to existing frontend
 code) or leave `scripts\start.ps1`'s workaround as the standing

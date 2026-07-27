@@ -1,6 +1,7 @@
-"""The Market Context Engine -- foundation phase (2026-07-27), Session
-Context, Volatility Context, Market Regime Detection, Multi-Timeframe
-Context, and Market Structure Context (all 2026-07-27) implemented.
+"""The Market Context Engine -- every dimension implemented as of Phase 8
+(2026-07-27): Session, Volatility, Market Regime, Multi-Timeframe,
+Structure, Trend, Liquidity, and Risk, plus the combined Context Scoring
+System.
 
 Builds ``MarketContext`` snapshots from market data. Provides information
 *to* strategies; never makes a trade decision and never holds a reference
@@ -10,22 +11,20 @@ the full rationale and the target layering:
 
     Market Data -> Context Engine -> Strategy Engine -> Risk Engine -> Execution
 
-**Scope, deliberately:** ``_classify_session``, ``_classify_volatility``,
-``_classify_regime``, ``_classify_timeframe_alignment``, and
-``_classify_structure`` are now real (see
+**All eight ``_classify_*`` methods below are now real** (see
 ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``/
-``structure.py``). The other three ``_classify_*`` methods below (trend,
-liquidity, risk) are still stubs returning ``UNKNOWN`` with no
-confidence recorded -- that's explicitly a follow-up phase (see
-ROADMAP.md), not this one. This class exists so the *shape* of that
-future work has an obvious, already-typed home instead of being designed
-from scratch under time pressure later, and so nothing calling it today
-needs to change when real classification logic lands for the rest.
+``structure.py``/``trend.py``/``liquidity.py``/``risk.py``). Every
+dimension is classification-only -- no buy/sell logic, no execution
+logic, no broker interaction, no strategy decisions anywhere in this
+package.
 
-**Not wired into ``TradingEngine`` yet.** Nothing in ``engine.py``,
-``strategy/``, or ``risk/`` imports this module. Building it standalone
-first, with its own tests, keeps this phase purely additive -- the
-existing trading system cannot be affected by code nothing calls.
+**Not wired into ``TradingEngine`` yet -- deliberately, per Phase 8's
+own instructions.** Nothing in ``engine.py``, ``strategy/``, or
+``risk/`` imports this module. Building it standalone first, with its
+own tests, keeps every phase purely additive -- the existing trading
+system cannot be affected by code nothing calls. See
+docs/ARCHITECTURE.md's "Market Context Engine" section for the
+integration point a future, explicitly-approved phase would use.
 """
 
 from __future__ import annotations
@@ -34,6 +33,7 @@ from datetime import datetime
 from typing import Mapping, Optional, Sequence
 
 from ..models import Bar
+from .liquidity import LiquidityContext, analyze_liquidity
 from .models import (
     LiquidityState,
     MarketContext,
@@ -43,9 +43,12 @@ from .models import (
     VolatilityState,
 )
 from .regime import RegimeContext, classify_regime
+from .risk import RiskContext, assess_risk
+from .scoring import DEFAULT_SCORING_CONFIG, ScoringConfig, with_environment_score
 from .session import SessionContext, classify_session
 from .structure import StructureContext, analyze_structure
 from .timeframe import TimeframeAlignment, classify_timeframe_alignment
+from .trend import TrendContext, analyze_trend
 from .volatility import VolatilityContext, analyze_volatility
 
 
@@ -56,11 +59,22 @@ class ContextEngine:
     series being watched), matching how ``Strategy`` is bound to one
     ``ContractSpec`` for its lifetime rather than being handed a symbol
     per call.
+
+    ``scoring_config`` (optional) lets a caller experiment with a
+    different ``scoring.ScoringConfig`` weighting without touching any
+    code -- defaults to ``scoring.DEFAULT_SCORING_CONFIG``, the exact
+    weighting this package has used since Phase 7.
     """
 
-    def __init__(self, symbol: str, timeframe: str) -> None:
+    def __init__(
+        self,
+        symbol: str,
+        timeframe: str,
+        scoring_config: Optional[ScoringConfig] = None,
+    ) -> None:
         self.symbol = symbol
         self.timeframe = timeframe
+        self.scoring_config = scoring_config or DEFAULT_SCORING_CONFIG
 
     def build_context(
         self,
@@ -84,13 +98,18 @@ class ContextEngine:
         score includes it under the matching key itself. Omitted or
         partial data degrades gracefully (see ``timeframe.py``).
 
-        Session, volatility, regime, timeframe-alignment, and structure
-        classification are real (see
+        Session, volatility, regime, timeframe-alignment, structure,
+        trend, liquidity, and risk classification are all real (see
         ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``/
-        ``structure.py``); the other three below are still stubs, so
-        this returns ``UNKNOWN`` for those with zero confidence. See the
-        module docstring for why, and docs/ARCHITECTURE.md for what a
-        real implementation should reuse instead of re-deriving.
+        ``structure.py``/``trend.py``/``liquidity.py``/``risk.py``).
+        Missing/insufficient data still returns ``UNKNOWN`` with zero
+        confidence for whichever dimension couldn't be classified --
+        that contract is unchanged from every earlier phase.
+
+        The returned context's ``environment_score`` (see
+        ``scoring.py``) is always populated, combining whatever
+        dimensions above actually had data -- information only, never
+        consulted for a trade decision.
         """
         bars = bars or ()
         session_ctx = self._classify_session(timestamp)
@@ -98,13 +117,15 @@ class ContextEngine:
         regime_ctx = self._classify_regime(timestamp, bars)
         timeframe_ctx = self._classify_timeframe_alignment(timestamp, bars_by_timeframe)
         structure_ctx = self._classify_structure(timestamp, bars)
+        trend_ctx = self._classify_trend(timestamp, bars)
+        liquidity_ctx = self._classify_liquidity(timestamp, bars)
+        risk_ctx = self._classify_risk(timestamp, volatility_ctx.state, regime_ctx.regime)
 
         confidence_scores = {"session": 1.0}
         if volatility_ctx.state is not VolatilityState.UNKNOWN:
             # Real confidence only once there's actually enough history
             # to have computed a ratio -- an UNKNOWN reading (missing
-            # data) stays out of confidence_scores entirely, same
-            # contract as the three still-stubbed dimensions below.
+            # data) stays out of confidence_scores entirely.
             confidence_scores["volatility"] = 1.0
         if regime_ctx.regime is not MarketRegime.UNKNOWN:
             confidence_scores["regime"] = regime_ctx.confidence
@@ -112,8 +133,14 @@ class ContextEngine:
             confidence_scores["timeframe_alignment"] = timeframe_ctx.alignment_score
         if structure_ctx.trend is not TrendState.UNKNOWN:
             confidence_scores["structure"] = structure_ctx.structure_confidence
+        if trend_ctx.trend is not TrendState.UNKNOWN:
+            confidence_scores["trend"] = trend_ctx.confidence
+        if liquidity_ctx.state is not LiquidityState.UNKNOWN:
+            confidence_scores["liquidity"] = liquidity_ctx.confidence
+        if risk_ctx.state is not RiskState.UNKNOWN:
+            confidence_scores["risk"] = risk_ctx.confidence
 
-        return MarketContext(
+        context = MarketContext(
             timestamp=timestamp,
             symbol=self.symbol,
             timeframe=self.timeframe,
@@ -125,11 +152,19 @@ class ContextEngine:
             volatility_context=volatility_ctx,
             timeframe_alignment=timeframe_ctx,
             structure_context=structure_ctx,
-            trend_state=self._classify_trend(bars),
-            liquidity_state=self._classify_liquidity(bars),
-            risk_state=self._classify_risk(bars),
+            trend_state=trend_ctx.trend,
+            trend_context=trend_ctx,
+            liquidity_state=liquidity_ctx.state,
+            liquidity_context=liquidity_ctx,
+            risk_state=risk_ctx.state,
+            risk_context=risk_ctx,
             confidence_scores=confidence_scores,
         )
+        # Computed last, and necessarily as a second step: the
+        # environment score reads every field already set above, so it
+        # cannot be filled in during the same MarketContext(...) call
+        # that produces those fields (see scoring.with_environment_score).
+        return with_environment_score(context, self.scoring_config)
 
     # --- Classification methods ---
     #
@@ -186,20 +221,32 @@ class ContextEngine:
         look-ahead violation."""
         return analyze_structure(timestamp, self.symbol, bars)
 
-    def _classify_trend(self, bars: Sequence[Bar]) -> TrendState:
-        """Future phase: ``research.regime.classify_trend`` (start-to-end
-        % move over a lookback) or ``strategy.indicators.ema_series``'s
-        slope -- reuse rather than re-deriving a second trend definition."""
-        return TrendState.UNKNOWN
+    def _classify_trend(self, timestamp: datetime, bars: Sequence[Bar]) -> TrendContext:
+        """Real, as of 2026-07-27 (Phase 8) -- delegates entirely to
+        ``trend.analyze_trend``, which reuses
+        ``research.regime.classify_trend`` for direction and
+        ``strategy.indicators.adx`` (plus ``regime.py``'s own confidence
+        constants) for confidence. Independent of ``regime_context``'s
+        volatility-coupled composite -- see that module's docstring for
+        why a separate, simpler direction-only reading is kept."""
+        return analyze_trend(timestamp, self.symbol, bars)
 
-    def _classify_liquidity(self, bars: Sequence[Bar]) -> LiquidityState:
-        """Future phase: no existing equivalent to reuse -- this is
-        genuinely new (e.g. volume/spread-based bucketing)."""
-        return LiquidityState.UNKNOWN
+    def _classify_liquidity(self, timestamp: datetime, bars: Sequence[Bar]) -> LiquidityContext:
+        """Real, as of 2026-07-27 (Phase 8) -- delegates entirely to
+        ``liquidity.analyze_liquidity``, which reuses
+        ``strategy.indicators.sma`` for the trailing volume average.
+        No existing general-purpose liquidity classifier to reuse
+        (confirmed by search) -- see that module's docstring for what's
+        genuinely new here and why."""
+        return analyze_liquidity(timestamp, self.symbol, self.timeframe, bars)
 
-    def _classify_risk(self, bars: Sequence[Bar]) -> RiskState:
-        """Future phase: no existing equivalent to reuse -- likely a
-        composite of the other classifications above (e.g. VOLATILE
-        regime + HIGH volatility => ELEVATED/HIGH risk_state), decided
-        once real thresholds exist for those inputs."""
-        return RiskState.UNKNOWN
+    def _classify_risk(
+        self, timestamp: datetime, volatility_state: VolatilityState, market_regime: MarketRegime,
+    ) -> RiskContext:
+        """Real, as of 2026-07-27 (Phase 8) -- delegates entirely to
+        ``risk.assess_risk``, a composite of the already-classified
+        ``volatility_state``/``market_regime`` (no new market-data
+        analysis of its own) -- exactly what this method's own Phase-1
+        stub docstring anticipated. See that module for the exact
+        decision order."""
+        return assess_risk(timestamp, self.symbol, volatility_state, market_regime)
