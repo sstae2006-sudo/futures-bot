@@ -1,6 +1,6 @@
 """The Market Context Engine -- foundation phase (2026-07-27), Session
-Context, Volatility Context, and Market Regime Detection (all
-2026-07-27) implemented.
+Context, Volatility Context, Market Regime Detection, and Multi-Timeframe
+Context (all 2026-07-27) implemented.
 
 Builds ``MarketContext`` snapshots from market data. Provides information
 *to* strategies; never makes a trade decision and never holds a reference
@@ -11,15 +11,15 @@ the full rationale and the target layering:
     Market Data -> Context Engine -> Strategy Engine -> Risk Engine -> Execution
 
 **Scope, deliberately:** ``_classify_session``, ``_classify_volatility``,
-and ``_classify_regime`` are now real (see
-``session.py``/``volatility.py``/``regime.py``). The other three
-``_classify_*`` methods below (trend, liquidity, risk) are still stubs
-returning ``UNKNOWN`` with no confidence recorded -- that's explicitly a
-follow-up phase (see ROADMAP.md), not this one. This class exists so the
-*shape* of that future work has an obvious, already-typed home instead of
-being designed from scratch under time pressure later, and so nothing
-calling it today needs to change when real classification logic lands
-for the rest.
+``_classify_regime``, and ``_classify_timeframe_alignment`` are now real
+(see ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``).
+The other three ``_classify_*`` methods below (trend, liquidity, risk)
+are still stubs returning ``UNKNOWN`` with no confidence recorded --
+that's explicitly a follow-up phase (see ROADMAP.md), not this one. This
+class exists so the *shape* of that future work has an obvious,
+already-typed home instead of being designed from scratch under time
+pressure later, and so nothing calling it today needs to change when
+real classification logic lands for the rest.
 
 **Not wired into ``TradingEngine`` yet.** Nothing in ``engine.py``,
 ``strategy/``, or ``risk/`` imports this module. Building it standalone
@@ -30,7 +30,7 @@ existing trading system cannot be affected by code nothing calls.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from ..models import Bar
 from .models import (
@@ -43,6 +43,7 @@ from .models import (
 )
 from .regime import RegimeContext, classify_regime
 from .session import SessionContext, classify_session
+from .timeframe import TimeframeAlignment, classify_timeframe_alignment
 from .volatility import VolatilityContext, analyze_volatility
 
 
@@ -63,6 +64,7 @@ class ContextEngine:
         self,
         timestamp: datetime,
         bars: Optional[Sequence[Bar]] = None,
+        bars_by_timeframe: Optional[Mapping[str, Sequence[Bar]]] = None,
     ) -> MarketContext:
         """Returns a ``MarketContext`` as of ``timestamp``.
 
@@ -72,17 +74,27 @@ class ContextEngine:
         want a context before any history exists yet (session start), in
         which case every classification is ``UNKNOWN`` regardless.
 
-        Session, volatility, and regime classification are real (see
-        ``session.py``/``volatility.py``/``regime.py``); the other
-        three below are still stubs, so this returns ``UNKNOWN`` for
-        those with zero confidence. See the module docstring for why,
-        and docs/ARCHITECTURE.md for what a real implementation should
-        reuse instead of re-deriving.
+        ``bars_by_timeframe`` is a separate, optional mapping of
+        ``timeframe.TIMEFRAME_ORDER`` labels ("1m"/"5m"/"15m"/"1h"/"1d")
+        to that timeframe's own bar history, for multi-timeframe trend
+        alignment -- entirely independent of ``bars``/``self.timeframe``;
+        a caller wanting its own timeframe counted toward the alignment
+        score includes it under the matching key itself. Omitted or
+        partial data degrades gracefully (see ``timeframe.py``).
+
+        Session, volatility, regime, and timeframe-alignment
+        classification are real (see
+        ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``);
+        the other three below are still stubs, so this returns
+        ``UNKNOWN`` for those with zero confidence. See the module
+        docstring for why, and docs/ARCHITECTURE.md for what a real
+        implementation should reuse instead of re-deriving.
         """
         bars = bars or ()
         session_ctx = self._classify_session(timestamp)
         volatility_ctx = self._classify_volatility(timestamp, bars)
         regime_ctx = self._classify_regime(timestamp, bars)
+        timeframe_ctx = self._classify_timeframe_alignment(timestamp, bars_by_timeframe)
 
         confidence_scores = {"session": 1.0}
         if volatility_ctx.state is not VolatilityState.UNKNOWN:
@@ -93,6 +105,8 @@ class ContextEngine:
             confidence_scores["volatility"] = 1.0
         if regime_ctx.regime is not MarketRegime.UNKNOWN:
             confidence_scores["regime"] = regime_ctx.confidence
+        if timeframe_ctx.alignment:
+            confidence_scores["timeframe_alignment"] = timeframe_ctx.alignment_score
 
         return MarketContext(
             timestamp=timestamp,
@@ -104,6 +118,7 @@ class ContextEngine:
             regime_context=regime_ctx,
             volatility_state=volatility_ctx.state,
             volatility_context=volatility_ctx,
+            timeframe_alignment=timeframe_ctx,
             trend_state=self._classify_trend(bars),
             liquidity_state=self._classify_liquidity(bars),
             risk_state=self._classify_risk(bars),
@@ -143,6 +158,18 @@ class ContextEngine:
         approach isn't reused as-is (whole-series, not look-ahead-safe
         for real-time use)."""
         return analyze_volatility(timestamp, self.symbol, self.timeframe, bars)
+
+    def _classify_timeframe_alignment(
+        self,
+        timestamp: datetime,
+        bars_by_timeframe: Optional[Mapping[str, Sequence[Bar]]],
+    ) -> TimeframeAlignment:
+        """Real, as of 2026-07-27 -- delegates entirely to
+        ``timeframe.classify_timeframe_alignment``, which reuses
+        ``research.regime.classify_trend`` per timeframe. See that
+        module for the completed-candle filtering that keeps this
+        look-ahead-safe across independent bar streams."""
+        return classify_timeframe_alignment(timestamp, self.symbol, bars_by_timeframe)
 
     def _classify_trend(self, bars: Sequence[Bar]) -> TrendState:
         """Future phase: ``research.regime.classify_trend`` (start-to-end

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     # evaluated, just available to static type checkers/IDEs.
     from .regime import RegimeContext
     from .session import SessionContext
+    from .timeframe import TimeframeAlignment
     from .volatility import VolatilityContext
 
 
@@ -161,6 +162,10 @@ class MarketContext:
     #: caller sets it -- ``market_regime`` above (the bare enum) is kept
     #: in sync separately, same pattern as session/volatility.
     regime_context: Optional["RegimeContext"] = None
+    #: Trend agreement across the five canonical timeframes (1m/5m/15m/
+    #: 1h/1d) from context/timeframe.py's classify_timeframe_alignment().
+    #: ``None`` until a caller sets it.
+    timeframe_alignment: Optional["TimeframeAlignment"] = None
     #: Per-dimension confidence in [0.0, 1.0], keyed by the same names as
     #: the Enum fields above (e.g. {"market_regime": 0.82}). Missing a key
     #: means "no confidence recorded for that dimension" -- see
@@ -209,6 +214,9 @@ class MarketContext:
                 self.volatility_context.to_dict() if self.volatility_context else None
             ),
             "regime_context": self.regime_context.to_dict() if self.regime_context else None,
+            "timeframe_alignment": (
+                self.timeframe_alignment.to_dict() if self.timeframe_alignment else None
+            ),
             "confidence_scores": dict(self.confidence_scores),
             "confidence": self.confidence,
         }
@@ -244,12 +252,20 @@ class MarketContext:
 
             regime_context = RegimeContext.from_dict(regime_context_data)
 
+        timeframe_alignment_data = data.get("timeframe_alignment")
+        timeframe_alignment = None
+        if timeframe_alignment_data is not None:
+            from .timeframe import TimeframeAlignment  # local: see the TYPE_CHECKING import above
+
+            timeframe_alignment = TimeframeAlignment.from_dict(timeframe_alignment_data)
+
         kwargs: dict[str, Any] = {
             "timestamp": timestamp,
             "symbol": data["symbol"],
             "session_context": session_context,
             "volatility_context": volatility_context,
             "regime_context": regime_context,
+            "timeframe_alignment": timeframe_alignment,
             "timeframe": data["timeframe"],
             "confidence_scores": dict(data.get("confidence_scores", {})),
         }

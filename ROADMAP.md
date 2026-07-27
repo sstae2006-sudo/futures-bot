@@ -82,11 +82,23 @@ Engine" section for the full rationale.
   small formula per branch, no parameter optimization this phase.
   Wired into `MarketContext`/`ContextEngine`. 21 new tests
   (`tests/test_context_regime.py`).
+- **Phase 2d — Multi-Timeframe Context (done, 2026-07-27).**
+  `context/timeframe.py`'s `classify_timeframe_alignment`/
+  `TimeframeAlignment` — trend direction across five canonical
+  timeframes (`1m`/`5m`/`15m`/`1h`/`1d`), combined into an `alignment`
+  dict plus a rank-weighted `alignment_score` (`[0.0, 1.0]`). Reuses
+  `research/regime.py`'s `classify_trend` per timeframe. Stricter
+  look-ahead handling than any prior phase: tracks each timeframe's
+  actual bar duration so an in-progress coarser-timeframe candle can
+  never leak in just because its timestamp looks "at or before now".
+  Wired into `MarketContext`/`ContextEngine` (new optional
+  `bars_by_timeframe` parameter on `build_context`). 14 new tests
+  (`tests/test_context_timeframe.py`).
 - **Phase 3 — trend/liquidity/risk.** A real, standalone
   `_classify_trend`/`TrendState` (can reuse `research/regime.py`'s
-  `classify_trend`, already wired into `regime.py` for regime
-  direction) plus `_classify_liquidity`/`_classify_risk`, which have no
-  existing equivalent to reuse — genuinely new work.
+  `classify_trend`, already wired into `regime.py`/`timeframe.py` for
+  trend direction) plus `_classify_liquidity`/`_classify_risk`, which
+  have no existing equivalent to reuse — genuinely new work.
 - **Phase 4 — wire it in.** Decide how `TradingEngine.on_bar` actually
   gets a `MarketContext` to a strategy — most likely a `Strategy.on_bar`
   signature change. **Needs explicit approval per CLAUDE.md section 8**
@@ -130,6 +142,7 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine, Phases 1, 2a, 2b, and 2c (foundation + Session
-  Context + Volatility Context + Market Regime Detection) (2026-07-27)
-  — see "Market Context Engine (phased)" above for what's left.
+- Market Context Engine, Phases 1, 2a, 2b, 2c, and 2d (foundation +
+  Session Context + Volatility Context + Market Regime Detection +
+  Multi-Timeframe Context) (2026-07-27) — see "Market Context Engine
+  (phased)" above for what's left.

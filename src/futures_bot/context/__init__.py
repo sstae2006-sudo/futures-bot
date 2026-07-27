@@ -11,4 +11,5 @@ from .models import (
 )
 from .regime import RegimeContext, classify_regime
 from .session import SessionContext, classify_session
+from .timeframe import TimeframeAlignment, classify_timeframe_alignment
 from .volatility import VolatilityContext, analyze_volatility, classify_volatility_ratio

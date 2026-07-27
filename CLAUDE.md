@@ -148,7 +148,7 @@ futures_bot.api`, `npm run dev`).
 | `src/futures_bot/market_data/` | Market-data sync/scheduler/store and the vendor contracts client. |
 | `src/futures_bot/brokers/` | Paper broker (used everywhere except live CLI trading) and the Tradovate live broker adapter. |
 | `src/futures_bot/risk/` | Risk manager — daily loss kill switch, trade caps, trading-hours filter, force-flat. |
-| `src/futures_bot/context/` | Market Context Engine (in progress, 2026-07-27) — `MarketContext` value object, `ContextEngine`, `session.py`'s `SessionContext`/`classify_session`, `volatility.py`'s `VolatilityContext`/`analyze_volatility`, and `regime.py`'s `RegimeContext`/`classify_regime` (all real; trend/liquidity/risk are still stubs). Not wired into `TradingEngine`/`Strategy` yet. See section 8 and `docs/ARCHITECTURE.md`'s "Market Context Engine" section. |
+| `src/futures_bot/context/` | Market Context Engine (in progress, 2026-07-27) — `MarketContext` value object, `ContextEngine`, `session.py`'s `SessionContext`/`classify_session`, `volatility.py`'s `VolatilityContext`/`analyze_volatility`, `regime.py`'s `RegimeContext`/`classify_regime`, and `timeframe.py`'s `TimeframeAlignment`/`classify_timeframe_alignment` (all real; trend/liquidity/risk are still stubs). Not wired into `TradingEngine`/`Strategy` yet. See section 8 and `docs/ARCHITECTURE.md`'s "Market Context Engine" section. |
 | `deploy/` | Dockerfiles, docker-compose, systemd units. |
 | `docs/` | Architecture, research server, ML workstation, strategy authoring, trade importer, trading workflow, user manual. |
 | `tools/` | Data-maintenance/ops scripts (contract building, schema fixes, backup/merge/restore). Not part of the installable package. |
@@ -165,8 +165,8 @@ architecture changes.
 
 **Target layering (in progress):** Market Data → Context Engine →
 Strategy Engine → Risk Engine → Execution. `context/` exists but isn't
-wired in yet; session, volatility, and regime classification are real,
-trend/liquidity/risk are still stubs — see `docs/ARCHITECTURE.md`'s "Market
+wired in yet; session, volatility, regime, and multi-timeframe-alignment
+classification are real, trend/liquidity/risk are still stubs — see `docs/ARCHITECTURE.md`'s "Market
 Context Engine" section for the exact integration point before
 touching `engine.py`, `strategy/`, or `risk/` to wire it in.
 

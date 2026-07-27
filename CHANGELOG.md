@@ -4,6 +4,87 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine: Multi-Timeframe Context (Phase 2d)
+
+**Added**
+- `src/futures_bot/context/timeframe.py`: `classify_timeframe_alignment(
+  timestamp, symbol, bars_by_timeframe)` and `TimeframeAlignment`
+  (`alignment`, `alignment_score`). Combines trend direction across five
+  canonical timeframes (`TIMEFRAME_ORDER`: `1m`/`5m`/`15m`/`1h`/`1d`) into
+  one reading. Reuses `research.regime.classify_trend` per timeframe --
+  the same function `regime.py` already uses for its own trend signal --
+  mapping its "bullish"/"bearish"/"sideways" onto `context/models.py`'s
+  existing `TrendState` enum (`BULLISH`/`BEARISH`/`NEUTRAL`). A timeframe
+  absent, empty, or with fewer than 2 completed bars is simply left out
+  of `alignment` -- "missing timeframe data" handled safely, matching
+  this package's established "absence means not recorded" convention.
+  `alignment_score` is the magnitude (`[0.0, 1.0]`) of a rank-weighted
+  average direction across whichever timeframes are present (weights
+  1 through 5, ascending with `TIMEFRAME_ORDER`, so a longer horizon
+  counts for more without the wildly mismatched ratios raw minute-
+  durations would imply). `to_dict`/`from_dict`.
+- **Look-ahead safety, stricter than any prior single-stream classifier
+  in this package:** it's realistic for a caller to hand over a coarser
+  timeframe's series where the *last* bar is still forming (e.g. at
+  09:05, a 1-hour series' 09:00 bar has opened but not closed) even
+  though its timestamp alone looks "at or before now" -- a naive
+  `timestamp <= now` filter would wrongly accept it. `timeframe.py`
+  instead tracks each timeframe's actual bar duration and only keeps a
+  bar once `bar.timestamp + duration <= timestamp` -- its close time has
+  genuinely passed -- before handing anything to `classify_trend`.
+- `tests/test_context_timeframe.py` (14 tests): the task's own worked
+  example shape (1m neutral, 5m/15m/1h bullish, daily absent), full
+  agreement across all five timeframes, an even bullish/bearish split,
+  missing data in several forms (no mapping, empty mapping, empty/short
+  per-timeframe series), a dedicated in-progress-bar leakage scenario
+  (constructing exactly the 09:00-1h-bar-not-yet-closed-at-09:05 case),
+  a no-future-leakage test for a single stream, serialization, and
+  integration into `MarketContext`.
+
+**Changed**
+- `src/futures_bot/context/models.py`: added
+  `MarketContext.timeframe_alignment: Optional[TimeframeAlignment]`
+  (`TYPE_CHECKING`-guarded import, same pattern as
+  `session_context`/`volatility_context`/`regime_context`);
+  `to_dict`/`from_dict` updated to serialize it.
+- `src/futures_bot/context/context_engine.py`: `_classify_timeframe_alignment`
+  is now real (delegates to `timeframe.classify_timeframe_alignment`);
+  `build_context` gained an optional `bars_by_timeframe` parameter
+  (independent of the existing `bars`/`self.timeframe`; a caller
+  wanting its own timeframe counted includes it under the matching
+  key), and adds `confidence_scores["timeframe_alignment"]` only when
+  at least one timeframe actually produced a reading. The remaining
+  three `_classify_*` methods (trend, liquidity, risk) are unchanged
+  stubs.
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section updated — new
+  "Multi-Timeframe Context" subsection covering the reuse, the
+  alignment-score formula, and the in-progress-bar leakage risk this
+  module specifically guards against.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. `timeframe_alignment` is purely additive (defaults to `None`);
+  `build_context`'s new `bars_by_timeframe` parameter is optional and
+  defaults to `None`, so every existing call site is unaffected.
+
+**Verified:** full suite green (1037 passed, 0 failed -- 1023 + 14 new).
+`git status`/`git diff` confirm zero changes to `strategy/`,
+`engine.py`, `risk/`, `brokers/`, `backtest/`, `research/regime.py` --
+only `context/`, its new test file, and docs changed. Manually verified
+the task's own worked example shape and the in-progress-bar leakage
+scenario against the live module before trusting them as passing tests.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
 ## 2026-07-27 — Market Context Engine: Market Regime Detection (Phase 2c)
 
 **Added**

@@ -118,13 +118,46 @@ MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
 `UNKNOWN` member so a context can always be constructed safely even with
 nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
 whose `build_context()` wires everything together. **Session, volatility,
-and regime classification are real** (`session.py`'s `classify_session`,
-`volatility.py`'s `analyze_volatility`, and `regime.py`'s
-`classify_regime`, wired through
-`_classify_session`/`_classify_volatility`/`_classify_regime`) — the other
-three `_classify_*` methods (trend, liquidity, risk) are still stubs
-returning `UNKNOWN`. No trend/liquidity/risk detection yet — that remains
-a follow-up phase.
+regime, and multi-timeframe-alignment classification are real**
+(`session.py`'s `classify_session`, `volatility.py`'s
+`analyze_volatility`, `regime.py`'s `classify_regime`, and
+`timeframe.py`'s `classify_timeframe_alignment`, wired through
+`_classify_session`/`_classify_volatility`/`_classify_regime`/
+`_classify_timeframe_alignment`) — the other three `_classify_*` methods
+(trend, liquidity, risk) are still stubs returning `UNKNOWN`. No
+standalone trend/liquidity/risk detection yet — that remains a
+follow-up phase.
+
+**Multi-Timeframe Context (`timeframe.py`, 2026-07-27):**
+`classify_timeframe_alignment` combines trend direction across five
+canonical timeframes (`TIMEFRAME_ORDER`: `1m`/`5m`/`15m`/`1h`/`1d`) into
+one `TimeframeAlignment` (`alignment`: a dict of timeframe → `TrendState`
+for whichever timeframes had data; `alignment_score`: the magnitude,
+`[0.0, 1.0]`, of a rank-weighted average direction — 1.0 means every
+present timeframe agrees, 0.0 means no data or a perfect split). Reuses
+`research/regime.py`'s `classify_trend` per timeframe — the same
+function `regime.py` already uses for its own single-timeframe trend
+signal — rather than inventing a second trend definition; its
+"sideways" maps onto `TrendState.NEUTRAL` (`context/models.py`'s
+existing enum, previously only referenced by the still-stubbed
+`trend_state` field). A caller supplies one bar series per timeframe
+via `bars_by_timeframe`, entirely independent of `ContextEngine`'s own
+`symbol`/`timeframe` — a caller wanting its own timeframe counted
+includes it under the matching key itself.
+
+Look-ahead safety here is stricter than any single-stream classifier in
+this package: it is realistic for a caller to hand over a coarser
+timeframe's series where the *last* bar is still forming (e.g. at 09:05,
+a 1-hour series' 09:00 bar has opened but not closed) even though its
+timestamp alone looks like "at or before now". A plain `bar.timestamp <=
+now` check would wrongly accept that bar. `timeframe.py` instead knows
+each timeframe's actual duration and only keeps a bar once
+`bar.timestamp + duration <= timestamp` — its close time has genuinely
+passed — before handing anything to `classify_trend`; verified directly
+by a dedicated test that constructs exactly that in-progress-bar
+scenario. A timeframe missing from the mapping, empty, or with fewer
+than two completed bars is simply left out of `alignment` — never a
+fabricated direction or an error.
 
 **Market Regime Detection (`regime.py`, 2026-07-27):** `classify_regime`
 classifies overall market behavior into one of five mutually exclusive

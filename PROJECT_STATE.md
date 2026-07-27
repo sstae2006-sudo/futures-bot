@@ -25,8 +25,8 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: 1023 tests as of 2026-07-27 (1002 + 21 new Market Regime
-  Detection tests), full suite green (1023 passed, 0 failed). One test
+- Test suite: 1037 tests as of 2026-07-27 (1023 + 14 new Multi-Timeframe
+  Context tests), full suite green (1037 passed, 0 failed). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
   known flake, not a new regression, until it's root-caused. Requires
@@ -70,17 +70,18 @@ version is bumped by hand.
   option; ML research workstation (dataset build, training, prediction).
 - Market Context Engine **in progress** (2026-07-27,
   `src/futures_bot/context/`): typed `MarketContext` value object +
-  `ContextEngine`. **Session, volatility, and regime classification are
-  real** (`session.py`'s `classify_session`, using `contracts.py`'s
-  existing CME calendar logic; `volatility.py`'s `analyze_volatility`,
-  reusing `strategy.indicators.atr_series`; `regime.py`'s
-  `classify_regime`, reusing `strategy.indicators.adx`,
-  `research.regime.classify_trend`, and `volatility.analyze_volatility`
-  — all three wired through `ContextEngine`/`MarketContext`); trend,
-  liquidity, and risk classification are still stubs returning
-  `UNKNOWN`. Not wired into `TradingEngine`/`Strategy` yet. See
-  `docs/ARCHITECTURE.md`'s "Market Context Engine" section and
-  ROADMAP.md for the follow-up phases.
+  `ContextEngine`. **Session, volatility, regime, and multi-timeframe-
+  alignment classification are real** (`session.py`'s `classify_session`,
+  using `contracts.py`'s existing CME calendar logic; `volatility.py`'s
+  `analyze_volatility`, reusing `strategy.indicators.atr_series`;
+  `regime.py`'s `classify_regime`, reusing `strategy.indicators.adx`,
+  `research.regime.classify_trend`, and `volatility.analyze_volatility`;
+  `timeframe.py`'s `classify_timeframe_alignment`, reusing
+  `research.regime.classify_trend` per timeframe — all four wired
+  through `ContextEngine`/`MarketContext`); trend, liquidity, and risk
+  classification are still stubs returning `UNKNOWN`. Not wired into
+  `TradingEngine`/`Strategy` yet. See `docs/ARCHITECTURE.md`'s "Market
+  Context Engine" section and ROADMAP.md for the follow-up phases.
 - FastAPI research server + React dashboard covering all of the above,
   plus an autonomous paper-trading/nightly-jobs layer
   (`research_server/`).
@@ -100,6 +101,36 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: implemented Multi-Timeframe Context
+(`src/futures_bot/context/timeframe.py`,
+`classify_timeframe_alignment`/`TimeframeAlignment`) — combines trend
+direction across five canonical timeframes (`1m`/`5m`/`15m`/`1h`/`1d`)
+into one alignment reading: a dict of timeframe -> `TrendState` for
+whichever timeframes had data, plus `alignment_score` (the magnitude,
+`[0.0, 1.0]`, of a rank-weighted average direction). Reuses
+`research.regime.classify_trend` per timeframe -- the same function
+`regime.py` already uses for its own trend signal -- rather than a
+second trend definition; its "sideways" maps onto `TrendState.NEUTRAL`
+(previously unused outside the still-stubbed `trend_state` field).
+Look-ahead safety here is stricter than any single-stream classifier so
+far: a coarser timeframe's last bar can look "at or before now" by
+timestamp alone while still being in-progress (e.g. a 1-hour bar
+opened at 09:00 hasn't closed by 09:05), so this module tracks each
+timeframe's actual duration and only keeps a bar once its close time
+has genuinely passed -- verified by a dedicated test constructing
+exactly that scenario. Missing/short timeframe data is handled safely:
+omitted, empty, or under-2-bar timeframes are simply left out of
+`alignment`, never an error or a fabricated direction. Wired into
+`MarketContext` (new `timeframe_alignment` field; `ContextEngine.build_context`
+gained an optional `bars_by_timeframe` parameter, independent of its
+existing `bars`/`self.timeframe`). 14 new tests
+(`tests/test_context_timeframe.py`, covering the task's own worked
+example shape, full agreement, an even bullish/bearish split, missing
+data in several forms, the in-progress-bar leakage scenario, and
+serialization). Full suite green (1037 passed, 0 failed, 14 new). Trend
+(standalone), liquidity, and risk remain stubs — out of scope this
+phase.
 
 2026-07-27: implemented Market Regime Detection
 (`src/futures_bot/context/regime.py`, `classify_regime`/`RegimeContext`) —
