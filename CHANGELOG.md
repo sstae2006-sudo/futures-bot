@@ -89,7 +89,7 @@ bug this way (concatenated bar segments without carrying the price
 a real price move).
 
 **Commit hashes**
-- Not yet committed as of this entry.
+- `8c2d2a0`.
 
 ## 2026-07-27 — Market Context Engine: Volatility Context (Phase 2b)
 
