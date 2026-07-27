@@ -153,3 +153,65 @@ verified fixed — instead mark it Resolved with a date and commit.
   deleting and re-importing just `US80Z` from `turtle_raw/` after
   manually correcting the specific bad rows in the source file (there
   is no "correct" value to derive from within the data itself).
+
+---
+
+### ISSUE-006 — `npm run dev` can't start Vite on Windows (kill-vite.js kills itself)
+
+- **Severity:** High (blocks the frontend's documented entry point,
+  though `scripts\start.ps1` now works around it)
+- **Description:** Discovered 2026-07-27 while building and verifying
+  `scripts\start.ps1`. `frontend/package.json`'s `dev` script is
+  `node scripts/kill-vite.js && vite`. `kill-vite.js` runs `taskkill
+  /F /IM node.exe` on Windows to clear any stale Vite process — but
+  image-name matching doesn't exclude the calling process, so it kills
+  its own node.exe process too. The script therefore always exits
+  nonzero, `&&` never reaches `vite`, and `vite` never starts.
+  Confirmed empirically, twice, in isolation (`node
+  scripts/kill-vite.js` alone exits 1; the full chain produces npm's
+  script-start banner and then nothing — no Vite banner, no error,
+  empty stderr, because the process was force-killed mid-script rather
+  than exiting gracefully).
+- **Files involved:** `frontend/scripts/kill-vite.js`,
+  `frontend/package.json` (`dev` script).
+- **Possible cause:** `taskkill /F /IM node.exe` was presumably written
+  assuming it only matches *other* node.exe processes, not realizing
+  Windows image-name matching includes the caller.
+- **Current status:** Not fixed — this was discovered while building
+  the startup-scripts task, which was explicitly told not to modify
+  existing project files. `scripts\start.ps1` works around it by
+  launching `frontend\node_modules\.bin\vite.cmd` directly (with
+  `--host 127.0.0.1`) instead of `npm run dev`, which also sidesteps
+  the redundant kill-vite.js step entirely (start.ps1 already frees
+  port 5173 by-port before launching). Manual frontend development
+  should use `npx vite --host 127.0.0.1` in `frontend/` until this is
+  fixed directly. A real fix would be narrowing kill-vite.js to only
+  kill node processes actually holding port 5173 (e.g. via the same
+  by-port lookup `scripts/_common.ps1` uses) instead of every node.exe
+  on the machine — flagged for a future session/explicit approval
+  rather than done here.
+
+---
+
+### ISSUE-007 — Vite binds IPv6 loopback (`[::1]`) by default, not `127.0.0.1`
+
+- **Severity:** Low (only matters for tooling that hardcodes
+  `127.0.0.1`; browsers resolve `localhost` fine either way)
+- **Description:** Discovered 2026-07-27 alongside ISSUE-006.
+  `frontend/vite.config.ts` sets `server.port: 5173` but no `host`, so
+  Vite binds `localhost` — which Node resolves to the IPv6 loopback
+  (`[::1]`) first on this machine, not `127.0.0.1`. Confirmed
+  empirically: `Invoke-WebRequest http://127.0.0.1:5173` failed to
+  connect against a Vite instance that was simultaneously serving
+  `http://localhost:5173` (200 OK) correctly.
+- **Files involved:** `frontend/vite.config.ts`.
+- **Possible cause:** No explicit `host` configured; platform/Node
+  version-dependent `getaddrinfo` ordering decides which loopback
+  address `localhost` resolves to first.
+- **Current status:** Not fixed in `vite.config.ts` (not modified, per
+  this task's constraints). `scripts\start.ps1` works around it by
+  passing `--host 127.0.0.1` explicitly when it launches `vite.cmd`
+  directly. Doesn't affect the browser (which resolves `localhost`
+  correctly) or anyone running `npx vite` and browsing to whatever URL
+  it prints — only matters for scripts/tools that hardcode
+  `127.0.0.1`.

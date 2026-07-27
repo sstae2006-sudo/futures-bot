@@ -10,6 +10,10 @@ logs/
 state/
 decisions.jsonl
 
+# scripts/start.ps1's PID files and redirected backend/frontend logs --
+# machine-specific runtime state, not source. See BOOT_CHECKLIST.md.
+.startup/
+
 # Phase 6A: research API artifacts
 research.db
 research.db-shm

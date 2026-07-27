@@ -35,25 +35,53 @@ Expect: Python >= 3.11 (see `pyproject.toml` `requires-python`).
 Compare key package versions against PROJECT_STATE.md if something
 seems off (e.g. an import error that looks version-related).
 
-## 4. Backend startup
+## 4. Backend + frontend startup (recommended: scripts\start.ps1)
+
+```powershell
+scripts\start.ps1
+```
+(or double-click `start.cmd` at the repo root). This is the official
+startup method as of 2026-07-27 — see `CLAUDE.md` section 9. One
+command verifies the repo, activates the venv, runs `pip install
+-e .`/`npm install` unconditionally (so dependencies are always
+current, not just "present"), checks `market_data.db`, frees ports
+8000/5173 of any stale processes, starts backend + frontend, waits for
+both to actually respond, opens the browser, and prints a green
+summary (Backend URL, Frontend URL, database status, API status). Any
+failure stops immediately with exactly what failed and how to fix it —
+never a silent continue or a raw stack trace. Companions:
+`scripts\status.ps1` (read-only check — backend/frontend running?,
+reachable?, venv?, ports?, database?), `scripts\stop.ps1` (clean
+shutdown), `scripts\restart.ps1` (stop, wait for ports to free, start
+again).
+
+Expect: the green summary block, ending "futures-bot is running" and
+both URLs.
+
+## 5. Manual startup (fallback — isolated backend-only/frontend-only debugging)
 
 ```bash
 pip install -e .          # or ".[dev]" / ".[dev,ml]" depending on task
 python -m futures_bot.api
 ```
-Expect: boots on `127.0.0.1:8000` with no traceback other than the
-research-server auto-start's own caught/logged errors (e.g. a stale
-`MASSIVE_API_KEY` causing a 401 — that's an external-API/config issue,
-not a startup failure; see `docs/ARCHITECTURE.md` and
-KNOWN_ISSUES.md before assuming it's new).
-
-## 5. Frontend startup
-
 ```bash
-cd frontend && npm install && npm run dev
+cd frontend && npm install && npx vite --host 127.0.0.1
 ```
-Expect: Vite dev server starts, dashboard loads and can reach the API
-(check a page that calls a real endpoint, not just the shell).
+**Not** `npm run dev` — that script's `kill-vite.js` pre-step kills its
+own node.exe process (`taskkill /F /IM node.exe` matches the caller by
+image name), so `&& vite` never runs. Confirmed empirically 2026-07-27;
+see `KNOWN_ISSUES.md`. `--host 127.0.0.1` is explicit because Vite
+otherwise binds `localhost`, which resolves to the IPv6 loopback
+(`[::1]`) on this machine, not `127.0.0.1` — also confirmed
+empirically.
+
+Expect: backend boots on `127.0.0.1:8000` with no traceback other than
+the research-server auto-start's own caught/logged errors (e.g. a
+stale `MASSIVE_API_KEY` causing a 401 — that's an external-API/config
+issue, not a startup failure; see `docs/ARCHITECTURE.md` and
+KNOWN_ISSUES.md before assuming it's new). Frontend: Vite dev server
+starts, dashboard loads and can reach the API (check a page that calls
+a real endpoint, not just the shell).
 
 ## 6. Test suite
 

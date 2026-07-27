@@ -4,6 +4,86 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — repeatable one-command startup system
+
+**Added**
+- `scripts/_common.ps1`: shared helpers — `Assert-RepoRoot`,
+  `Assert-Venv`, `Write-Step`/`Write-Ok`/`Write-WarnLine`/
+  `Write-Failure`, by-port process lookup/kill/wait
+  (`Get-ProcessIdsOnPort`, `Stop-ProcessOnPort`, `Wait-ForPortFree`),
+  HTTP wait/single-shot-check (`Wait-ForHttp`, `Test-HttpOk`), PID-file
+  helpers (informational only, never used to decide what to kill).
+- `scripts/start.ps1`: the one command — verifies repo/venv, runs
+  `pip install -e .`/`npm install` unconditionally every boot (so
+  dependencies are always current, not just "present"), checks
+  `market_data.db` (warns, doesn't block), frees ports 8000/5173 of
+  any stale processes, starts backend + frontend, waits for both to
+  actually respond, opens the browser, prints a green summary.
+- `scripts/stop.ps1`, `scripts/restart.ps1`, `scripts/status.ps1`
+  (read-only — never starts/stops anything).
+- `start.cmd` at repo root — double-click launcher (Windows doesn't
+  run `.ps1` on double-click by default); pauses on failure so the
+  console doesn't flash-close before the error is readable.
+
+**Changed**
+- `.gitignore`: added `.startup/` (PID files + redirected
+  backend/frontend logs — machine-specific runtime state).
+- `CLAUDE.md`: section 9 now names `scripts\start.ps1` as the
+  recommended startup path (manual commands kept, documented as
+  what's underneath / for isolated debugging); added a `scripts/` row
+  to the section 7 File Ownership table.
+- `BOOT_CHECKLIST.md`: section 4 now covers `scripts\start.ps1`;
+  the old manual backend+frontend commands moved to section 5
+  ("fallback — isolated debugging"), corrected to use `npx vite
+  --host 127.0.0.1` instead of `npm run dev` (see Fixed below).
+
+**Fixed**
+- Nothing in existing project code (constraint: don't modify existing
+  functionality). `scripts/start.ps1` *works around* two real,
+  pre-existing frontend bugs discovered during verification rather
+  than patching them — see KNOWN_ISSUES.md ISSUE-006 (`kill-vite.js`
+  kills its own node.exe process, so `npm run dev` can never reach
+  `vite`) and ISSUE-007 (Vite binds the IPv6 loopback by default, not
+  `127.0.0.1`). `start.ps1` calls `frontend/node_modules/.bin/vite.cmd`
+  directly with `--host 127.0.0.1`, sidestepping both without touching
+  `kill-vite.js`, `package.json`, or `vite.config.ts`.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None to source — see Fixed above for the two bugs found (not
+  patched) and how `start.ps1` works around them.
+
+**Breaking changes**
+- None. `scripts\start.ps1` is new, additive orchestration; the manual
+  two-command startup still works (with the `npx vite --host
+  127.0.0.1` correction noted above).
+
+**Verified end-to-end this session:** fresh boot from an unrelated
+directory (proves location-independence) including killing a real
+stale backend process on port 8000 first; `status.ps1` correctly
+distinguishing "running" from "reachable"; a mid-run manual backend
+kill correctly detected (backend down, frontend still up);
+`restart.ps1` (stop → fresh start, new PIDs); `stop.ps1` (both ports
+freed); missing `.venv` → immediate, specific failure message, nothing
+proceeds; missing `market_data.db` → yellow warning, still a
+successful (green) boot. Also confirmed a subtle side effect: booting
+with `market_data.db` absent auto-creates a new empty one (pre-existing
+SQLite/`ensure_schema()` behavior, not introduced by this work) — the
+temporary empty file created during this test was verified empty (0
+rows) before being removed so the real 927,682,560-byte database could
+be restored; integrity check and exact row count (3,518,488)
+reconfirmed clean afterward.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
+---
+
 ## 2026-07-27 — permanent database validator
 
 **Added**

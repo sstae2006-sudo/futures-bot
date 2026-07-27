@@ -18,6 +18,13 @@ version is bumped by hand.
 - Boots and serves real requests: verified in a clean venv, zero manual
   installs, `python -m futures_bot.api` → `GET /api/system/overview`
   returns real data from `research.db`.
+- **Official startup method as of 2026-07-27: `scripts\start.ps1`**
+  (or double-click `start.cmd`). One command boots backend + frontend
+  together, verified end-to-end repeatedly this session (fresh boot,
+  status check, mid-run backend kill detected correctly, restart,
+  clean stop, missing-venv hard-failure, missing-database
+  degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
+  `CLAUDE.md` section 9.
 - Test suite: 929 tests as of 2026-07-27 (896 + 33 new database-
   validator tests). One test (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
@@ -38,9 +45,14 @@ version is bumped by hand.
 ## Frontend Status
 
 - Vite + React + TypeScript dashboard in `frontend/`.
-- `npm install` + `npm run dev` confirmed to have `node_modules`
-  present; full `npm run dev`/`npm test` run not re-verified this
-  session (no frontend code changed).
+- **`npm run dev` is currently broken on Windows** (KNOWN_ISSUES.md,
+  new issue logged 2026-07-27): its `kill-vite.js` pre-step kills its
+  own node.exe process, so `vite` never starts. Not fixed (this
+  session was told not to modify existing frontend files) —
+  `scripts\start.ps1` works around it by calling `vite.cmd` directly
+  with `--host 127.0.0.1`, confirmed working end-to-end. Manual
+  frontend debugging should use `npx vite --host 127.0.0.1` in
+  `frontend/`, not `npm run dev`, until the underlying script is fixed.
 - `npm run lint` (oxlint) and `npm test` (vitest) are wired up; there's
   no `npm run format` script.
 
@@ -75,6 +87,22 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
+2026-07-27: built a repeatable one-command startup system
+(`scripts/{_common,start,stop,restart,status}.ps1`, `start.cmd`) —
+verifies repo/venv, runs `pip install -e .`/`npm install`
+unconditionally every boot (always current), checks `market_data.db`,
+frees ports 8000/5173 of stale processes by-port (authoritative;
+verified more precise than PID tracking), starts backend+frontend,
+waits for both to actually respond, opens the browser, prints a green
+summary. Found and worked around a genuine pre-existing bug along the
+way: `npm run dev`'s `kill-vite.js` kills its own node.exe process, so
+`start.ps1` calls `vite.cmd` directly (with `--host 127.0.0.1`, since
+Vite otherwise binds the IPv6 loopack `localhost` resolves to on this
+machine) instead — see Frontend Status and KNOWN_ISSUES.md. Verified
+end-to-end: fresh boot, status check, mid-run backend kill, restart,
+clean stop, missing-venv hard-failure, missing-database
+degraded-success path.
+
 2026-07-27: built a permanent, read-only database validator
 (`src/futures_bot/market_data/validation.py`, wired into
 `python -m futures_bot.cli --validate-db`) covering corrupted symbols,
@@ -103,8 +131,11 @@ breakdown.
 
 ## Recommended Next Task
 
-Decide whether to fix ISSUE-004 (schema migration, needs explicit
-approval per CLAUDE.md section 8) and/or ISSUE-005 (US80Z source-data
+Decide whether to fix `kill-vite.js`'s self-kill bug directly (would
+fix manual `npm run dev` too, but is a change to existing frontend
+code) or leave `scripts\start.ps1`'s workaround as the standing
+solution. Also open: ISSUE-004 (schema migration, needs explicit
+approval per CLAUDE.md section 8) and ISSUE-005 (US80Z source-data
 correction). Otherwise: CI setup (tests currently only run by hand), a
 Python formatter/linter, or the High-priority roadmap items
 (walk-forward testing, Monte Carlo, parameter robustness).

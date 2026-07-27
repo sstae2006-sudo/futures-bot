@@ -151,6 +151,7 @@ futures_bot.api`, `npm run dev`).
 | `deploy/` | Dockerfiles, docker-compose, systemd units. |
 | `docs/` | Architecture, research server, ML workstation, strategy authoring, trade importer, trading workflow, user manual. |
 | `tools/` | Data-maintenance/ops scripts (contract building, schema fixes, backup/merge/restore). Not part of the installable package. |
+| `scripts/` | `start.ps1`/`stop.ps1`/`restart.ps1`/`status.ps1` — the official one-command boot/shutdown/status system (2026-07-27). `start.cmd` at repo root double-click-launches `start.ps1`. See section 9 and `BOOT_CHECKLIST.md`. |
 | `market_data.db` | Historical OHLCV market-data cache. Gitignored, can reach ~1 GB+; regenerate via `tools/pull_massive_flatfiles.py` and related scripts, never commit it or a backup. |
 | `research.db` | Backtests/trades/experiments/ML-model research database. Gitignored. |
 
@@ -170,8 +171,27 @@ architecture changes.
 
 ## 9. Startup Instructions
 
+**Recommended: `scripts\start.ps1`** (or double-click `start.cmd` at
+the repo root) — the official one-command boot. Verifies the repo,
+activates the venv, runs `pip install -e .`/`npm install` unconditionally
+(always current), checks `market_data.db`, frees ports 8000/5173 of any
+stale processes, starts backend + frontend, waits for both to actually
+respond, opens the browser, and prints a green summary. Any failure
+stops immediately with what failed and how to fix it — see
+`BOOT_CHECKLIST.md`. Companions: `scripts\status.ps1` (read-only
+check), `scripts\stop.ps1`, `scripts\restart.ps1`.
+
+What it does underneath, useful for backend-only/frontend-only
+debugging during development:
+
 - **Backend:** `python -m futures_bot.api`
-- **Frontend:** `cd frontend && npm run dev`
+- **Frontend:** `cd frontend && npx vite --host 127.0.0.1` — **not**
+  `npm run dev`: that script's `kill-vite.js` pre-step kills its own
+  node.exe process via `taskkill /F /IM node.exe` (image-name matching
+  doesn't exclude the caller), so `&& vite` never runs. Confirmed
+  empirically 2026-07-27 — see `KNOWN_ISSUES.md`. `scripts\start.ps1`
+  already works around this by calling `vite.cmd` directly; do the
+  same manually rather than `npm run dev` until that's fixed.
 
 No guessing beyond this — these are the only supported entry points.
 
