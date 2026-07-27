@@ -25,8 +25,8 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: 1037 tests as of 2026-07-27 (1023 + 14 new Multi-Timeframe
-  Context tests), full suite green (1037 passed, 0 failed). One test
+- Test suite: 1054 tests as of 2026-07-27 (1037 + 17 new Market
+  Structure Context tests), full suite green (1054 passed, 0 failed). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
   known flake, not a new regression, until it's root-caused. Requires
@@ -70,15 +70,17 @@ version is bumped by hand.
   option; ML research workstation (dataset build, training, prediction).
 - Market Context Engine **in progress** (2026-07-27,
   `src/futures_bot/context/`): typed `MarketContext` value object +
-  `ContextEngine`. **Session, volatility, regime, and multi-timeframe-
-  alignment classification are real** (`session.py`'s `classify_session`,
-  using `contracts.py`'s existing CME calendar logic; `volatility.py`'s
-  `analyze_volatility`, reusing `strategy.indicators.atr_series`;
-  `regime.py`'s `classify_regime`, reusing `strategy.indicators.adx`,
-  `research.regime.classify_trend`, and `volatility.analyze_volatility`;
-  `timeframe.py`'s `classify_timeframe_alignment`, reusing
-  `research.regime.classify_trend` per timeframe — all four wired
-  through `ContextEngine`/`MarketContext`); trend, liquidity, and risk
+  `ContextEngine`. **Session, volatility, regime, multi-timeframe-
+  alignment, and structure classification are real** (`session.py`'s
+  `classify_session`, using `contracts.py`'s existing CME calendar
+  logic; `volatility.py`'s `analyze_volatility`, reusing
+  `strategy.indicators.atr_series`; `regime.py`'s `classify_regime`,
+  reusing `strategy.indicators.adx`, `research.regime.classify_trend`,
+  and `volatility.analyze_volatility`; `timeframe.py`'s
+  `classify_timeframe_alignment`, reusing `research.regime.classify_trend`
+  per timeframe; `structure.py`'s `analyze_structure`, genuinely new
+  swing-point/support-resistance detection — all five wired through
+  `ContextEngine`/`MarketContext`); trend, liquidity, and risk
   classification are still stubs returning `UNKNOWN`. Not wired into
   `TradingEngine`/`Strategy` yet. See `docs/ARCHITECTURE.md`'s "Market
   Context Engine" section and ROADMAP.md for the follow-up phases.
@@ -101,6 +103,40 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: implemented Market Structure Context
+(`src/futures_bot/context/structure.py`,
+`analyze_structure`/`StructureContext`) — detects price structure from
+confirmed swing points: higher-highs/higher-lows (`TrendState.BULLISH`
+structure) or lower-highs/lower-lows (`TrendState.BEARISH`), nearest
+support/resistance levels around the current price, and distance from
+them. Strictly descriptive: `StructureContext` carries no broker/risk-
+manager/engine reference of any kind, never generates a trade, never
+overrides a strategy's own signal. No existing equivalent to reuse in
+this codebase (genuinely new work, same disclosure `regime.py` gives
+for liquidity/risk), though it reuses `TrendState` rather than a fourth
+bullish/bearish/neutral vocabulary. A swing point is confirmed via a
+standard fractal definition (a bar's high/low strictly beats every
+high/low within `DEFAULT_SWING_WINDOW`=3 bars on both sides); this
+requires bars chronologically after a candidate swing, but since every
+bar this module sees is already-completed history, that's confirmation
+lag, not a look-ahead violation -- documented explicitly since "avoid
+future leakage" has been the standing theme of every prior phase, and
+verified by a dedicated test that the most recent bars simply have no
+confirmed swing yet. Caught and fixed a real test-data bug during
+manual verification (not just via the tests written alongside it): an
+early zigzag-fixture generator produced *rising* cycle lows regardless
+of the intended drift direction, which would have silently mislabeled a
+"downtrend" fixture as bullish. Wired into `MarketContext` (new
+`structure_context` field, `ContextEngine._classify_structure` now
+real). 17 new tests (`tests/test_context_structure.py`, covering
+higher-highs/higher-lows, lower-highs/lower-lows, support/resistance
+bracketing, the task's own worked example shape, a flat/no-structure
+case, missing data, confirmation-lag-is-not-leakage, and an explicit
+check that the module imports nothing from `risk.manager`/`brokers`/
+`engine`). Full suite green (1054 passed, 0 failed, 17 new). Trend
+(standalone), liquidity, and risk remain stubs — out of scope this
+phase.
 
 2026-07-27: implemented Multi-Timeframe Context
 (`src/futures_bot/context/timeframe.py`,

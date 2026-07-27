@@ -105,9 +105,10 @@ closed.
 
 `futures_bot.context` (`models.py`'s `MarketContext`, `context_engine.py`'s
 `ContextEngine`, `session.py`'s `SessionContext`, `volatility.py`'s
-`VolatilityContext`, `regime.py`'s `RegimeContext`) is the foundation for a
-future layer between market data and the strategy, matching the target
-shape:
+`VolatilityContext`, `regime.py`'s `RegimeContext`, `timeframe.py`'s
+`TimeframeAlignment`, `structure.py`'s `StructureContext`) is the
+foundation for a future layer between market data and the strategy,
+matching the target shape:
 
 ```
 MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
@@ -118,15 +119,16 @@ MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
 `UNKNOWN` member so a context can always be constructed safely even with
 nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
 whose `build_context()` wires everything together. **Session, volatility,
-regime, and multi-timeframe-alignment classification are real**
-(`session.py`'s `classify_session`, `volatility.py`'s
-`analyze_volatility`, `regime.py`'s `classify_regime`, and
-`timeframe.py`'s `classify_timeframe_alignment`, wired through
+regime, multi-timeframe-alignment, and structure classification are
+real** (`session.py`'s `classify_session`, `volatility.py`'s
+`analyze_volatility`, `regime.py`'s `classify_regime`, `timeframe.py`'s
+`classify_timeframe_alignment`, and `structure.py`'s
+`analyze_structure`, wired through
 `_classify_session`/`_classify_volatility`/`_classify_regime`/
-`_classify_timeframe_alignment`) — the other three `_classify_*` methods
-(trend, liquidity, risk) are still stubs returning `UNKNOWN`. No
-standalone trend/liquidity/risk detection yet — that remains a
-follow-up phase.
+`_classify_timeframe_alignment`/`_classify_structure`) — the other three
+`_classify_*` methods (trend, liquidity, risk) are still stubs returning
+`UNKNOWN`. No standalone trend/liquidity/risk detection yet — that
+remains a follow-up phase.
 
 **Multi-Timeframe Context (`timeframe.py`, 2026-07-27):**
 `classify_timeframe_alignment` combines trend direction across five
@@ -158,6 +160,38 @@ by a dedicated test that constructs exactly that in-progress-bar
 scenario. A timeframe missing from the mapping, empty, or with fewer
 than two completed bars is simply left out of `alignment` — never a
 fabricated direction or an error.
+
+**Market Structure Context (`structure.py`, 2026-07-27):**
+`analyze_structure` detects price structure from confirmed swing points:
+higher-highs/higher-lows (`TrendState.BULLISH` structure) or
+lower-highs/lower-lows (`TrendState.BEARISH`), the nearest support/
+resistance levels around the current price, and distance from them.
+Strictly descriptive — `StructureContext` carries no broker/risk-
+manager/engine reference of any kind, and this module never generates a
+trade or overrides a strategy's own signal (the same hard boundary every
+other file in `context/` is held to). No existing equivalent to reuse in
+this codebase (same disclosure `regime.py` gives for liquidity/risk) —
+genuinely new work, though it reuses `TrendState` (`context/models.py`,
+already used by `timeframe.py`) rather than a fourth bullish/bearish/
+neutral vocabulary.
+
+A swing high/low is confirmed via a standard fractal definition: a bar's
+high (low) must be strictly greater (less) than every high (low) within
+`DEFAULT_SWING_WINDOW` (3) bars on *both* sides. This does require
+looking at bars chronologically after a candidate swing point — but
+since every bar this module ever sees is already-completed history (the
+same "bars up to and including the bar that just closed" convention
+every classifier in this package holds callers to), this is confirmation
+*lag*, not a look-ahead violation: those later bars are themselves
+already in the past relative to `timestamp`. The practical effect is
+that the most recent few bars simply won't have a confirmed swing near
+them yet, verified directly by a dedicated test. `support`/`resistance`
+are the nearest confirmed swing low/high bracketing the current price
+(falling back to the most recent swing if price has broken through every
+level); `distance_to_support`/`distance_to_resistance` are the plain
+price differences. Fewer than `2 * DEFAULT_SWING_WINDOW + 1` bars, or no
+confirmed swings at all, returns `UNKNOWN`/`None` throughout, never an
+exception.
 
 **Market Regime Detection (`regime.py`, 2026-07-27):** `classify_regime`
 classifies overall market behavior into one of five mutually exclusive

@@ -4,6 +4,97 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine: Market Structure Context (Phase 2e)
+
+**Added**
+- `src/futures_bot/context/structure.py`: `analyze_structure(timestamp,
+  symbol, bars, swing_window=3, structure_lookback=3)` and
+  `StructureContext` (`trend`, `support`, `resistance`,
+  `distance_to_support`, `distance_to_resistance`, `structure_confidence`).
+  Detects confirmed swing highs/lows via a standard fractal definition
+  (a bar's high/low strictly beats every high/low within `swing_window`
+  bars on both sides), then classifies structure by comparing the most
+  recent confirmed swings pairwise: higher-highs/higher-lows votes
+  bullish, lower-highs/lower-lows votes bearish. `structure_confidence`
+  is the winning side's share of all pairwise comparisons (unanimous
+  agreement is 1.0; a tied/mixed read is `NEUTRAL` at 0.0; too few
+  confirmed swings is `UNKNOWN` at 0.0). `support`/`resistance` are the
+  nearest confirmed swing low/high bracketing the current price
+  (falling back to the most recent swing if price has broken through
+  every level); `distance_to_support`/`distance_to_resistance` are the
+  plain price differences. Reuses `context/models.py`'s existing
+  `TrendState` enum rather than inventing a fourth bullish/bearish/
+  neutral vocabulary (no existing swing/support-resistance equivalent
+  to reuse elsewhere in this codebase — genuinely new work, same
+  disclosure `regime.py` gives for liquidity/risk). `to_dict`/`from_dict`
+  (Decimal price fields serialize as plain floats, parsed back via
+  `Decimal(str(...))` -- matching this codebase's established
+  Decimal-JSON convention, e.g. `feeds/massive.py`). **Strictly
+  descriptive** -- `StructureContext` carries no broker/risk-manager/
+  engine reference of any kind; this module never generates a trade and
+  never overrides a strategy's own signal, verified directly by a test
+  that inspects the module's own import statements.
+- **Confirmation lag is explicitly documented as distinct from a
+  look-ahead violation:** confirming a swing point requires looking at
+  bars chronologically *after* the candidate bar -- but since every bar
+  this module ever sees is already-completed history (the same "bars up
+  to and including the bar that just closed" convention every classifier
+  in this package holds callers to), those later bars are themselves
+  already in the past relative to `timestamp`. The practical effect is
+  that the most recent `swing_window` bars simply have no confirmed
+  swing near them yet -- the honest behavior of a real-time swing
+  detector, not a bug. Verified directly by a dedicated test.
+- `tests/test_context_structure.py` (17 tests): higher-highs/
+  higher-lows and lower-highs/lower-lows detection (via a deterministic
+  zigzag fixture), support below and resistance above current price,
+  distance-to-level correctness, the task's own worked example shape, a
+  flat/no-structure case, missing data (too few bars, zero bars),
+  confirmation-lag-is-not-leakage (including that a shorter prefix is
+  unaffected by bars appended after it), serialization, integration
+  into `MarketContext`, and an explicit "does not generate trades / does
+  not override strategies" import-boundary check. Caught and fixed a
+  real test-fixture bug during manual verification (not just via the
+  tests written alongside it): an early zigzag-generator draft produced
+  *rising* cycle lows regardless of the intended drift direction, which
+  would have silently mislabeled a "downtrend" fixture as bullish.
+
+**Changed**
+- `src/futures_bot/context/models.py`: added
+  `MarketContext.structure_context: Optional[StructureContext]`
+  (`TYPE_CHECKING`-guarded import, same pattern as the other nested
+  `*Context` fields); `to_dict`/`from_dict` updated to serialize it.
+- `src/futures_bot/context/context_engine.py`: `_classify_structure` is
+  now real (delegates to `structure.analyze_structure`); `build_context`
+  adds `confidence_scores["structure"]` only when `trend` is not
+  `UNKNOWN`. The remaining three `_classify_*` methods (trend,
+  liquidity, risk) are unchanged stubs.
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section updated — new
+  "Market Structure Context" subsection covering the fractal swing
+  definition, the confirmation-lag-vs-leakage distinction, and the
+  support/resistance fallback rule.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. `structure_context` is purely additive (defaults to `None`).
+
+**Verified:** full suite green (1054 passed, 0 failed -- 1037 + 17 new).
+`git status`/`git diff` confirm zero changes to `strategy/`,
+`engine.py`, `risk/`, `brokers/`, `backtest/`, `research/regime.py` --
+only `context/`, its new test file, and docs changed. Manually verified
+uptrend/downtrend zigzag fixtures and the confirmation-lag scenario
+against the live module before trusting them as passing tests.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
 ## 2026-07-27 — Market Context Engine: Multi-Timeframe Context (Phase 2d)
 
 **Added**
@@ -83,7 +174,7 @@ the task's own worked example shape and the in-progress-bar leakage
 scenario against the live module before trusting them as passing tests.
 
 **Commit hashes**
-- Not yet committed as of this entry.
+- `d0522e7`.
 
 ## 2026-07-27 — Market Context Engine: Market Regime Detection (Phase 2c)
 

@@ -94,6 +94,17 @@ Engine" section for the full rationale.
   Wired into `MarketContext`/`ContextEngine` (new optional
   `bars_by_timeframe` parameter on `build_context`). 14 new tests
   (`tests/test_context_timeframe.py`).
+- **Phase 2e — Market Structure Context (done, 2026-07-27).**
+  `context/structure.py`'s `analyze_structure`/`StructureContext` —
+  confirmed-swing-point structure (higher-highs/higher-lows or
+  lower-highs/lower-lows), nearest support/resistance, and distance
+  from them. Genuinely new work (no existing equivalent to reuse),
+  reusing `TrendState` for its trend vocabulary. Strictly descriptive —
+  no broker/risk/engine reference, never generates a trade. Confirmation
+  lag (a swing point needs bars after it to confirm) is explicitly
+  documented as distinct from a look-ahead violation. Wired into
+  `MarketContext`/`ContextEngine`. 17 new tests
+  (`tests/test_context_structure.py`).
 - **Phase 3 — trend/liquidity/risk.** A real, standalone
   `_classify_trend`/`TrendState` (can reuse `research/regime.py`'s
   `classify_trend`, already wired into `regime.py`/`timeframe.py` for
@@ -142,7 +153,7 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine, Phases 1, 2a, 2b, 2c, and 2d (foundation +
+- Market Context Engine, Phases 1, 2a, 2b, 2c, 2d, and 2e (foundation +
   Session Context + Volatility Context + Market Regime Detection +
-  Multi-Timeframe Context) (2026-07-27) — see "Market Context Engine
-  (phased)" above for what's left.
+  Multi-Timeframe Context + Market Structure Context) (2026-07-27) —
+  see "Market Context Engine (phased)" above for what's left.

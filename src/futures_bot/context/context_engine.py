@@ -1,6 +1,6 @@
 """The Market Context Engine -- foundation phase (2026-07-27), Session
-Context, Volatility Context, Market Regime Detection, and Multi-Timeframe
-Context (all 2026-07-27) implemented.
+Context, Volatility Context, Market Regime Detection, Multi-Timeframe
+Context, and Market Structure Context (all 2026-07-27) implemented.
 
 Builds ``MarketContext`` snapshots from market data. Provides information
 *to* strategies; never makes a trade decision and never holds a reference
@@ -11,15 +11,16 @@ the full rationale and the target layering:
     Market Data -> Context Engine -> Strategy Engine -> Risk Engine -> Execution
 
 **Scope, deliberately:** ``_classify_session``, ``_classify_volatility``,
-``_classify_regime``, and ``_classify_timeframe_alignment`` are now real
-(see ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``).
-The other three ``_classify_*`` methods below (trend, liquidity, risk)
-are still stubs returning ``UNKNOWN`` with no confidence recorded --
-that's explicitly a follow-up phase (see ROADMAP.md), not this one. This
-class exists so the *shape* of that future work has an obvious,
-already-typed home instead of being designed from scratch under time
-pressure later, and so nothing calling it today needs to change when
-real classification logic lands for the rest.
+``_classify_regime``, ``_classify_timeframe_alignment``, and
+``_classify_structure`` are now real (see
+``session.py``/``volatility.py``/``regime.py``/``timeframe.py``/
+``structure.py``). The other three ``_classify_*`` methods below (trend,
+liquidity, risk) are still stubs returning ``UNKNOWN`` with no
+confidence recorded -- that's explicitly a follow-up phase (see
+ROADMAP.md), not this one. This class exists so the *shape* of that
+future work has an obvious, already-typed home instead of being designed
+from scratch under time pressure later, and so nothing calling it today
+needs to change when real classification logic lands for the rest.
 
 **Not wired into ``TradingEngine`` yet.** Nothing in ``engine.py``,
 ``strategy/``, or ``risk/`` imports this module. Building it standalone
@@ -43,6 +44,7 @@ from .models import (
 )
 from .regime import RegimeContext, classify_regime
 from .session import SessionContext, classify_session
+from .structure import StructureContext, analyze_structure
 from .timeframe import TimeframeAlignment, classify_timeframe_alignment
 from .volatility import VolatilityContext, analyze_volatility
 
@@ -82,19 +84,20 @@ class ContextEngine:
         score includes it under the matching key itself. Omitted or
         partial data degrades gracefully (see ``timeframe.py``).
 
-        Session, volatility, regime, and timeframe-alignment
+        Session, volatility, regime, timeframe-alignment, and structure
         classification are real (see
-        ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``);
-        the other three below are still stubs, so this returns
-        ``UNKNOWN`` for those with zero confidence. See the module
-        docstring for why, and docs/ARCHITECTURE.md for what a real
-        implementation should reuse instead of re-deriving.
+        ``session.py``/``volatility.py``/``regime.py``/``timeframe.py``/
+        ``structure.py``); the other three below are still stubs, so
+        this returns ``UNKNOWN`` for those with zero confidence. See the
+        module docstring for why, and docs/ARCHITECTURE.md for what a
+        real implementation should reuse instead of re-deriving.
         """
         bars = bars or ()
         session_ctx = self._classify_session(timestamp)
         volatility_ctx = self._classify_volatility(timestamp, bars)
         regime_ctx = self._classify_regime(timestamp, bars)
         timeframe_ctx = self._classify_timeframe_alignment(timestamp, bars_by_timeframe)
+        structure_ctx = self._classify_structure(timestamp, bars)
 
         confidence_scores = {"session": 1.0}
         if volatility_ctx.state is not VolatilityState.UNKNOWN:
@@ -107,6 +110,8 @@ class ContextEngine:
             confidence_scores["regime"] = regime_ctx.confidence
         if timeframe_ctx.alignment:
             confidence_scores["timeframe_alignment"] = timeframe_ctx.alignment_score
+        if structure_ctx.trend is not TrendState.UNKNOWN:
+            confidence_scores["structure"] = structure_ctx.structure_confidence
 
         return MarketContext(
             timestamp=timestamp,
@@ -119,6 +124,7 @@ class ContextEngine:
             volatility_state=volatility_ctx.state,
             volatility_context=volatility_ctx,
             timeframe_alignment=timeframe_ctx,
+            structure_context=structure_ctx,
             trend_state=self._classify_trend(bars),
             liquidity_state=self._classify_liquidity(bars),
             risk_state=self._classify_risk(bars),
@@ -170,6 +176,15 @@ class ContextEngine:
         module for the completed-candle filtering that keeps this
         look-ahead-safe across independent bar streams."""
         return classify_timeframe_alignment(timestamp, self.symbol, bars_by_timeframe)
+
+    def _classify_structure(self, timestamp: datetime, bars: Sequence[Bar]) -> StructureContext:
+        """Real, as of 2026-07-27 -- delegates entirely to
+        ``structure.analyze_structure``, which detects confirmed swing
+        highs/lows to judge trend structure and the nearest support/
+        resistance levels. Strictly descriptive -- see that module's
+        docstring for why swing-point confirmation lag is not a
+        look-ahead violation."""
+        return analyze_structure(timestamp, self.symbol, bars)
 
     def _classify_trend(self, bars: Sequence[Bar]) -> TrendState:
         """Future phase: ``research.regime.classify_trend`` (start-to-end

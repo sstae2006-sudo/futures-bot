@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     # evaluated, just available to static type checkers/IDEs.
     from .regime import RegimeContext
     from .session import SessionContext
+    from .structure import StructureContext
     from .timeframe import TimeframeAlignment
     from .volatility import VolatilityContext
 
@@ -166,6 +167,10 @@ class MarketContext:
     #: 1h/1d) from context/timeframe.py's classify_timeframe_alignment().
     #: ``None`` until a caller sets it.
     timeframe_alignment: Optional["TimeframeAlignment"] = None
+    #: Swing-point-derived price structure (trend, nearest support/
+    #: resistance, distance from them) from context/structure.py's
+    #: analyze_structure(). ``None`` until a caller sets it.
+    structure_context: Optional["StructureContext"] = None
     #: Per-dimension confidence in [0.0, 1.0], keyed by the same names as
     #: the Enum fields above (e.g. {"market_regime": 0.82}). Missing a key
     #: means "no confidence recorded for that dimension" -- see
@@ -217,6 +222,9 @@ class MarketContext:
             "timeframe_alignment": (
                 self.timeframe_alignment.to_dict() if self.timeframe_alignment else None
             ),
+            "structure_context": (
+                self.structure_context.to_dict() if self.structure_context else None
+            ),
             "confidence_scores": dict(self.confidence_scores),
             "confidence": self.confidence,
         }
@@ -259,6 +267,13 @@ class MarketContext:
 
             timeframe_alignment = TimeframeAlignment.from_dict(timeframe_alignment_data)
 
+        structure_context_data = data.get("structure_context")
+        structure_context = None
+        if structure_context_data is not None:
+            from .structure import StructureContext  # local: see the TYPE_CHECKING import above
+
+            structure_context = StructureContext.from_dict(structure_context_data)
+
         kwargs: dict[str, Any] = {
             "timestamp": timestamp,
             "symbol": data["symbol"],
@@ -266,6 +281,7 @@ class MarketContext:
             "volatility_context": volatility_context,
             "regime_context": regime_context,
             "timeframe_alignment": timeframe_alignment,
+            "structure_context": structure_context,
             "timeframe": data["timeframe"],
             "confidence_scores": dict(data.get("confidence_scores", {})),
         }
