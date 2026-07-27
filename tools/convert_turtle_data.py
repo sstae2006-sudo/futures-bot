@@ -11,9 +11,18 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 def parse_date(value: str):
     """
-    Converts YYMMDD -> UTC timestamp
+    Converts YYMMDD -> UTC timestamp.
+
+    Uses a fixed 50-year pivot (00-49 -> 2000-2049, 50-99 -> 1950-1999)
+    instead of Python's %y default (00-68 -> 2000-2068). This corpus
+    spans 1959-2000; the default pivot silently shifted every pre-1969
+    Copper (HG) bar 100 years into the future (e.g. 1964 -> 2064) --
+    see docs/DATABASE_CORRUPTION_REPORT.md. The 50-year pivot resolves
+    every year actually present in this dataset correctly.
     """
-    dt = datetime.strptime(value, "%y%m%d")
+    yy = int(value[:2])
+    century = 2000 if yy < 50 else 1900
+    dt = datetime.strptime(f"{century + yy:04d}{value[2:]}", "%Y%m%d")
     return dt.replace(tzinfo=timezone.utc)
 
 

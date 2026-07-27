@@ -18,11 +18,15 @@ version is bumped by hand.
 - Boots and serves real requests: verified in a clean venv, zero manual
   installs, `python -m futures_bot.api` → `GET /api/system/overview`
   returns real data from `research.db`.
-- Test suite: 881 tests, 880 passing + 1 known test-order-dependent
-  flake (see KNOWN_ISSUES.md). Requires the `ml` extra
-  (`pip install -e ".[dev,ml]"`) for the ML dataset/training/predict
-  test modules to even collect — without it they fail collection with
-  `ModuleNotFoundError`, not a real failure.
+- Test suite: 896 tests, all passing as of 2026-07-26 (881 + 15 new
+  turtle-import regression tests). One test
+  (KNOWN_ISSUES.md ISSUE-002) is a known test-order-dependent flake —
+  didn't reproduce in the latest full run, but treat an isolated
+  failure there as the known flake, not a new regression, until it's
+  root-caused. Requires the `ml` extra (`pip install -e ".[dev,ml]"`)
+  for the ML dataset/training/predict test modules to even collect —
+  without it they fail collection with `ModuleNotFoundError`, not a
+  real failure.
 - Python: 3.12.10. Project `.venv` at repo root already has `dev`+`ml`
   extras installed.
 
@@ -55,10 +59,6 @@ version is bumped by hand.
 
 ## Broken / Incomplete Features
 
-- **Data integrity bug, unresolved:** 1980s–90s historical import
-  populated the contract/ticker column with date values instead of
-  contract symbols in `market_data.db` (see KNOWN_ISSUES.md). Not yet
-  diagnosed or fixed.
 - No CI configured — tests only run when a session runs them by hand.
 - No Python formatter/linter configured (no ruff/black/mypy).
 
@@ -68,15 +68,21 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
-2026-07-26: dependency audit/fix, clean-venv verification, full test
-suite run, git history cleanup (6 commits turning ~121 untracked files
-into a real history), `CLAUDE.md`/`PROJECT_STATE.md`/`CHANGELOG.md`/
-`KNOWN_ISSUES.md`/`ROADMAP.md`/`BOOT_CHECKLIST.md` created. See
-CHANGELOG.md for the full breakdown.
+2026-07-26: dependency audit/fix, clean-venv verification, git history
+cleanup (6 commits turning ~121 untracked files into a real history),
+persistent documentation framework created (`CLAUDE.md`/
+`PROJECT_STATE.md`/`CHANGELOG.md`/`KNOWN_ISSUES.md`/`ROADMAP.md`/
+`BOOT_CHECKLIST.md`), and the `market_data.db` turtle-data corruption
+(KNOWN_ISSUES.md ISSUE-001) diagnosed and repaired — including a
+near-miss during the repair (a proposed fix collided contract data and
+dropped ~90% of it on reimport; caught immediately, rolled back from a
+verified backup, corrected) documented in full in
+docs/DATABASE_CORRUPTION_REPORT.md. See CHANGELOG.md for the complete
+breakdown.
 
 ## Recommended Next Task
 
-Get explicit go-ahead to diagnose and fix the `market_data.db`
-contract-symbol corruption (KNOWN_ISSUES.md, Critical). Back up and
-verify integrity before any write — the DB is ~1 GB+ and no fresh
-backup has been taken since the corruption was reported.
+No Critical items remain open in ROADMAP.md as of this writing.
+Consider CI setup (tests currently only run by hand) and a Python
+formatter/linter, or move to the High-priority roadmap items
+(walk-forward testing, Monte Carlo, parameter robustness).

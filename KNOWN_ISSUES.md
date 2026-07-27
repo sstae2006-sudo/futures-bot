@@ -5,27 +5,49 @@ verified fixed — instead mark it Resolved with a date and commit.
 
 ---
 
-### ISSUE-001 — Contract/ticker column corrupted for 1980s–90s import
+### ISSUE-001 — Turtle-data import: contract placeholder + century-pivot timestamp shift (RESOLVED)
 
 - **Severity:** Critical (data integrity)
-- **Description:** Historical futures data imported from the 1980s–90s
-  has the contract/ticker column populated with date values instead of
-  actual contract symbols (e.g. a date string where `MESH6` or `6CH5`
-  should be), producing a large number of bogus distinct "contracts"
-  in the database.
-- **Files involved:** `market_data.db` (affected table/column not yet
-  identified). Suspected root cause in `tools/convert_data.py`,
-  `tools/convert_turtle_data.py`, `tools/import_turtle_data.py`, or one
-  of the flat-file import scripts (`tools/pull_massive_flatfiles.py`) —
-  not yet confirmed.
-- **Possible cause:** Column mapping bug in one of the above scripts —
-  off-by-one, wrong header assumption, or a source file with a
-  different schema than the others assume.
-- **Current status:** Reported, not yet diagnosed. No fix attempted.
-  Any repair work must back up `market_data.db` and verify the backup
-  (open + integrity check) before any write — the file is ~1 GB+ and
-  no fresh backup exists as of this writing (`market_data_backup.db`
-  is stale, do not assume it's current).
+- **Description:** See
+  [docs/DATABASE_CORRUPTION_REPORT.md](../docs/DATABASE_CORRUPTION_REPORT.md)
+  for full detail, including a documented near-miss during the repair
+  itself. Two real, confirmed bugs, both confined to `bars` rows with
+  `source = 'turtletrader'`:
+  1. **`contract` hardcoded to `"CONTINUOUS"` (342,494 rows, 100% of
+     turtle data):** discarded the real per-file ticker instead of
+     recording it. `product_code` was already correctly the full
+     ticker (e.g. `CL00F`) and stays that way — it must, since the
+     schema's uniqueness index is `(product_code, resolution,
+     timestamp)` and this archive is hundreds of individual, heavily
+     date-overlapping contract histories, not a single rolled series.
+     Treating `product_code` as a "bogus" field and rewriting it to a
+     generic root during the first repair attempt collided every
+     overlapping trading day across contracts and silently dropped
+     ~90% of the data (342,494 → 34,331 rows) — caught immediately,
+     rolled back from the verified backup before anything was lost for
+     good, and fixed properly. See the report's Resolution section.
+  2. **Century-pivot timestamp shift (17,668 rows, Copper/`HG` only):**
+     bars from 1959–1968 were stored with `timestamp` shifted exactly
+     +100 years (e.g. 1964 stored as 2064), because the date parser
+     relied on Python's default `%y` two-digit-year pivot.
+- **Files involved:** `market_data.db` (table `bars`, columns
+  `contract` for bug 1, `timestamp` for bug 2). Root-caused and fixed
+  in `tools/import_turtle_data.py` (bug 1) and
+  `tools/convert_turtle_data.py` (bug 2, `parse_date`, now a fixed
+  50-year pivot).
+- **Possible cause:** N/A — resolved.
+- **Current status:** **Resolved 2026-07-26.** Backup taken and
+  verified (integrity check + row-count match) before any write.
+  342,494 rows deleted and re-imported from source
+  (`turtle_raw/`/`turtle_converted/`, regenerated with the fixed date
+  parser); final count matches the pre-repair total exactly, zero
+  future-shifted timestamps, zero `CONTINUOUS` placeholders remain.
+  Full test suite: 896 passed (881 pre-existing + 15 new regression
+  tests in `tests/test_tools_turtle_import.py`), 0 failures. One file,
+  `turtle_raw/GC001F.txt`, uses a different schema entirely (headered,
+  `MM/DD/YYYY`) and has a malformed filename — correctly rejected by
+  the new import-time validation rather than silently imported;
+  flagged, not fixed (see report).
 
 ---
 

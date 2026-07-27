@@ -19,6 +19,8 @@ api_reports/
 # Local market-data caches and generated backtest reports -- large,
 # machine-specific, and regenerable via tools/ and the fetch/convert scripts.
 market_data*.db
+market_data*.db-shm
+market_data*.db-wal
 data/
 turtle_raw/
 turtle_converted/

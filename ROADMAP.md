@@ -8,7 +8,9 @@ here, ask before assuming it matters.
 ## Current Priorities
 
 **Critical**
-- Importer reliability (see KNOWN_ISSUES.md ISSUE-001)
+- Importer reliability (turtle-data corruption in KNOWN_ISSUES.md
+  ISSUE-001 resolved 2026-07-26 — see Completed; other import paths
+  not separately audited)
 - Startup reliability
 - Dependency management
 - Backend stability
@@ -55,3 +57,10 @@ into git history):
 - Git history cleanup: ~121 untracked files organized into 6 real
   commits, `market_data*.db` and other large/local data gitignored
   (2026-07-26).
+- Persistent documentation framework (`CLAUDE.md`, `PROJECT_STATE.md`,
+  `CHANGELOG.md`, `KNOWN_ISSUES.md`, `ROADMAP.md`, `BOOT_CHECKLIST.md`)
+  (2026-07-26).
+- Turtle-data corruption in `market_data.db` diagnosed and repaired:
+  century-pivot timestamp bug and a hardcoded `contract` placeholder,
+  both fixed with regression test coverage (2026-07-26,
+  KNOWN_ISSUES.md ISSUE-001).
