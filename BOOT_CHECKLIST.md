@@ -67,7 +67,22 @@ in a full-suite run only is KNOWN_ISSUES.md ISSUE-002, not new — verify
 by re-running that one test in isolation before treating it as a
 regression.
 
-## 7. Reconcile
+## 7. Database validation
+
+```bash
+python -m futures_bot.cli --validate-db
+```
+
+Read-only, no API key needed. Expect exit code 0 ("VALIDATION
+PASSED"). As of 2026-07-27 this exits **1** ("VALIDATION FAILED") on
+the live `market_data.db` — two known, not-yet-fixed findings (a
+schema drift in `bars`, and genuine OHLC violations in the raw
+`US80Z` historical source data) — see `KNOWN_ISSUES.md` ISSUE-004 and
+ISSUE-005, and `docs/DATABASE_VALIDATION.md`. Treat *exactly those two*
+findings as known; a new or different FAIL is a real regression worth
+stopping for.
+
+## 8. Reconcile
 
 If any of the above doesn't match PROJECT_STATE.md: stop, explain the
 discrepancy to the user, and update PROJECT_STATE.md once the cause is

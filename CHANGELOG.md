@@ -4,6 +4,62 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — permanent database validator
+
+**Added**
+- `src/futures_bot/market_data/validation.py`: read-only data-integrity
+  validator (`validate_database`, `render_report`, CLI `main`). Checks:
+  corrupted contract symbols, duplicate rows, missing/malformed
+  timestamps, implausible years, invalid/non-numeric OHLC values, all
+  four OHLC relationship invariants, negative/zero volume,
+  `contract_rolls` chain consistency, session gaps (reusing the sync
+  engine's existing `gaps` bookkeeping), a missing-trading-days
+  heuristic, orphan metadata records, and schema drift (diffed
+  directly against `store.py`'s `_SCHEMA`).
+- `--validate-db` CLI flag (`futures_bot.cli`).
+- `tests/test_market_data_validation.py` (33 tests).
+- `docs/DATABASE_VALIDATION.md`.
+
+**Changed**
+- `tools/import_turtle_data.py`: `parse_ticker` now imports
+  `is_valid_historical_ticker` from `market_data.validation` instead of
+  maintaining its own copy of the ticker regex — one definition, not
+  two.
+- `BOOT_CHECKLIST.md`: added a validation step (section 7).
+
+**Fixed**
+- None (this session builds detection tooling; two issues it found
+  were logged, not fixed — see Database changes below).
+
+**Database changes**
+- None. Read-only throughout — every connection this validator opens
+  uses SQLite's `mode=ro` URI, which raises on any write attempt.
+  Verified with a dedicated test that the database file's bytes are
+  identical before and after a full `validate_database` run.
+
+**API changes**
+- New CLI flag only (`--validate-db`); no existing route/flag changed.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None.
+
+**Known issues discovered (logged, not fixed):**
+- KNOWN_ISSUES.md ISSUE-004: `bars`' live schema has drifted from
+  `store.py`'s current `_SCHEMA` (missing `NOT NULL`, `id` never became
+  the declared `PRIMARY KEY AUTOINCREMENT`, `created_at` has no
+  default) — pre-existing, not caused by anything in this session.
+- KNOWN_ISSUES.md ISSUE-005: `US80Z` (a 1980 Treasury Bond contract)
+  has 13 bars with genuine OHLC invariant violations, confirmed present
+  in the raw `turtle_raw/US80Z.txt` source file itself.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
+---
+
 ## 2026-07-26
 
 **Added**

@@ -95,3 +95,61 @@ verified fixed — instead mark it Resolved with a date and commit.
   Verified in a clean venv: `pip install -e .` + `python -m
   futures_bot.api` boots and serves real requests with zero manual
   installs.
+
+---
+
+### ISSUE-004 — `bars` table schema has drifted from `store.py`'s current `_SCHEMA`
+
+- **Severity:** Medium (structural drift, not (yet) a data-correctness
+  problem — every row observed so far still holds valid data)
+- **Description:** Discovered 2026-07-27 by the new permanent validator
+  (`docs/DATABASE_VALIDATION.md`, `schema_mismatch:bars` check). The
+  live `bars` table's actual column definitions no longer match
+  `store.py`'s `_SCHEMA` string: every column is missing the `NOT
+  NULL` constraint the current schema declares, `id`'s type is `INT`
+  (not `INTEGER`) and it never became the `PRIMARY KEY AUTOINCREMENT`
+  the schema now specifies (matching the long-standing observation in
+  `docs/DATABASE_CORRUPTION_REPORT.md`'s "Out of Scope" section that
+  `id` is `NULL` for every row, regardless of source), and
+  `created_at` has no `DEFAULT` clause. `CREATE TABLE IF NOT EXISTS`
+  never retroactively alters an already-existing table, so this table
+  was created under an older revision of `_SCHEMA` and was never
+  migrated when the schema string changed.
+- **Files involved:** `market_data.db` (table `bars`),
+  `src/futures_bot/market_data/store.py` (`_SCHEMA`, `ensure_schema`).
+- **Possible cause:** `ensure_schema()` only ever runs `CREATE TABLE IF
+  NOT EXISTS`/`CREATE INDEX IF NOT EXISTS` — by design, idempotent and
+  non-destructive, but with no migration path for a column-level schema
+  change on an existing table.
+- **Current status:** Diagnosed, not fixed — out of scope for the
+  validator-building task that found it ("do not modify existing
+  data"). A real fix needs an explicit migration (e.g. `ALTER TABLE`
+  where SQLite allows it, or a rebuild-and-copy where it doesn't) and,
+  per CLAUDE.md section 8, is a database-schema change requiring
+  explicit approval before it's attempted.
+
+---
+
+### ISSUE-005 — Genuine OHLC invariant violations in raw `US80Z` source data
+
+- **Severity:** Low (isolated to one 1980 Treasury Bond contract; not a
+  systemic import/parsing defect)
+- **Description:** Discovered 2026-07-27 by the new permanent validator
+  (`high_lt_open`/`high_lt_close`/`low_gt_open`/`low_gt_close`
+  checks). 13 bars total for `US80Z` violate basic OHLC ordering (e.g.
+  `high < open`). Confirmed by inspecting `turtle_raw/US80Z.txt`
+  directly: the bad values are already present in the raw historical
+  source file (e.g. row `801027,69.9375,69.59464,68.59464,68.59464,...`
+  — high 69.59464 < open 69.9375) — not introduced by
+  `convert_turtle_data.py` or `import_turtle_data.py`.
+- **Files involved:** `market_data.db` (table `bars`, `product_code =
+  'US80Z'`), `turtle_raw/US80Z.txt` (source).
+- **Possible cause:** A data-entry or vendor error in the original
+  1980s-era historical archive this project imported from. Not a bug
+  in this project's own code.
+- **Current status:** Diagnosed, not fixed — out of scope for the
+  validator-building task that found it ("do not modify existing
+  data"). If ever repaired, the safest approach is almost certainly
+  deleting and re-importing just `US80Z` from `turtle_raw/` after
+  manually correcting the specific bad rows in the source file (there
+  is no "correct" value to derive from within the data itself).

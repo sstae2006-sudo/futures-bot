@@ -2,18 +2,15 @@ from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
 import csv
-import re
 
 from futures_bot.market_data.store import MarketDataStore
+from futures_bot.market_data.validation import is_valid_historical_ticker
 from futures_bot.models import Bar
 
 
 INPUT_DIR = Path("turtle_converted")
 
 DB_PATH = "market_data.db"
-
-# root (1-3 letters) + 2-digit year + month-letter, e.g. "CL00F" -> CL/00/F.
-TICKER_PATTERN = re.compile(r"^([A-Z]{1,3})(\d{2})([FGHJKMNQUVXZ])$")
 
 
 def parse_ticker(stem: str) -> str:
@@ -44,8 +41,14 @@ def parse_ticker(stem: str) -> str:
     hardcoded to the meaningless placeholder "CONTINUOUS" for every
     row instead of also being set to this same ticker -- that's what
     this fix corrects.
+
+    The pattern itself lives in market_data.validation (imported here
+    as is_valid_historical_ticker) so there's one definition of "valid
+    historical contract symbol," shared with the permanent
+    docs/DATABASE_VALIDATION.md validator instead of two independent
+    copies drifting apart.
     """
-    if not TICKER_PATTERN.match(stem):
+    if not is_valid_historical_ticker(stem):
         raise ValueError(
             f"{stem!r} doesn't match the expected contract-symbol "
             "pattern ROOT + YY + month-letter (e.g. 'CL00F')"

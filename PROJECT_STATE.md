@@ -18,17 +18,22 @@ version is bumped by hand.
 - Boots and serves real requests: verified in a clean venv, zero manual
   installs, `python -m futures_bot.api` → `GET /api/system/overview`
   returns real data from `research.db`.
-- Test suite: 896 tests, all passing as of 2026-07-26 (881 + 15 new
-  turtle-import regression tests). One test
-  (KNOWN_ISSUES.md ISSUE-002) is a known test-order-dependent flake —
-  didn't reproduce in the latest full run, but treat an isolated
-  failure there as the known flake, not a new regression, until it's
-  root-caused. Requires the `ml` extra (`pip install -e ".[dev,ml]"`)
-  for the ML dataset/training/predict test modules to even collect —
-  without it they fail collection with `ModuleNotFoundError`, not a
-  real failure.
+- Test suite: 929 tests as of 2026-07-27 (896 + 33 new database-
+  validator tests). One test (KNOWN_ISSUES.md ISSUE-002) is a known
+  test-order-dependent flake — treat an isolated failure there as the
+  known flake, not a new regression, until it's root-caused. Requires
+  the `ml` extra (`pip install -e ".[dev,ml]"`) for the ML
+  dataset/training/predict test modules to even collect — without it
+  they fail collection with `ModuleNotFoundError`, not a real failure.
 - Python: 3.12.10. Project `.venv` at repo root already has `dev`+`ml`
   extras installed.
+- `python -m futures_bot.cli --validate-db` runs a permanent, read-only
+  data-integrity validator against `market_data.db` — see
+  `docs/DATABASE_VALIDATION.md`. **Currently exits 1 (VALIDATION
+  FAILED)** on the live database: two known, not-yet-fixed findings
+  (KNOWN_ISSUES.md ISSUE-004 schema drift, ISSUE-005 genuine OHLC
+  violations in raw `US80Z` source data). A different or additional
+  FAIL is a real regression worth stopping for.
 
 ## Frontend Status
 
@@ -61,12 +66,28 @@ version is bumped by hand.
 
 - No CI configured — tests only run when a session runs them by hand.
 - No Python formatter/linter configured (no ruff/black/mypy).
+- KNOWN_ISSUES.md ISSUE-004 (`bars` schema drift) and ISSUE-005
+  (`US80Z` genuine OHLC violations) — both diagnosed, neither fixed.
 
 ## Priorities
 
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: built a permanent, read-only database validator
+(`src/futures_bot/market_data/validation.py`, wired into
+`python -m futures_bot.cli --validate-db`) covering corrupted symbols,
+duplicate rows, missing/malformed timestamps, OHLC invariant
+violations, negative/zero volume, contract-roll chain consistency,
+session gaps (reusing the sync engine's existing bookkeeping), a
+missing-trading-days heuristic, orphan metadata records, and schema
+drift (diffed directly against `store.py`'s `_SCHEMA`). 33 new tests.
+Running it against the live database for the first time surfaced two
+new, previously-unknown issues (ISSUE-004, ISSUE-005) — logged, not
+fixed, per this task's "do not modify existing data" constraint.
+`docs/DATABASE_VALIDATION.md` written; `BOOT_CHECKLIST.md` updated
+with the new step.
 
 2026-07-26: dependency audit/fix, clean-venv verification, git history
 cleanup (6 commits turning ~121 untracked files into a real history),
@@ -82,7 +103,8 @@ breakdown.
 
 ## Recommended Next Task
 
-No Critical items remain open in ROADMAP.md as of this writing.
-Consider CI setup (tests currently only run by hand) and a Python
-formatter/linter, or move to the High-priority roadmap items
+Decide whether to fix ISSUE-004 (schema migration, needs explicit
+approval per CLAUDE.md section 8) and/or ISSUE-005 (US80Z source-data
+correction). Otherwise: CI setup (tests currently only run by hand), a
+Python formatter/linter, or the High-priority roadmap items
 (walk-forward testing, Monte Carlo, parameter robustness).

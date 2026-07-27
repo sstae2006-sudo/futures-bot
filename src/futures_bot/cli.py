@@ -61,6 +61,8 @@ from .market_data.sync import backfill as md_backfill
 from .market_data.sync import repair_gaps as md_repair_gaps
 from .market_data.sync import sync_incremental as md_sync_incremental
 from .market_data.sync import verify as md_verify
+from .market_data.validation import render_report as md_render_validation_report
+from .market_data.validation import validate_database as md_validate_database
 
 
 def cmd_check(settings_path: Path) -> int:
@@ -521,6 +523,15 @@ def cmd_repair_gaps(product: str, resolution: str) -> int:
     return 0
 
 
+def cmd_validate_db() -> int:
+    """Whole-database data-integrity scan -- no API key needed, strictly
+    read-only. See `market_data.validation.validate_database` and
+    docs/DATABASE_VALIDATION.md."""
+    report = md_validate_database()
+    print(md_render_validation_report(report))
+    return 1 if not report.passed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="futures_bot",
@@ -566,6 +577,11 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument(
         "--repair-gaps", action="store_true",
         help="Data pipeline: re-fetch previously detected gaps in the local market-data DB.",
+    )
+    group.add_argument(
+        "--validate-db", action="store_true",
+        help="Data pipeline: run the full read-only data-integrity validator against the local "
+             "market-data DB. Exits nonzero if any check fails. See docs/DATABASE_VALIDATION.md.",
     )
 
     parser.add_argument("--walk-forward", action="store_true", help="With --backtest: train/test split.")
@@ -657,6 +673,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.repair_gaps:
             return cmd_repair_gaps(args.product, args.resolution)
+
+        if args.validate_db:
+            return cmd_validate_db()
 
     except (FileNotFoundError, ValueError, KeyError) as exc:
         # These are the well-understood, user-facing error classes: a

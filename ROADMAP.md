@@ -24,9 +24,13 @@ here, ask before assuming it matters.
 - UX polish
 - Dark mode
 - Exports
+- Fix `bars` schema drift (KNOWN_ISSUES.md ISSUE-004, needs explicit
+  approval per CLAUDE.md section 8 — it's a schema change)
 
 **Low**
 - New strategies
+- Fix `US80Z` genuine OHLC violations in raw source data
+  (KNOWN_ISSUES.md ISSUE-005)
 
 ## Future Roadmap
 
@@ -64,3 +68,7 @@ into git history):
   century-pivot timestamp bug and a hardcoded `contract` placeholder,
   both fixed with regression test coverage (2026-07-26,
   KNOWN_ISSUES.md ISSUE-001).
+- Permanent, read-only database validator (`--validate-db`) covering
+  16 integrity classes, with 33 tests and `docs/DATABASE_VALIDATION.md`
+  (2026-07-27). Surfaced two new findings on first run against the
+  live database — see Medium/Low priorities above.
