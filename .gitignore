@@ -12,6 +12,8 @@ decisions.jsonl
 
 # Phase 6A: research API artifacts
 research.db
+research.db-shm
+research.db-wal
 api_reports/
 
 # Local market-data caches and generated backtest reports -- large,
