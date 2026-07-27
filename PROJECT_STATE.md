@@ -25,8 +25,9 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: 929 tests as of 2026-07-27 (896 + 33 new database-
-  validator tests). One test (KNOWN_ISSUES.md ISSUE-002) is a known
+- Test suite: 949 tests as of 2026-07-27 (929 + 20 new Market Context
+  Engine foundation tests), full suite green (949 passed, 0 failed).
+  One test (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
   known flake, not a new regression, until it's root-caused. Requires
   the `ml` extra (`pip install -e ".[dev,ml]"`) for the ML
@@ -67,6 +68,12 @@ version is bumped by hand.
   contracts and flat-file APIs.
 - Grid-search optimizer with train/validation split and walk-forward
   option; ML research workstation (dataset build, training, prediction).
+- Market Context Engine **foundation only** (2026-07-27,
+  `src/futures_bot/context/`): typed `MarketContext` value object +
+  `ContextEngine` scaffold. Not wired into `TradingEngine`/`Strategy` —
+  every classification method is a stub returning `UNKNOWN`. See
+  `docs/ARCHITECTURE.md`'s "Market Context Engine" section and
+  ROADMAP.md for the follow-up phases.
 - FastAPI research server + React dashboard covering all of the above,
   plus an autonomous paper-trading/nightly-jobs layer
   (`research_server/`).
@@ -86,6 +93,27 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: built the foundation for a Market Context Engine
+(`src/futures_bot/context/{models,context_engine,__init__}.py`) —
+a typed, immutable `MarketContext` value object (session/regime/
+volatility/trend/liquidity/risk state, each an Enum with an `UNKNOWN`
+fallback so missing values are always safely representable, plus a
+`confidence_scores` dict and `to_dict`/`from_dict` serialization) and
+a `ContextEngine` whose `build_context()` wires it together with six
+classification methods, all deliberately stubbed to return `UNKNOWN`
+(no indicator math this phase, per the task's own scope). Purely
+additive: nothing in `engine.py`/`strategy/`/`risk/` imports or
+references it yet, verified both by dedicated tests (`context` not in
+`TradingEngine`'s namespace, `Strategy.on_bar`'s signature unchanged)
+and by the full suite staying green (949 passed, 20 new). Found
+`research/regime.py` already implements very similar
+session/trend/volatility classification (post-trade, for analytics,
+not real-time) during inspection — documented as the reuse point for
+whichever future phase implements real classification, specifically to
+avoid building a second, duplicate system. Integration point and
+target layering (Market Data → Context Engine → Strategy Engine → Risk
+Engine → Execution) documented in `docs/ARCHITECTURE.md`.
 
 2026-07-27: built a repeatable one-command startup system
 (`scripts/{_common,start,stop,restart,status}.ps1`, `start.cmd`) —
@@ -131,7 +159,13 @@ breakdown.
 
 ## Recommended Next Task
 
-Decide whether to fix `kill-vite.js`'s self-kill bug directly (would
+Decide the next Market Context Engine phase: implement real
+`_classify_regime`/`_classify_volatility`/`_classify_trend` by reusing
+`research/regime.py`/`strategy/indicators.py` (see
+`docs/ARCHITECTURE.md`), and decide how `TradingEngine.on_bar` should
+actually pass a `MarketContext` to strategies (likely a `Strategy.on_bar`
+signature change — needs explicit approval per CLAUDE.md section 8).
+Otherwise: decide whether to fix `kill-vite.js`'s self-kill bug directly (would
 fix manual `npm run dev` too, but is a change to existing frontend
 code) or leave `scripts\start.ps1`'s workaround as the standing
 solution. Also open: ISSUE-004 (schema migration, needs explicit

@@ -34,11 +34,39 @@ here, ask before assuming it matters.
 
 ## Future Roadmap
 
-Not fleshed out beyond the priorities above yet. This is intentional —
-inventing multi-session plans nobody's actually committed to would be
-worse than leaving this honestly thin. Add real plans here as they're
-decided; a future Claude session should never have to guess what's on
-this list.
+Not fleshed out beyond the priorities above yet, except the one
+concrete phased plan below. Inventing multi-session plans nobody's
+actually committed to would be worse than leaving the rest honestly
+thin. Add real plans here as they're decided; a future Claude session
+should never have to guess what's on this list.
+
+### Market Context Engine (phased)
+
+Target architecture: `Market Data → Context Engine → Strategy Engine →
+Risk Engine → Execution`. See `docs/ARCHITECTURE.md`'s "Market Context
+Engine" section for the full rationale.
+
+- **Phase 1 — foundation (done, 2026-07-27).** `src/futures_bot/context/`:
+  typed, immutable `MarketContext` value object and a `ContextEngine`
+  scaffold. Every classification method is a stub returning `UNKNOWN`.
+  Not wired into `TradingEngine`/`Strategy` — purely additive, verified
+  by dedicated tests and a green full suite.
+- **Phase 2 — real classification.** Implement
+  `_classify_regime`/`_classify_volatility`/`_classify_trend` by
+  reusing `research/regime.py` (`classify_session`/`classify_trend`/
+  `classify_volatility`, currently applied post-trade for analytics)
+  and `strategy/indicators.py` (`adx`, `ema_series`, `atr`) — not by
+  re-deriving the same math a second time.
+- **Phase 3 — new dimensions.** `_classify_liquidity`/`_classify_risk`
+  have no existing equivalent to reuse; genuinely new work.
+- **Phase 4 — wire it in.** Decide how `TradingEngine.on_bar` actually
+  gets a `MarketContext` to a strategy — most likely a `Strategy.on_bar`
+  signature change. **Needs explicit approval per CLAUDE.md section 8**
+  (protected: the strategy interface).
+- **Phase 5 — persistence (maybe).** Whether `MarketContext` snapshots
+  get stored for research/backtesting analysis. Would be a database
+  schema change — needs explicit approval per CLAUDE.md section 8 —
+  and isn't decided yet; don't assume it's wanted.
 
 ## Completed
 
@@ -72,3 +100,7 @@ into git history):
   16 integrity classes, with 33 tests and `docs/DATABASE_VALIDATION.md`
   (2026-07-27). Surfaced two new findings on first run against the
   live database — see Medium/Low priorities above.
+- Repeatable one-command startup system (`scripts\start.ps1` +
+  stop/restart/status, `start.cmd`) (2026-07-27).
+- Market Context Engine, Phase 1/foundation only (2026-07-27) — see
+  "Market Context Engine (phased)" below for what's left.

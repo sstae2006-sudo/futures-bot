@@ -4,6 +4,87 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine foundation
+
+**Added**
+- `src/futures_bot/context/models.py`: `MarketContext` — a typed,
+  immutable value object (`timestamp`, `symbol`, `timeframe`, `session`,
+  `market_regime`, `volatility_state`, `trend_state`, `liquidity_state`,
+  `risk_state`, `confidence_scores`). Six state Enums
+  (`SessionPhase`/`MarketRegime`/`VolatilityState`/`TrendState`/
+  `LiquidityState`/`RiskState`), each with an `UNKNOWN` member so a
+  context is always safely constructible with nothing known yet.
+  `confidence` property (mean of `confidence_scores`, 0.0 if empty),
+  `to_dict`/`from_dict` (JSON-safe, round-trips), `unknown_context()`
+  helper.
+- `src/futures_bot/context/context_engine.py`: `ContextEngine` —
+  `build_context(timestamp, bars)` wires the above together; its six
+  `_classify_*` methods are stubs returning `UNKNOWN` (no indicator
+  math this phase, by design).
+- `src/futures_bot/context/__init__.py`: package exports.
+- `tests/test_context.py` (20 tests): construction, missing-values
+  safety, serialization round-trips, and explicit guards that nothing
+  in the existing decision path (`engine.py`, `strategy/base.py`)
+  imports or references the new module.
+- `docs/ARCHITECTURE.md`: new "Market Context Engine" section — target
+  layering, the exact integration point
+  (`engine.TradingEngine.on_bar`, between `risk.must_flatten` and
+  `strategy.on_bar`, shared by live and backtest since both run through
+  the same engine), and the reuse point with `research/regime.py` /
+  `strategy/indicators.py` for whichever future phase implements real
+  classification.
+
+**Changed**
+- Nothing existing. This module is imported by nothing else in the
+  codebase yet — purely additive.
+
+**Fixed**
+- None.
+
+**Database changes**
+- None (explicitly out of scope this phase — would need approval per
+  CLAUDE.md section 8).
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None.
+
+**Verified:** full test suite green (949 passed, 0 failed — 929 +
+20 new), including dedicated checks that `Strategy.on_bar`'s signature
+is unchanged and that `TradingEngine` has no `context` reference.
+
+**Post-hoc architecture review (same day):** re-verified against the
+live code (not just the tests written alongside it) — zero references
+to `futures_bot.context` anywhere outside itself; `strategy/`,
+`engine.py`, `risk/`, `brokers/`, `backtest/`, `research/regime.py` all
+show zero `git diff`/`git status` (untouched, not just unaffected);
+both import orders (`context` before and after `engine`/`strategy`)
+succeed with no cycle, and `context_engine.py`'s only in-repo
+dependency (`futures_bot/models.py`) imports nothing from `context`, so
+no cycle is structurally possible; every no-data code path
+(`bars=None`, `bars=[]`, omitted, bare construction) exercised directly
+and confirmed all-`UNKNOWN`/0.0 confidence, never an error.
+
+**Notable finding during inspection (informed the design, not a bug):**
+`research/regime.py` already implements session/trend/volatility
+classification, applied post-trade for analytics
+(`GET /api/regime/performance`), not in the live decision path. Rather
+than risk a second, duplicate classification system, the new
+`ContextEngine`'s stub methods explicitly document reusing those
+functions (and `strategy/indicators.py`'s `atr`/`adx`/`ema_series`) as
+the intended Phase 2 implementation, instead of re-deriving the same
+thresholds from scratch.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
+---
+
 ## 2026-07-27 — repeatable one-command startup system
 
 **Added**

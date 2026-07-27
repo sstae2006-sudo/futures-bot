@@ -101,6 +101,61 @@ Everything from the journal down is read-only with respect to what already
 happened: nothing past that point can change a trade that has already
 closed.
 
+## Market Context Engine (foundation, 2026-07-27 — not wired in yet)
+
+`futures_bot.context` (`models.py`'s `MarketContext`, `context_engine.py`'s
+`ContextEngine`) is the foundation for a future layer between market data and
+the strategy, matching the target shape:
+
+```
+MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
+```
+
+**What exists today:** a typed, immutable `MarketContext` value object
+(session/regime/volatility/trend/liquidity/risk state, each an Enum with an
+`UNKNOWN` member so a context can always be constructed safely even with
+nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
+whose `build_context()` wires everything together but whose six
+`_classify_*` methods are **stubs that all return `UNKNOWN`**. No indicator
+math, no regime detection, nothing that could influence a trade — this
+phase is data-shape and integration-point only, deliberately not yet
+implemented per the phase's own scope.
+
+**The exact integration point, when a future phase wires it in:**
+`engine.TradingEngine.on_bar` (the single chokepoint both live/paper
+trading *and* every backtest run through — `backtest/runner.py` replays
+bars through this same engine, not a second loop) currently goes straight
+from step 2 (`risk.must_flatten`) to step 3 (`strategy.on_bar`). A
+`ContextEngine` would build a `MarketContext` from `self.bars` right
+between those two steps and make it available to the strategy — most
+likely as an additional argument threaded through `Strategy.on_bar`
+alongside `bars`/`position`, decided in whichever phase actually does the
+wiring. **The context engine provides information; it must never gain a
+reference to the broker or risk manager, the same hard boundary that
+already keeps a `Strategy` from placing its own orders** (see "Why
+strategies cannot execute trades directly" below).
+
+**Reuse, don't duplicate, when real classification is implemented:**
+`research/regime.py` already classifies session/trend/volatility —
+`classify_session` (CME RTH buckets), `classify_trend` (start-to-end %
+move over a lookback), `classify_volatility` (ATR terciles) — but applies
+them **after** a trade closes, for analytics (`GET
+/api/regime/performance`), never in the live decision path.
+`strategy/indicators.py` already has the primitives a real
+`ContextEngine` would need (`atr`, `adx` for trend-vs-range strength,
+`ema_series`, `rsi`, `vwap_bands`). The next phase should call these
+existing functions from `_classify_regime`/`_classify_volatility`/
+`_classify_trend`/`_classify_session` rather than re-deriving the same
+math a second time — that duplication risk is exactly why this phase
+stops at stubs instead of guessing at real thresholds.
+
+**Not addressed this phase, by design:** no database persistence (a
+schema change needs explicit approval per `CLAUDE.md` section 8, and
+there's no trading/analytics need for one yet), no `liquidity_state`/
+`risk_state` real classification (no existing equivalent to reuse — a
+genuinely new future phase), no change to `Strategy`, `TradingEngine`,
+or `RiskManager`.
+
 ## Why strategies cannot execute trades directly
 
 `Strategy.on_bar` returns a `Signal` — a decision, not an order. The engine
