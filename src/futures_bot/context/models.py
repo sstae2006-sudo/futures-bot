@@ -22,22 +22,32 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
+
+if TYPE_CHECKING:
+    # Deferred: session.py imports SessionPhase from *this* module, so a
+    # real (non-TYPE_CHECKING) import here would be circular. Safe only
+    # because `from __future__ import annotations` above means every
+    # annotation in this file is a string at runtime -- never actually
+    # evaluated, just available to static type checkers/IDEs.
+    from .session import SessionContext
 
 
 class SessionPhase(str, Enum):
-    """Coarse time-of-day bucket. Not the same enum as
-    ``research.regime.classify_session``'s string labels (open/morning/
-    lunch/close/overnight) -- a future phase should decide whether to
-    reuse that function's *values* here, not redefine the bucket
-    boundaries a second time."""
+    """The seven futures-market session phases (see context/session.py,
+    which classifies a timestamp into one of these using this codebase's
+    existing CME market-calendar logic -- contracts.py -- rather than a
+    new one). Boundaries reuse ``research.regime``'s exact RTH buckets
+    and ``contracts.py``'s exact maintenance-halt window; see
+    session.py's module docstring for the full mapping."""
 
-    OPENING_RANGE = "OPENING_RANGE"
-    MORNING = "MORNING"
-    MIDDAY = "MIDDAY"
-    AFTERNOON = "AFTERNOON"
-    CLOSE = "CLOSE"
     OVERNIGHT = "OVERNIGHT"
+    PRE_MARKET = "PRE_MARKET"
+    OPENING_RANGE = "OPENING_RANGE"
+    MORNING_SESSION = "MORNING_SESSION"
+    LUNCH_SESSION = "LUNCH_SESSION"
+    POWER_HOUR = "POWER_HOUR"
+    MARKET_CLOSE = "MARKET_CLOSE"
     UNKNOWN = "UNKNOWN"
 
 
@@ -118,6 +128,13 @@ class MarketContext:
     trend_state: TrendState = TrendState.UNKNOWN
     liquidity_state: LiquidityState = LiquidityState.UNKNOWN
     risk_state: RiskState = RiskState.UNKNOWN
+    #: The rich session classification (minutes_since_open,
+    #: liquidity_expectation, is_market_open) from context/session.py's
+    #: classify_session(). ``None`` until a caller sets it -- ``session``
+    #: above (the bare enum) is kept in sync separately for anything that
+    #: only needs the phase, not the full detail; see
+    #: ContextEngine._classify_session.
+    session_context: Optional["SessionContext"] = None
     #: Per-dimension confidence in [0.0, 1.0], keyed by the same names as
     #: the Enum fields above (e.g. {"market_regime": 0.82}). Missing a key
     #: means "no confidence recorded for that dimension" -- see
@@ -161,6 +178,7 @@ class MarketContext:
             "trend_state": self.trend_state.value,
             "liquidity_state": self.liquidity_state.value,
             "risk_state": self.risk_state.value,
+            "session_context": self.session_context.to_dict() if self.session_context else None,
             "confidence_scores": dict(self.confidence_scores),
             "confidence": self.confidence,
         }
@@ -175,9 +193,17 @@ class MarketContext:
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
 
+        session_context_data = data.get("session_context")
+        session_context = None
+        if session_context_data is not None:
+            from .session import SessionContext  # local: see the TYPE_CHECKING import above
+
+            session_context = SessionContext.from_dict(session_context_data)
+
         kwargs: dict[str, Any] = {
             "timestamp": timestamp,
             "symbol": data["symbol"],
+            "session_context": session_context,
             "timeframe": data["timeframe"],
             "confidence_scores": dict(data.get("confidence_scores", {})),
         }

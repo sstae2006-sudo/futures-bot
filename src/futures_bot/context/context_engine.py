@@ -1,4 +1,5 @@
-"""The Market Context Engine -- foundation phase (2026-07-27).
+"""The Market Context Engine -- foundation phase (2026-07-27), Session
+Context implemented (2026-07-27).
 
 Builds ``MarketContext`` snapshots from market data. Provides information
 *to* strategies; never makes a trade decision and never holds a reference
@@ -8,14 +9,14 @@ the full rationale and the target layering:
 
     Market Data -> Context Engine -> Strategy Engine -> Risk Engine -> Execution
 
-**Foundation phase scope, deliberately:** every ``_classify_*`` method
-below is a stub that returns ``UNKNOWN`` with no confidence recorded. No
-indicator math, no regime/volatility/trend detection is implemented here
-yet -- that's explicitly a follow-up phase (see ROADMAP.md), and per this
-phase's own instructions, not this one. This class exists so the *shape*
-of that future work has an obvious, already-typed home instead of being
-designed from scratch under time pressure later, and so nothing calling
-it today needs to change when real classification logic lands.
+**Scope, deliberately:** ``_classify_session`` is now real (see
+``session.py``). The other five ``_classify_*`` methods below are still
+stubs returning ``UNKNOWN`` with no confidence recorded -- that's
+explicitly a follow-up phase (see ROADMAP.md), not this one. This class
+exists so the *shape* of that future work has an obvious, already-typed
+home instead of being designed from scratch under time pressure later,
+and so nothing calling it today needs to change when real classification
+logic lands for the rest.
 
 **Not wired into ``TradingEngine`` yet.** Nothing in ``engine.py``,
 ``strategy/``, or ``risk/`` imports this module. Building it standalone
@@ -34,10 +35,10 @@ from .models import (
     MarketContext,
     MarketRegime,
     RiskState,
-    SessionPhase,
     TrendState,
     VolatilityState,
 )
+from .session import SessionContext, classify_session
 
 
 class ContextEngine:
@@ -66,37 +67,47 @@ class ContextEngine:
         want a context before any history exists yet (session start), in
         which case every classification is ``UNKNOWN`` regardless.
 
-        Foundation phase: every classification below is a stub, so this
-        always returns all-``UNKNOWN`` with zero confidence. See the
-        module docstring for why, and docs/ARCHITECTURE.md for what a
-        real implementation should reuse instead of re-deriving.
+        Session classification is real (see ``session.py``); the other
+        five below are still stubs, so this returns all-``UNKNOWN`` for
+        those with zero confidence. See the module docstring for why,
+        and docs/ARCHITECTURE.md for what a real implementation should
+        reuse instead of re-deriving.
         """
         bars = bars or ()
+        session_ctx = self._classify_session(timestamp)
         return MarketContext(
             timestamp=timestamp,
             symbol=self.symbol,
             timeframe=self.timeframe,
-            session=self._classify_session(timestamp),
+            session=session_ctx.session,
+            session_context=session_ctx,
             market_regime=self._classify_regime(bars),
             volatility_state=self._classify_volatility(bars),
             trend_state=self._classify_trend(bars),
             liquidity_state=self._classify_liquidity(bars),
             risk_state=self._classify_risk(bars),
-            confidence_scores={},
+            #: Session classification is deterministic given a timestamp
+            #: (no uncertainty -- we either know the calendar or we
+            #: don't), so it earns a real confidence entry rather than
+            #: being left out of confidence_scores like the five still-
+            #: UNKNOWN dimensions. Their absence is exactly what
+            #: MarketContext.confidence's docstring means by "no
+            #: confidence recorded for that dimension."
+            confidence_scores={"session": 1.0},
         )
 
-    # --- Classification stubs -- foundation phase, no logic yet ---
+    # --- Classification methods ---
     #
-    # Each of these is the extension point for a specific future phase.
-    # None of them may reach into risk/manager.py, brokers/, or engine.py
-    # when implemented -- context describes, it never decides or acts.
+    # None of these may reach into risk/manager.py, brokers/, or engine.py
+    # -- context describes, it never decides or acts.
 
-    def _classify_session(self, timestamp: datetime) -> SessionPhase:
-        """Future phase: derive from ``contracts.py``'s own session
-        arithmetic (``session_date``, ``is_market_open``, ``to_ct``) or
-        ``research.regime.classify_session``'s RTH buckets -- reuse one
-        of those, don't redefine session boundaries a third time."""
-        return SessionPhase.UNKNOWN
+    def _classify_session(self, timestamp: datetime) -> SessionContext:
+        """Real, as of 2026-07-27 -- delegates entirely to
+        ``session.classify_session``, which reuses ``contracts.py``'s
+        existing CME market-calendar logic. See that module for the
+        actual boundary/holiday/weekend handling; nothing is
+        re-implemented here."""
+        return classify_session(timestamp, self.symbol)
 
     def _classify_regime(self, bars: Sequence[Bar]) -> MarketRegime:
         """Future phase: ``strategy.indicators.adx`` is the natural

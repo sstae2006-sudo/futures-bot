@@ -4,6 +4,92 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine: Session Context (Phase 2a)
+
+**Added**
+- `src/futures_bot/context/session.py`: `classify_session(timestamp,
+  symbol, premarket_start_ct=...)` and `SessionContext`
+  (`session`, `minutes_since_open`, `liquidity_expectation`,
+  `is_market_open`). Classifies the seven futures-market session
+  phases by reusing `contracts.py`'s existing CME calendar logic
+  (`is_weekend_closure`, `is_cme_holiday`, `in_maintenance_halt`,
+  `is_market_open`) and `research/regime.py`'s exact RTH boundaries —
+  no new calendar built. `to_dict`/`from_dict`.
+- `tests/test_context_session.py` (31 tests): normal trading day
+  (including an exact match against the task's own spec example),
+  weekend, holiday, overnight, the maintenance halt, market-open
+  transitions, serialization, and integration into `MarketContext`.
+  Named `test_context_session.py`, not `test_session.py` — that name
+  was already taken by `futures_bot.session`'s unrelated tests
+  (session-summary reporting).
+
+**Changed**
+- `src/futures_bot/context/models.py`: `SessionPhase` enum members
+  renamed to the precise 7-phase spec (`OVERNIGHT`, `PRE_MARKET`,
+  `OPENING_RANGE`, `MORNING_SESSION`, `LUNCH_SESSION`, `POWER_HOUR`,
+  `MARKET_CLOSE` — was `OPENING_RANGE`/`MORNING`/`MIDDAY`/`AFTERNOON`/
+  `CLOSE`/`OVERNIGHT`; confirmed unused anywhere before renaming).
+  Added `MarketContext.session_context: Optional[SessionContext]`
+  (`TYPE_CHECKING`-guarded import to avoid a circular dependency with
+  `session.py`, which imports `SessionPhase` from this module);
+  `to_dict`/`from_dict` updated to serialize it.
+- `src/futures_bot/context/context_engine.py`: `_classify_session` is
+  now real (delegates to `session.classify_session`); `build_context`
+  sets `confidence_scores={"session": 1.0}` (deterministic
+  classification, not a guess) while the other five dimensions remain
+  unscored. The other five `_classify_*` methods are unchanged stubs.
+- `tests/test_context.py`: one Phase-1 assertion
+  (`test_context_engine_with_no_bars_returns_all_unknown`) updated —
+  it asserted `confidence == 0.0` when *everything* was a stub; now
+  that session classification is real and doesn't need bars, that's
+  no longer true. Renamed and narrowed to check only the five
+  dimensions still actually unimplemented.
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section updated —
+  session boundary rationale, the bug found and fixed (see below), and
+  the corrected "six stubs" → "five stubs, one real" description.
+
+**Fixed (in new code from this same phase, not a regression)**
+- A bug in this phase's own first draft: `minutes_since_open` was
+  wrong throughout the entire 16:00–17:00 CT maintenance halt (e.g.
+  reporting 0 at 16:30 instead of 30), because the original
+  implementation measured elapsed time from
+  `contracts.session_date()`'s session-start attribution, which
+  assigns a halt moment to the *next* session (correct for
+  `session_date`'s own kill-switch purpose, wrong for this
+  calculation). Found via manual verification against the live module
+  before writing it down as a test assertion, not by trusting the
+  first implementation. Fixed with a self-contained "most recent
+  17:00 CT at or before this moment" formula; regression-tested
+  explicitly across the whole halt window.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None to any existing caller (nothing outside `context/` references
+  `SessionPhase`'s renamed members — confirmed via `grep` before
+  renaming). Within `context/`, `MarketContext.session` keeps working
+  as a bare enum for callers that don't need the richer detail;
+  `session_context` is purely additive (defaults to `None`).
+
+**Verified:** full suite green (980 passed, 0 failed — 949 + 31 new).
+Re-confirmed the architecture-review checks from the prior entry still
+hold: zero references to `futures_bot.context` outside itself, zero
+`git diff`/`git status` on `strategy/`, `engine.py`, `risk/`,
+`brokers/`, `backtest/`, `research/regime.py` (untouched), both import
+orders succeed with no cycle.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
+---
+
 ## 2026-07-27 — Market Context Engine foundation
 
 **Added**

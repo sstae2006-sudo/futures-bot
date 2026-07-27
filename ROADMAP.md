@@ -51,11 +51,19 @@ Engine" section for the full rationale.
   scaffold. Every classification method is a stub returning `UNKNOWN`.
   Not wired into `TradingEngine`/`Strategy` — purely additive, verified
   by dedicated tests and a green full suite.
-- **Phase 2 — real classification.** Implement
+- **Phase 2a — Session Context (done, 2026-07-27).**
+  `context/session.py`'s `classify_session`/`SessionContext` — real
+  classification of the seven session phases (`OVERNIGHT`,
+  `PRE_MARKET`, `OPENING_RANGE`, `MORNING_SESSION`, `LUNCH_SESSION`,
+  `POWER_HOUR`, `MARKET_CLOSE`), reusing `contracts.py`'s existing CME
+  calendar logic and `research/regime.py`'s exact RTH boundaries.
+  Wired into `MarketContext`/`ContextEngine`. 31 new tests
+  (`tests/test_context_session.py`).
+- **Phase 2b — regime/volatility/trend.** Implement
   `_classify_regime`/`_classify_volatility`/`_classify_trend` by
-  reusing `research/regime.py` (`classify_session`/`classify_trend`/
-  `classify_volatility`, currently applied post-trade for analytics)
-  and `strategy/indicators.py` (`adx`, `ema_series`, `atr`) — not by
+  reusing `research/regime.py` (`classify_trend`/`classify_volatility`,
+  currently applied post-trade for analytics) and
+  `strategy/indicators.py` (`adx`, `ema_series`, `atr`) — not by
   re-deriving the same math a second time.
 - **Phase 3 — new dimensions.** `_classify_liquidity`/`_classify_risk`
   have no existing equivalent to reuse; genuinely new work.
@@ -102,5 +110,6 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine, Phase 1/foundation only (2026-07-27) — see
-  "Market Context Engine (phased)" below for what's left.
+- Market Context Engine, Phases 1 and 2a (foundation + Session
+  Context) (2026-07-27) — see "Market Context Engine (phased)" above
+  for what's left.

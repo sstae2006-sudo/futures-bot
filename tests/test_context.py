@@ -116,11 +116,19 @@ class TestMissingValuesHandledSafely:
         ts = datetime(2026, 1, 5, tzinfo=timezone.utc)
         assert unknown_context(ts, "MES", "5min") == MarketContext(timestamp=ts, symbol="MES", timeframe="5min")
 
-    def test_context_engine_with_no_bars_returns_all_unknown(self):
+    def test_context_engine_with_no_bars_returns_unknown_for_every_still_stubbed_dimension(self):
+        # Session classification is real as of 2026-07-27 (see
+        # test_session.py) and doesn't need bars at all -- only a
+        # timestamp -- so it's no longer part of what "safe with no
+        # data" means here. The other five dimensions are still stubs
+        # and remain UNKNOWN regardless of bars.
         engine = ContextEngine(symbol="MES", timeframe="5min")
         ctx = engine.build_context(timestamp=datetime(2026, 1, 5, tzinfo=timezone.utc))
         assert ctx.market_regime is MarketRegime.UNKNOWN
-        assert ctx.confidence == 0.0
+        assert ctx.volatility_state is VolatilityState.UNKNOWN
+        assert ctx.trend_state is TrendState.UNKNOWN
+        assert ctx.liquidity_state is LiquidityState.UNKNOWN
+        assert ctx.risk_state is RiskState.UNKNOWN
 
     def test_context_engine_with_bars_still_returns_unknown_this_phase(self):
         # Foundation phase: classification is stubbed, so even with real

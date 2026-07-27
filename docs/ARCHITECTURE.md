@@ -101,11 +101,12 @@ Everything from the journal down is read-only with respect to what already
 happened: nothing past that point can change a trade that has already
 closed.
 
-## Market Context Engine (foundation, 2026-07-27 — not wired in yet)
+## Market Context Engine (in progress, 2026-07-27 — not wired in yet)
 
 `futures_bot.context` (`models.py`'s `MarketContext`, `context_engine.py`'s
-`ContextEngine`) is the foundation for a future layer between market data and
-the strategy, matching the target shape:
+`ContextEngine`, `session.py`'s `SessionContext`) is the foundation for a
+future layer between market data and the strategy, matching the target
+shape:
 
 ```
 MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
@@ -115,11 +116,36 @@ MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
 (session/regime/volatility/trend/liquidity/risk state, each an Enum with an
 `UNKNOWN` member so a context can always be constructed safely even with
 nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
-whose `build_context()` wires everything together but whose six
-`_classify_*` methods are **stubs that all return `UNKNOWN`**. No indicator
-math, no regime detection, nothing that could influence a trade — this
-phase is data-shape and integration-point only, deliberately not yet
-implemented per the phase's own scope.
+whose `build_context()` wires everything together. **Session classification
+is real** (`session.py`'s `classify_session`, wired through
+`_classify_session`) — the other five `_classify_*` methods are still
+stubs returning `UNKNOWN`. No indicator math, no regime/volatility/trend
+detection yet — that remains a follow-up phase.
+
+`session.py`'s seven `SessionPhase` values (`OVERNIGHT`, `PRE_MARKET`,
+`OPENING_RANGE`, `MORNING_SESSION`, `LUNCH_SESSION`, `POWER_HOUR`,
+`MARKET_CLOSE`) reuse three existing conventions rather than inventing new
+boundaries: 08:30 CT as the RTH open (agreed upon identically by
+`research/regime.py`'s own bucket table and
+`strategy/opening_range_breakout.py`'s `session_start_ct` default),
+`research/regime.py`'s exact RTH bucket boundaries (reused verbatim, not
+re-derived), and `contracts.py`'s exact `SESSION_OPEN`/`SESSION_CLOSE`/
+`in_maintenance_halt` (`MARKET_CLOSE` *is* the maintenance halt). The one
+new boundary, `PRE_MARKET`'s start, has no existing precedent to reuse and
+is a documented, overridable parameter (default 08:00 CT), not a hardcoded
+literal. Weekends/holidays aren't an eighth "closed" phase — they classify
+as `OVERNIGHT` with `is_market_open=False` and `liquidity_expectation="NONE"`
+as the unambiguous "actually closed" signal.
+
+A real bug was found and fixed while building this: the first
+implementation measured `minutes_since_open` using `contracts.session_date()`,
+which attributes a maintenance-halt moment (16:00–17:00 CT) to the
+*upcoming* session — the wrong reference point for elapsed-minutes math
+during the halt itself (it produced `minutes_since_open=0` at 16:30 CT
+instead of 30). Fixed by computing session start directly (the most recent
+17:00 CT at or before the moment), independent of `session_date()`'s
+kill-switch-oriented semantics. Covered by a dedicated regression test
+(`tests/test_context_session.py`).
 
 **The exact integration point, when a future phase wires it in:**
 `engine.TradingEngine.on_bar` (the single chokepoint both live/paper
@@ -135,19 +161,18 @@ reference to the broker or risk manager, the same hard boundary that
 already keeps a `Strategy` from placing its own orders** (see "Why
 strategies cannot execute trades directly" below).
 
-**Reuse, don't duplicate, when real classification is implemented:**
-`research/regime.py` already classifies session/trend/volatility —
-`classify_session` (CME RTH buckets), `classify_trend` (start-to-end %
-move over a lookback), `classify_volatility` (ATR terciles) — but applies
-them **after** a trade closes, for analytics (`GET
-/api/regime/performance`), never in the live decision path.
-`strategy/indicators.py` already has the primitives a real
-`ContextEngine` would need (`atr`, `adx` for trend-vs-range strength,
-`ema_series`, `rsi`, `vwap_bands`). The next phase should call these
-existing functions from `_classify_regime`/`_classify_volatility`/
-`_classify_trend`/`_classify_session` rather than re-deriving the same
-math a second time — that duplication risk is exactly why this phase
-stops at stubs instead of guessing at real thresholds.
+**Reuse, don't duplicate, when the remaining classification is
+implemented:** `research/regime.py` already classifies trend/volatility —
+`classify_trend` (start-to-end % move over a lookback), `classify_volatility`
+(ATR terciles) — but applies them **after** a trade closes, for analytics
+(`GET /api/regime/performance`), never in the live decision path.
+`strategy/indicators.py` already has the primitives a real `ContextEngine`
+would need (`atr`, `adx` for trend-vs-range strength, `ema_series`, `rsi`,
+`vwap_bands`). The next phase should call these existing functions from
+`_classify_regime`/`_classify_volatility`/`_classify_trend` rather than
+re-deriving the same math a second time — that duplication risk is exactly
+why this phase stops at stubs for those five instead of guessing at real
+thresholds.
 
 **Not addressed this phase, by design:** no database persistence (a
 schema change needs explicit approval per `CLAUDE.md` section 8, and

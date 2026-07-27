@@ -25,9 +25,9 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: 949 tests as of 2026-07-27 (929 + 20 new Market Context
-  Engine foundation tests), full suite green (949 passed, 0 failed).
-  One test (KNOWN_ISSUES.md ISSUE-002) is a known
+- Test suite: 980 tests as of 2026-07-27 (949 + 31 new Session Context
+  tests), full suite green (980 passed, 0 failed). One test
+  (KNOWN_ISSUES.md ISSUE-002) is a known
   test-order-dependent flake — treat an isolated failure there as the
   known flake, not a new regression, until it's root-caused. Requires
   the `ml` extra (`pip install -e ".[dev,ml]"`) for the ML
@@ -68,10 +68,13 @@ version is bumped by hand.
   contracts and flat-file APIs.
 - Grid-search optimizer with train/validation split and walk-forward
   option; ML research workstation (dataset build, training, prediction).
-- Market Context Engine **foundation only** (2026-07-27,
+- Market Context Engine **in progress** (2026-07-27,
   `src/futures_bot/context/`): typed `MarketContext` value object +
-  `ContextEngine` scaffold. Not wired into `TradingEngine`/`Strategy` —
-  every classification method is a stub returning `UNKNOWN`. See
+  `ContextEngine`. **Session classification is real**
+  (`session.py`'s `classify_session`, using `contracts.py`'s existing
+  CME calendar logic, wired through `ContextEngine`/`MarketContext`);
+  the other five classification dimensions are still stubs returning
+  `UNKNOWN`. Not wired into `TradingEngine`/`Strategy` yet. See
   `docs/ARCHITECTURE.md`'s "Market Context Engine" section and
   ROADMAP.md for the follow-up phases.
 - FastAPI research server + React dashboard covering all of the above,
@@ -93,6 +96,32 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-27: implemented Session Context (`src/futures_bot/context/session.py`,
+`classify_session`/`SessionContext`) — real classification of the seven
+futures-market session phases (`OVERNIGHT`, `PRE_MARKET`, `OPENING_RANGE`,
+`MORNING_SESSION`, `LUNCH_SESSION`, `POWER_HOUR`, `MARKET_CLOSE`), reusing
+`contracts.py`'s existing CME calendar logic (`is_weekend_closure`,
+`is_cme_holiday`, `in_maintenance_halt`, `is_market_open`) and
+`research/regime.py`'s exact RTH boundaries rather than inventing a new
+calendar. Handles weekends/holidays (classify as `OVERNIGHT` with
+`is_market_open=False`/`liquidity_expectation="NONE"`, not an eighth
+"closed" phase) and the daily maintenance halt. Found and fixed a real
+bug during manual verification (not just via the tests written
+alongside it): `minutes_since_open` was wrong throughout the 16:00–17:00
+CT halt because `contracts.session_date()` attributes a halt moment to
+the *upcoming* session, the wrong reference point for that specific
+calculation — fixed with a self-contained "most recent 17:00 CT"
+formula, independent of `session_date()`'s kill-switch-oriented
+semantics. Wired into `MarketContext` (new `session_context` field,
+`ContextEngine._classify_session` now real) and verified against the
+task's own spec example exactly (`OPENING_RANGE`, 12 minutes,
+`"HIGH"` liquidity at 08:42 CT). `tests/test_context_session.py` (31
+tests, not `test_session.py` — that name was already taken by
+`futures_bot.session`'s unrelated tests). Full suite green (980
+passed, 0 failed, 31 new). The other five `MarketContext` dimensions
+(regime/volatility/trend/liquidity/risk) remain stubs — out of scope
+this phase, per instructions.
 
 2026-07-27: built the foundation for a Market Context Engine
 (`src/futures_bot/context/{models,context_engine,__init__}.py`) —
