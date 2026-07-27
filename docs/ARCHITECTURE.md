@@ -104,7 +104,8 @@ closed.
 ## Market Context Engine (in progress, 2026-07-27 — not wired in yet)
 
 `futures_bot.context` (`models.py`'s `MarketContext`, `context_engine.py`'s
-`ContextEngine`, `session.py`'s `SessionContext`) is the foundation for a
+`ContextEngine`, `session.py`'s `SessionContext`, `volatility.py`'s
+`VolatilityContext`, `regime.py`'s `RegimeContext`) is the foundation for a
 future layer between market data and the strategy, matching the target
 shape:
 
@@ -116,12 +117,38 @@ MARKET DATA -> CONTEXT ENGINE -> STRATEGY ENGINE -> RISK ENGINE -> EXECUTION
 (session/regime/volatility/trend/liquidity/risk state, each an Enum with an
 `UNKNOWN` member so a context can always be constructed safely even with
 nothing known yet, plus a `confidence_scores` dict) and a `ContextEngine`
-whose `build_context()` wires everything together. **Session and
-volatility classification are real** (`session.py`'s `classify_session`
-and `volatility.py`'s `analyze_volatility`, wired through
-`_classify_session`/`_classify_volatility`) — the other four `_classify_*`
-methods are still stubs returning `UNKNOWN`. No regime/trend/liquidity/risk
-detection yet — that remains a follow-up phase.
+whose `build_context()` wires everything together. **Session, volatility,
+and regime classification are real** (`session.py`'s `classify_session`,
+`volatility.py`'s `analyze_volatility`, and `regime.py`'s
+`classify_regime`, wired through
+`_classify_session`/`_classify_volatility`/`_classify_regime`) — the other
+three `_classify_*` methods (trend, liquidity, risk) are still stubs
+returning `UNKNOWN`. No trend/liquidity/risk detection yet — that remains
+a follow-up phase.
+
+**Market Regime Detection (`regime.py`, 2026-07-27):** `classify_regime`
+classifies overall market behavior into one of five mutually exclusive
+`MarketRegime` values — `TRENDING_UP`, `TRENDING_DOWN`, `RANGING`,
+`HIGH_VOLATILITY`, `LOW_VOLATILITY` (redefined this phase from Phase 1's
+placeholder set `TRENDING`/`RANGING`/`VOLATILE`; confirmed zero usages
+outside `context/`'s own tests before changing it, same discipline as
+`SessionPhase`'s Phase 2a rename). Combines three signals, each reused
+rather than re-derived: `strategy.indicators.adx` for trend *strength*
+(the conventional ADX ≥ 25 "actually trending" threshold, Wilder's own
+convention, not tuned for this codebase), `research/regime.py`'s
+`classify_trend` for trend *direction* (bullish/bearish/sideways —
+already look-ahead-safe, already used for this exact purpose elsewhere),
+and this package's own `volatility.analyze_volatility` for the
+volatility signal (inheriting its look-ahead safety for free). Priority
+when signals disagree, documented explicitly rather than left implicit:
+extreme volatility dominates trend/range labeling; otherwise a strong,
+directional ADX reading wins; otherwise low volatility is its own label;
+otherwise the default is `RANGING`. `confidence` is always in `[0.0,
+1.0]` via a small, documented formula per branch (e.g. trending
+confidence is `min(1.0, adx / 50.0)` — chosen so the task's own worked
+example, ADX 39, lands on exactly 0.78) — no parameter optimization this
+phase, every threshold is either reused from elsewhere in this codebase
+or an unmodified textbook default.
 
 **Volatility Context (`volatility.py`, 2026-07-27):** `analyze_volatility`
 reuses `strategy/indicators.py`'s `atr_series` (the same Wilder's-smoothing
@@ -195,26 +222,22 @@ already keeps a `Strategy` from placing its own orders** (see "Why
 strategies cannot execute trades directly" below).
 
 **Reuse, don't duplicate, when the remaining classification is
-implemented:** `research/regime.py` already classifies trend —
-`classify_trend` (start-to-end % move over a lookback) — but applies it
-**after** a trade closes, for analytics (`GET /api/regime/performance`),
-never in the live decision path. `strategy/indicators.py` already has the
-primitives a real `ContextEngine` would need (`adx` for trend-vs-range
-strength, `ema_series`, `rsi`, `vwap_bands`). The next phase should call
-these existing functions from `_classify_regime`/`_classify_trend` rather
-than re-deriving the same math a second time — that duplication risk is
-exactly why this phase stops at stubs for those two (plus liquidity/risk)
-instead of guessing at real thresholds. (Volatility is no longer in this
-list — see "Volatility Context" above for what it reuses and why its
-tercile-based cousin in `research/regime.py` specifically wasn't reused
-as-is.)
+implemented:** `research/regime.py`'s `classify_trend` (start-to-end %
+move over a lookback) is now reused directly by `regime.py` for trend
+*direction* — see "Market Regime Detection" above — but a real,
+standalone `trend_state`/`_classify_trend` (the separate `TrendState`
+enum: BULLISH/BEARISH/NEUTRAL) is still a stub; the next phase can reuse
+the same `classify_trend` call (or `strategy/indicators.py`'s
+`ema_series` slope) rather than re-deriving a second trend definition.
+`liquidity_state`/`risk_state` have no existing equivalent to reuse —
+genuinely new work, likely a composite of the other dimensions once
+their thresholds are trusted.
 
 **Not addressed this phase, by design:** no database persistence (a
 schema change needs explicit approval per `CLAUDE.md` section 8, and
-there's no trading/analytics need for one yet), no `liquidity_state`/
-`risk_state` real classification (no existing equivalent to reuse — a
-genuinely new future phase), no change to `Strategy`, `TradingEngine`,
-or `RiskManager`.
+there's no trading/analytics need for one yet), no `trend_state`/
+`liquidity_state`/`risk_state` real classification, no change to
+`Strategy`, `TradingEngine`, or `RiskManager`.
 
 ## Why strategies cannot execute trades directly
 

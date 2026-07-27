@@ -50,20 +50,20 @@ class TestMarketContextCreation:
         assert ctx.timeframe == "5min"
 
     def test_fully_specified_construction_matches_the_spec_example(self):
-        # MarketContext: {session: "OPENING_RANGE", regime: "TRENDING",
+        # MarketContext: {session: "OPENING_RANGE", regime: "TRENDING_UP",
         # volatility: "NORMAL", trend: "BULLISH", confidence: 0.82}
         ctx = MarketContext(
             timestamp=datetime(2026, 1, 5, 9, 35, tzinfo=timezone.utc),
             symbol="MES",
             timeframe="5min",
             session=SessionPhase.OPENING_RANGE,
-            market_regime=MarketRegime.TRENDING,
+            market_regime=MarketRegime.TRENDING_UP,
             volatility_state=VolatilityState.NORMAL,
             trend_state=TrendState.BULLISH,
             confidence_scores={"market_regime": 0.82},
         )
         assert ctx.session is SessionPhase.OPENING_RANGE
-        assert ctx.market_regime is MarketRegime.TRENDING
+        assert ctx.market_regime is MarketRegime.TRENDING_UP
         assert ctx.volatility_state is VolatilityState.NORMAL
         assert ctx.trend_state is TrendState.BULLISH
         assert ctx.confidence == pytest.approx(0.82)
@@ -116,12 +116,15 @@ class TestMissingValuesHandledSafely:
         ts = datetime(2026, 1, 5, tzinfo=timezone.utc)
         assert unknown_context(ts, "MES", "5min") == MarketContext(timestamp=ts, symbol="MES", timeframe="5min")
 
-    def test_context_engine_with_no_bars_returns_unknown_for_every_still_stubbed_dimension(self):
+    def test_context_engine_with_no_bars_returns_unknown_for_every_data_dependent_dimension(self):
         # Session classification is real as of 2026-07-27 (see
-        # test_session.py) and doesn't need bars at all -- only a
-        # timestamp -- so it's no longer part of what "safe with no
-        # data" means here. The other five dimensions are still stubs
-        # and remain UNKNOWN regardless of bars.
+        # test_context_session.py) and doesn't need bars at all -- only
+        # a timestamp -- so it's no longer part of what "safe with no
+        # data" means here. Volatility and regime are also real now
+        # (test_context_volatility.py / test_context_regime.py) but
+        # still return UNKNOWN with zero bars -- not because they're
+        # stubbed, but because there's genuinely no data to classify.
+        # Trend/liquidity/risk remain actual stubs.
         engine = ContextEngine(symbol="MES", timeframe="5min")
         ctx = engine.build_context(timestamp=datetime(2026, 1, 5, tzinfo=timezone.utc))
         assert ctx.market_regime is MarketRegime.UNKNOWN
@@ -130,11 +133,12 @@ class TestMissingValuesHandledSafely:
         assert ctx.liquidity_state is LiquidityState.UNKNOWN
         assert ctx.risk_state is RiskState.UNKNOWN
 
-    def test_context_engine_with_bars_still_returns_unknown_this_phase(self):
-        # Foundation phase: classification is stubbed, so even with real
-        # history the result is still all-UNKNOWN. This will start
-        # failing the moment a future phase implements real
-        # classification -- that's the point: it documents the boundary.
+    def test_context_engine_with_a_few_bars_still_returns_unknown_for_data_hungry_dimensions(self):
+        # 3 bars is nowhere near enough history for volatility (needs
+        # atr_period + 1) or regime (needs that plus 2 * adx_period for
+        # ADX) -- both correctly stay UNKNOWN, same "insufficient data
+        # handled safely" contract as with zero bars. trend_state is a
+        # genuine stub regardless of bars.
         engine = ContextEngine(symbol="MES", timeframe="5min")
         bars = [_bar("2026-01-05"), _bar("2026-01-06"), _bar("2026-01-07")]
         ctx = engine.build_context(timestamp=bars[-1].timestamp, bars=bars)
@@ -159,7 +163,7 @@ class TestSerialization:
             symbol="MES",
             timeframe="5min",
             session=SessionPhase.OPENING_RANGE,
-            market_regime=MarketRegime.TRENDING,
+            market_regime=MarketRegime.TRENDING_UP,
             volatility_state=VolatilityState.NORMAL,
             trend_state=TrendState.BULLISH,
             liquidity_state=LiquidityState.DEEP,
@@ -196,10 +200,10 @@ class TestSerialization:
             "timestamp": "2026-01-05T09:35:00+00:00",
             "symbol": "MES",
             "timeframe": "5min",
-            "market_regime": "TRENDING",
+            "market_regime": "TRENDING_UP",
             "confidence_scores": {"market_regime": 0.7},
         })
-        assert ctx.market_regime is MarketRegime.TRENDING
+        assert ctx.market_regime is MarketRegime.TRENDING_UP
         assert ctx.timestamp == datetime(2026, 1, 5, 9, 35, tzinfo=timezone.utc)
 
 

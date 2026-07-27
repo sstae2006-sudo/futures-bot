@@ -25,12 +25,13 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 if TYPE_CHECKING:
-    # Deferred: session.py/volatility.py import from *this* module (e.g.
-    # VolatilityState), so a real (non-TYPE_CHECKING) import here would be
-    # circular. Safe only because `from __future__ import annotations`
-    # above means every annotation in this file is a string at runtime --
-    # never actually evaluated, just available to static type
-    # checkers/IDEs.
+    # Deferred: session.py/volatility.py/regime.py import from *this*
+    # module (e.g. VolatilityState, MarketRegime), so a real
+    # (non-TYPE_CHECKING) import here would be circular. Safe only
+    # because `from __future__ import annotations` above means every
+    # annotation in this file is a string at runtime -- never actually
+    # evaluated, just available to static type checkers/IDEs.
+    from .regime import RegimeContext
     from .session import SessionContext
     from .volatility import VolatilityContext
 
@@ -54,9 +55,20 @@ class SessionPhase(str, Enum):
 
 
 class MarketRegime(str, Enum):
-    TRENDING = "TRENDING"
+    """Five mutually-exclusive market-behavior regimes (see
+    context/regime.py, which classifies a timestamp+bars into one of
+    these using this codebase's existing ADX/trend/volatility
+    primitives rather than new ones). Redefined this phase (2026-07-27)
+    from Phase 1's placeholder set (``TRENDING``/``RANGING``/
+    ``VOLATILE``) to this exact taxonomy -- confirmed zero usages
+    outside ``context/``'s own tests before changing it, same
+    discipline as ``SessionPhase``'s Phase 2a rename."""
+
+    TRENDING_UP = "TRENDING_UP"
+    TRENDING_DOWN = "TRENDING_DOWN"
     RANGING = "RANGING"
-    VOLATILE = "VOLATILE"
+    HIGH_VOLATILITY = "HIGH_VOLATILITY"
+    LOW_VOLATILITY = "LOW_VOLATILITY"
     UNKNOWN = "UNKNOWN"
 
 
@@ -143,6 +155,12 @@ class MarketContext:
     #: ``volatility_state`` above (the bare enum) is kept in sync
     #: separately, same pattern as ``session``/``session_context``.
     volatility_context: Optional["VolatilityContext"] = None
+    #: The rich regime snapshot (adx, trend_direction, volatility_ratio,
+    #: and the same confidence recorded in confidence_scores["regime"])
+    #: from context/regime.py's classify_regime(). ``None`` until a
+    #: caller sets it -- ``market_regime`` above (the bare enum) is kept
+    #: in sync separately, same pattern as session/volatility.
+    regime_context: Optional["RegimeContext"] = None
     #: Per-dimension confidence in [0.0, 1.0], keyed by the same names as
     #: the Enum fields above (e.g. {"market_regime": 0.82}). Missing a key
     #: means "no confidence recorded for that dimension" -- see
@@ -190,6 +208,7 @@ class MarketContext:
             "volatility_context": (
                 self.volatility_context.to_dict() if self.volatility_context else None
             ),
+            "regime_context": self.regime_context.to_dict() if self.regime_context else None,
             "confidence_scores": dict(self.confidence_scores),
             "confidence": self.confidence,
         }
@@ -218,11 +237,19 @@ class MarketContext:
 
             volatility_context = VolatilityContext.from_dict(volatility_context_data)
 
+        regime_context_data = data.get("regime_context")
+        regime_context = None
+        if regime_context_data is not None:
+            from .regime import RegimeContext  # local: see the TYPE_CHECKING import above
+
+            regime_context = RegimeContext.from_dict(regime_context_data)
+
         kwargs: dict[str, Any] = {
             "timestamp": timestamp,
             "symbol": data["symbol"],
             "session_context": session_context,
             "volatility_context": volatility_context,
+            "regime_context": regime_context,
             "timeframe": data["timeframe"],
             "confidence_scores": dict(data.get("confidence_scores", {})),
         }

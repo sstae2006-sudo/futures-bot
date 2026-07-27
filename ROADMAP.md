@@ -70,13 +70,23 @@ Engine" section for the full rationale.
   writeup. Wired into `MarketContext`/`ContextEngine`. 22 new tests
   (`tests/test_context_volatility.py`), including a dedicated
   no-future-leakage test.
-- **Phase 2c — regime/trend.** Implement
-  `_classify_regime`/`_classify_trend` by reusing `research/regime.py`
-  (`classify_trend`, currently applied post-trade for analytics) and
-  `strategy/indicators.py` (`adx`, `ema_series`) — not by re-deriving
-  the same math a second time.
-- **Phase 3 — new dimensions.** `_classify_liquidity`/`_classify_risk`
-  have no existing equivalent to reuse; genuinely new work.
+- **Phase 2c — Market Regime Detection (done, 2026-07-27).**
+  `context/regime.py`'s `classify_regime`/`RegimeContext` — classifies
+  overall market behavior into `TRENDING_UP`/`TRENDING_DOWN`/`RANGING`/
+  `HIGH_VOLATILITY`/`LOW_VOLATILITY` (`MarketRegime`, redefined from
+  Phase 1's placeholder set). Combines `strategy.indicators.adx` (trend
+  strength), `research/regime.py`'s `classify_trend` (trend direction),
+  and `context/volatility.py`'s `analyze_volatility` (volatility
+  signal) — no math re-derived. Explicit priority order when signals
+  disagree (documented in `docs/ARCHITECTURE.md`); `confidence` via a
+  small formula per branch, no parameter optimization this phase.
+  Wired into `MarketContext`/`ContextEngine`. 21 new tests
+  (`tests/test_context_regime.py`).
+- **Phase 3 — trend/liquidity/risk.** A real, standalone
+  `_classify_trend`/`TrendState` (can reuse `research/regime.py`'s
+  `classify_trend`, already wired into `regime.py` for regime
+  direction) plus `_classify_liquidity`/`_classify_risk`, which have no
+  existing equivalent to reuse — genuinely new work.
 - **Phase 4 — wire it in.** Decide how `TradingEngine.on_bar` actually
   gets a `MarketContext` to a strategy — most likely a `Strategy.on_bar`
   signature change. **Needs explicit approval per CLAUDE.md section 8**
@@ -120,6 +130,6 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine, Phases 1, 2a, and 2b (foundation + Session
-  Context + Volatility Context) (2026-07-27) — see "Market Context
-  Engine (phased)" above for what's left.
+- Market Context Engine, Phases 1, 2a, 2b, and 2c (foundation + Session
+  Context + Volatility Context + Market Regime Detection) (2026-07-27)
+  — see "Market Context Engine (phased)" above for what's left.

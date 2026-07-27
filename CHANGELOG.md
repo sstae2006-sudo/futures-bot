@@ -4,6 +4,93 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Market Context Engine: Market Regime Detection (Phase 2c)
+
+**Added**
+- `src/futures_bot/context/regime.py`: `classify_regime(timestamp,
+  symbol, timeframe, bars, adx_period=14)` and `RegimeContext` (`regime`,
+  `confidence`, `adx`, `trend_direction`, `volatility_ratio`). Classifies
+  overall market behavior into one of five mutually exclusive
+  `MarketRegime` values: `TRENDING_UP`, `TRENDING_DOWN`, `RANGING`,
+  `HIGH_VOLATILITY`, `LOW_VOLATILITY`. Combines three reused signals,
+  nothing re-derived: `strategy.indicators.adx` (trend strength —
+  conventional ADX >= 25 "actually trending" threshold, Wilder's own
+  convention), `research.regime.classify_trend` (trend direction —
+  bullish/bearish/sideways, already look-ahead-safe and already used
+  for this purpose elsewhere), and `context.volatility.analyze_volatility`
+  (volatility signal, inheriting its look-ahead safety for free).
+  Priority when signals disagree, documented explicitly: extreme
+  volatility dominates trend/range labeling; otherwise a strong,
+  directional ADX reading wins; otherwise low volatility is its own
+  label; otherwise the default is `RANGING`. `confidence` always in
+  `[0.0, 1.0]` via a small formula per branch (trending: `min(1.0,
+  adx/50.0)` — matches the task's own worked example, ADX 39 -> 0.78
+  exactly). No parameter optimization this phase — every threshold is
+  either reused from elsewhere in this codebase or an unmodified
+  textbook default (ADX 25). `to_dict`/`from_dict`.
+- `tests/test_context_regime.py` (21 tests): trending up/down, ranging,
+  high/low volatility, extreme volatility taking priority over a
+  concurrent trend (per the documented priority order), a confidence
+  formula check against the task's own worked example, missing data (no
+  bars, and a partial-data case where volatility classifies but ADX
+  still can't), a dedicated no-future-leakage test, serialization, and
+  integration into `MarketContext`.
+
+**Changed**
+- `src/futures_bot/context/models.py`: `MarketRegime` enum redefined
+  from Phase 1's placeholder set (`TRENDING`/`RANGING`/`VOLATILE`) to
+  the exact 5-value taxonomy above — confirmed zero usages outside
+  `context/`'s own tests before changing it (same discipline as
+  `SessionPhase`'s Phase 2a rename). Added
+  `MarketContext.regime_context: Optional[RegimeContext]`
+  (`TYPE_CHECKING`-guarded import, same pattern as
+  `session_context`/`volatility_context`); `to_dict`/`from_dict`
+  updated to serialize it.
+- `src/futures_bot/context/context_engine.py`: `_classify_regime` is now
+  real (delegates to `regime.classify_regime`); `build_context` adds
+  `confidence_scores["regime"]` only once `classify_regime` actually
+  produced a non-`UNKNOWN` reading. The remaining three `_classify_*`
+  methods (trend, liquidity, risk) are unchanged stubs.
+- `tests/test_context.py`: updated 6 assertions that referenced the old
+  `MarketRegime` member names (`TRENDING`/`RANGING` literals still valid
+  where unchanged, `TRENDING` -> `TRENDING_UP` elsewhere); renamed and
+  re-commented 2 tests whose docstrings claimed `market_regime` was
+  still an unconditional stub (it's real now, just still `UNKNOWN` on
+  insufficient data, which is a different reason).
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section updated — new
+  "Market Regime Detection" subsection covering the three reused
+  signals, the priority order, and the confidence formulas; the
+  "reuse, don't duplicate" paragraph narrowed to what's actually still
+  a stub (standalone `trend_state`, `liquidity_state`, `risk_state`).
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None to any existing caller (nothing outside `context/` references
+  `MarketRegime`'s renamed members — confirmed via `grep` before
+  renaming). `regime_context` is purely additive (defaults to `None`).
+
+**Verified:** full suite green (1023 passed, 0 failed — 1002 + 21 new).
+`git status`/`git diff` confirm zero changes to `strategy/`,
+`engine.py`, `risk/`, `brokers/`, `backtest/`, `research/regime.py` —
+only `context/`, its test files, and docs changed. Manually verified all
+four regime scenarios (trending up/down, ranging, high/low volatility)
+and the extreme-volatility-takes-priority case against the live module
+before trusting them as passing tests -- caught and fixed a test-data
+bug this way (concatenated bar segments without carrying the price
+`base` forward, producing an artificial discontinuity that looked like
+a real price move).
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
 ## 2026-07-27 — Market Context Engine: Volatility Context (Phase 2b)
 
 **Added**
@@ -74,7 +161,7 @@ volatility_ratio=1.5 → HIGH`) and the no-look-ahead property via
 `TestNoFutureDataLeakage` before trusting it as a passing test.
 
 **Commit hashes**
-- Not yet committed as of this entry.
+- `4236392`.
 
 ## 2026-07-27 — Market Context Engine: Session Context (Phase 2a)
 

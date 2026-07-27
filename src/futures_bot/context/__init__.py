@@ -9,5 +9,6 @@ from .models import (
     VolatilityState,
     unknown_context,
 )
+from .regime import RegimeContext, classify_regime
 from .session import SessionContext, classify_session
 from .volatility import VolatilityContext, analyze_volatility, classify_volatility_ratio

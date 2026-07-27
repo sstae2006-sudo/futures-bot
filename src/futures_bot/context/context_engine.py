@@ -1,5 +1,6 @@
 """The Market Context Engine -- foundation phase (2026-07-27), Session
-Context (2026-07-27) and Volatility Context (2026-07-27) implemented.
+Context, Volatility Context, and Market Regime Detection (all
+2026-07-27) implemented.
 
 Builds ``MarketContext`` snapshots from market data. Provides information
 *to* strategies; never makes a trade decision and never holds a reference
@@ -9,14 +10,16 @@ the full rationale and the target layering:
 
     Market Data -> Context Engine -> Strategy Engine -> Risk Engine -> Execution
 
-**Scope, deliberately:** ``_classify_session`` and ``_classify_volatility``
-are now real (see ``session.py``/``volatility.py``). The other four
-``_classify_*`` methods below are still stubs returning ``UNKNOWN`` with
-no confidence recorded -- that's explicitly a follow-up phase (see
-ROADMAP.md), not this one. This class exists so the *shape* of that
-future work has an obvious, already-typed home instead of being designed
-from scratch under time pressure later, and so nothing calling it today
-needs to change when real classification logic lands for the rest.
+**Scope, deliberately:** ``_classify_session``, ``_classify_volatility``,
+and ``_classify_regime`` are now real (see
+``session.py``/``volatility.py``/``regime.py``). The other three
+``_classify_*`` methods below (trend, liquidity, risk) are still stubs
+returning ``UNKNOWN`` with no confidence recorded -- that's explicitly a
+follow-up phase (see ROADMAP.md), not this one. This class exists so the
+*shape* of that future work has an obvious, already-typed home instead of
+being designed from scratch under time pressure later, and so nothing
+calling it today needs to change when real classification logic lands
+for the rest.
 
 **Not wired into ``TradingEngine`` yet.** Nothing in ``engine.py``,
 ``strategy/``, or ``risk/`` imports this module. Building it standalone
@@ -38,6 +41,7 @@ from .models import (
     TrendState,
     VolatilityState,
 )
+from .regime import RegimeContext, classify_regime
 from .session import SessionContext, classify_session
 from .volatility import VolatilityContext, analyze_volatility
 
@@ -68,24 +72,27 @@ class ContextEngine:
         want a context before any history exists yet (session start), in
         which case every classification is ``UNKNOWN`` regardless.
 
-        Session and volatility classification are real (see
-        ``session.py``/``volatility.py``); the other four below are
-        still stubs, so this returns ``UNKNOWN`` for those with zero
-        confidence. See the module docstring for why, and
-        docs/ARCHITECTURE.md for what a real implementation should reuse
-        instead of re-deriving.
+        Session, volatility, and regime classification are real (see
+        ``session.py``/``volatility.py``/``regime.py``); the other
+        three below are still stubs, so this returns ``UNKNOWN`` for
+        those with zero confidence. See the module docstring for why,
+        and docs/ARCHITECTURE.md for what a real implementation should
+        reuse instead of re-deriving.
         """
         bars = bars or ()
         session_ctx = self._classify_session(timestamp)
         volatility_ctx = self._classify_volatility(timestamp, bars)
+        regime_ctx = self._classify_regime(timestamp, bars)
 
         confidence_scores = {"session": 1.0}
         if volatility_ctx.state is not VolatilityState.UNKNOWN:
             # Real confidence only once there's actually enough history
             # to have computed a ratio -- an UNKNOWN reading (missing
             # data) stays out of confidence_scores entirely, same
-            # contract as the four still-stubbed dimensions below.
+            # contract as the three still-stubbed dimensions below.
             confidence_scores["volatility"] = 1.0
+        if regime_ctx.regime is not MarketRegime.UNKNOWN:
+            confidence_scores["regime"] = regime_ctx.confidence
 
         return MarketContext(
             timestamp=timestamp,
@@ -93,7 +100,8 @@ class ContextEngine:
             timeframe=self.timeframe,
             session=session_ctx.session,
             session_context=session_ctx,
-            market_regime=self._classify_regime(bars),
+            market_regime=regime_ctx.regime,
+            regime_context=regime_ctx,
             volatility_state=volatility_ctx.state,
             volatility_context=volatility_ctx,
             trend_state=self._classify_trend(bars),
@@ -115,10 +123,14 @@ class ContextEngine:
         re-implemented here."""
         return classify_session(timestamp, self.symbol)
 
-    def _classify_regime(self, bars: Sequence[Bar]) -> MarketRegime:
-        """Future phase: ``strategy.indicators.adx`` is the natural
-        trending-vs-ranging signal already available in this codebase."""
-        return MarketRegime.UNKNOWN
+    def _classify_regime(self, timestamp: datetime, bars: Sequence[Bar]) -> RegimeContext:
+        """Real, as of 2026-07-27 -- delegates entirely to
+        ``regime.classify_regime``, which reuses ``strategy.indicators.adx``
+        (trend strength), ``research.regime.classify_trend`` (trend
+        direction), and this module's own ``volatility.analyze_volatility``
+        (volatility signal). See that module for the exact priority order
+        between trend/range/volatility labels."""
+        return classify_regime(timestamp, self.symbol, self.timeframe, bars)
 
     def _classify_volatility(
         self, timestamp: datetime, bars: Sequence[Bar]
