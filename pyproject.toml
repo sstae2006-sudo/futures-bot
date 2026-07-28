@@ -30,6 +30,13 @@ websocket = ["websockets>=12.0"]
 # API still boots without this extra installed; training routes surface a
 # clear error instead of crashing the process.
 ml = ["scikit-learn>=1.4", "xgboost>=2.0", "torch>=2.2", "pandas>=2.0", "numpy>=1.26", "joblib>=1.3"]
+# Team deployment (see TEAM_DEPLOYMENT.md): pooled TimescaleDB/Postgres
+# access. Imported lazily inside db/ -- never at api/app.py module level
+# -- so the API still boots SQLite-only (today's default) without this
+# extra installed; anything needing it surfaces a clear error instead of
+# crashing the process at import time. SQLAlchemy Core only, not the ORM
+# -- see db/engine.py's module docstring for why.
+db = ["sqlalchemy>=2.0", "psycopg[binary]>=3.1", "alembic>=1.13"]
 
 [build-system]
 requires = ["setuptools>=68"]

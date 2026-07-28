@@ -66,7 +66,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 import requests
 
@@ -77,10 +77,20 @@ from ..engine import TradingEngine, build_engine
 from ..journal import LOGGER_NAME
 from ..live_trade_journal import LiveTradeJournal
 from ..market_data.contracts_client import ContractsApiError, MassiveContractsClient
-from ..market_data.store import MarketDataStore, default_db_path
+from ..market_data.store import MarketDataStore, get_market_data_store
 from ..models import Bar, Position
 from ..research.trade_store import TradeStore, default_db_path as research_db_path
 from ..strategy.base import StrategyRegistry
+
+if TYPE_CHECKING:
+    # Postgres-only -- kept out of the real import above so a plain
+    # SQLite setup never needs the `db` extra installed just to type-
+    # check this module. `from __future__ import annotations` (already
+    # in effect at the top of this file) means every annotation below is
+    # a lazily-evaluated string, so this guard is all that's needed.
+    from ..market_data.pg_store import PgMarketDataStore
+
+    _AnyMarketDataStore = Union[MarketDataStore, PgMarketDataStore]
 
 log = logging.getLogger(LOGGER_NAME)
 
@@ -367,7 +377,7 @@ class AutonomousPaperTrader:
                 rt.snapshot.status = "error"
                 rt.snapshot.error_message = f"{type(exc).__name__}: {exc}"
 
-        market_data_store = MarketDataStore(default_db_path())
+        market_data_store = get_market_data_store()
         # Only meaningful for the fallback branch inside _check_for_roll --
         # see that method and the module docstring.
         last_fallback_roll_check = datetime.min.replace(tzinfo=timezone.utc)
@@ -420,7 +430,7 @@ class AutonomousPaperTrader:
             market_data_store.close()
 
     def _check_for_roll(
-        self, feed, settings: Settings, contracts_client: MassiveContractsClient, market_data_store: MarketDataStore,
+        self, feed, settings: Settings, contracts_client: MassiveContractsClient, market_data_store: "_AnyMarketDataStore",
         last_fallback_roll_check: datetime, now: datetime,
     ) -> datetime:
         """Returns the (possibly updated) ``last_fallback_roll_check`` the

@@ -47,6 +47,7 @@ from .schemas import (
     RegimeBucket, RegimePerformanceOut, ReportOut, RunDetail, RunSummary, StrategyInfo, StrategyParamOut,
     SystemOverview, TradeAnalyticsSummary, TradeOut, TrialOut,
 )
+from .market_data_store import get_market_data_store
 from .store import get_store
 
 log = logging.getLogger(LOGGER_NAME)
@@ -93,6 +94,31 @@ def list_datasets(root: Path = Path(".")) -> list[DatasetInfo]:
         except OSError:
             bars_hint = None
         out.append(DatasetInfo(filename=path.name, size_bytes=path.stat().st_size, bars_hint=max(bars_hint, 0) if bars_hint is not None else None))
+
+    # Team deployment (FUTURES_BOT_DATABASE_URL set): "does the db exist"
+    # isn't the right question for Postgres the way `db_path.exists()` is
+    # for a local SQLite file -- a configured-but-unreachable database is
+    # handled gracefully (empty list, not a crash), matching this
+    # project's "fail gracefully if the database is unavailable"
+    # requirement, rather than surfacing a 500 from what's meant to be a
+    # convenience listing.
+    from ..db.engine import database_url
+    if database_url():
+        try:
+            store = get_market_data_store()
+            try:
+                for product_code in store.all_products():
+                    for resolution in store.resolutions_stored(product_code):
+                        coverage = store.coverage(product_code, resolution)
+                        out.append(DatasetInfo(
+                            filename=_db_dataset_name(product_code, resolution),
+                            size_bytes=store.size_bytes, bars_hint=coverage.count,
+                        ))
+            finally:
+                store.close()
+        except Exception as exc:  # noqa: BLE001 -- see comment above: never let a DB outage break this listing.
+            log.warning("Could not list market-data datasets from TimescaleDB: %s", exc)
+        return out
 
     db_path = default_db_path()
     if db_path.exists():
@@ -1664,8 +1690,15 @@ def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
     last_opt = optimizer_runs[0]["created_at"] if optimizer_runs else None
     last_report = reports[0]["created_at"] if reports else None
 
-    db_path = store.path
-    db_status = "ok" if db_path.exists() else "not yet created"
+    # `.path` is SQLite-only (see TradeStore.location's docstring) --
+    # `hasattr` branches rather than calling `.location` unconditionally so
+    # the SQLite "not yet created" distinction (a fresh checkout with no
+    # research.db written yet) is preserved exactly; a Postgres-backed store
+    # has already proven itself reachable by the successful queries above.
+    if hasattr(store, "path"):
+        db_status = "ok" if store.path.exists() else "not yet created"
+    else:
+        db_status = "ok"
 
     return SystemOverview(
         version=__version__,
@@ -1676,7 +1709,7 @@ def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
         total_reports_generated=len(reports),
         last_optimization_run=last_opt,
         last_report_generated=last_report,
-        database_path=str(db_path),
+        database_path=store.location,
         database_status=db_status,
     )
 

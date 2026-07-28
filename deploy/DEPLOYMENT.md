@@ -185,6 +185,13 @@ reverse proxy (nginx, Caddy) in front that adds authentication, or restrict
 access with a VPN/firewall — both options below default to loopback-only for
 exactly this reason.
 
+See `TEAM_DEPLOYMENT.md` for the one supported way to reach this API from
+more than one machine today: a private Tailscale network as the access-
+control boundary (Tailscale itself, not a reverse proxy) plus a shared
+TimescaleDB/Postgres instance instead of per-developer SQLite files. It
+does not add authentication either — it's an alternative to the VPN/
+firewall option above, not a fix for the underlying "no login" fact.
+
 ### What this workload needs (different from Part 1)
 
 - **A persistent disk** for `research.db` and `market_data.db` (SQLite,

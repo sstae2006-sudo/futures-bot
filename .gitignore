@@ -56,6 +56,22 @@ import_staging/
 # Phase 10.2: config.yaml backups taken before every param deploy/rollback
 config_backups/
 
+# Team deployment: tools/backup_timescaledb.py's pg_dump output + marker
+db_backups/
+
+# Team deployment: pre-migration backup snapshots taken by hand (see
+# PROJECT_STATE.md's migration instructions) -- large, regenerable, machine-specific.
+research_backup*.db
+research_backup*.db-shm
+research_backup*.db-wal
+market_data_backup*.db
+market_data_backup*.db-shm
+market_data_backup*.db-wal
+
+# Stray Vite dependency cache when `vite`/`npx vite` runs from the repo root
+# instead of frontend/ (frontend/.vite/ is already covered below).
+/.vite/
+
 # Frontend (Phase 6A)
 frontend/node_modules/
 frontend/dist/

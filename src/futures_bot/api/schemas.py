@@ -310,6 +310,37 @@ class SystemOverview(BaseModel):
     database_status: str
 
 
+class DatabaseHealthOut(BaseModel):
+    """Mirrors `db.health.DatabaseHealth` -- see that dataclass's own
+    docstring for what `configured` vs. `ok` each mean."""
+
+    configured: bool
+    ok: bool
+    latency_ms: Optional[float] = None
+    error: Optional[str] = None
+
+
+class SystemHealthOut(BaseModel):
+    """`/api/system/health` -- team-deployment mode's real-data source for
+    Mission Control's `StatusBar`/`HealthGrid` (see plan item #7,
+    `PROJECT_STATE.md`). `status` is always `"ok"` when this route actually
+    responds -- the response itself is the backend-liveness proof; a
+    process that can't serve requests can't return this payload at all,
+    so there is no `"down"` value to represent here."""
+
+    status: Literal["ok"] = "ok"
+    version: str
+    environment: Literal["development", "team", "production"]
+    uptime_seconds: float
+    database: DatabaseHealthOut
+    last_backup_at: Optional[str] = Field(
+        default=None, description="ISO 8601 timestamp of the most recent tools/backup_timescaledb.py run, if any."
+    )
+    connected_users: int = Field(
+        description="Distinct client IPs seen in the last 15 minutes -- see connected_users.py for exactly what this can and can't mean without a real auth system."
+    )
+
+
 class ExperimentCreateRequest(BaseModel):
     name: str
     hypothesis: str = Field(description="What you expect and why, e.g. 'VWAP performs better in high volatility.'")

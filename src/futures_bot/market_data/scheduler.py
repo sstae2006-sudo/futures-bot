@@ -20,7 +20,7 @@ from typing import NamedTuple, Optional
 
 from ..contracts import is_market_open
 from ..journal import LOGGER_NAME
-from .store import MarketDataStore
+from .store import get_market_data_store
 from .sync import sync_incremental
 
 log = logging.getLogger(LOGGER_NAME)
@@ -116,7 +116,7 @@ class MarketDataScheduler:
                 self._status.last_error = "MASSIVE_API_KEY is not set -- skipped this cycle."
             return
 
-        store = MarketDataStore(self._db_path)
+        store = get_market_data_store(self._db_path)
         try:
             summaries = []
             for target in targets:

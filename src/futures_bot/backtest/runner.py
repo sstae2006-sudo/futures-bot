@@ -23,7 +23,8 @@ from typing import Callable, Optional, Sequence
 
 from ..brokers.paper import PaperBroker
 from ..config import Settings
-from ..engine import TradingEngine
+from ..context import ContextEngine
+from ..engine import ContextMode, TradingEngine
 from ..journal import DecisionJournal, LOGGER_NAME
 from ..models import Bar, Signal, SignalAction
 from ..risk.manager import RiskManager
@@ -127,6 +128,8 @@ def run_backtest(
     journal: Optional[CountingJournal] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     signal_filter: Optional[Callable[[Signal], Signal]] = None,
+    context_mode: ContextMode = ContextMode.OFF,
+    context_engine: Optional[ContextEngine] = None,
 ) -> BacktestMetrics:
     """Replay ``bars`` through the engine and return performance metrics.
 
@@ -159,6 +162,12 @@ def run_backtest(
     :class:`~futures_bot.engine.TradingEngine` -- see its docstring
     (Phase 9's Backtest+AI comparison). ``None`` by default, so every
     existing caller's results are unaffected.
+
+    ``context_mode``/``context_engine`` are threaded straight into
+    :class:`~futures_bot.engine.TradingEngine` too -- see ``ContextMode``.
+    ``context_mode`` defaults to ``ContextMode.OFF``, so every existing
+    caller's results are unaffected; ``backtest.context_comparison`` is what
+    runs the same bars twice, once ``OFF`` and once ``ENABLED``, to compare.
     """
     if not bars:
         raise ValueError("No bars to replay.")
@@ -189,7 +198,10 @@ def run_backtest(
                 settings.logging.log_every_decision,
             )
 
-        engine = TradingEngine(settings, strategy, broker, risk, journal, signal_filter=signal_filter)
+        engine = TradingEngine(
+            settings, strategy, broker, risk, journal,
+            signal_filter=signal_filter, context_mode=context_mode, context_engine=context_engine,
+        )
         engine.start()
 
         for index, bar in enumerate(bars):

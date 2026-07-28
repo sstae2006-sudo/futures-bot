@@ -56,7 +56,7 @@ from .research.preflight import strategy_data_warnings
 from .research.reporting import format_advanced_report
 from .research.trade_store import TradeStore
 from .research.trade_store import default_db_path as default_research_db_path
-from .market_data.store import MarketDataStore, default_db_path
+from .market_data.store import get_market_data_store
 from .market_data.sync import backfill as md_backfill
 from .market_data.sync import repair_gaps as md_repair_gaps
 from .market_data.sync import sync_incremental as md_sync_incremental
@@ -435,7 +435,7 @@ def cmd_sync_data(product: str, resolution: str) -> int:
     if not api_key:
         return 1
 
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         result = md_sync_incremental(store, api_key, product, resolution)
     except Exception as exc:  # noqa: BLE001 -- reported below, not a traceback
@@ -458,7 +458,7 @@ def cmd_backfill(product: str, resolution: str, start: datetime, end: datetime) 
     if not api_key:
         return 1
 
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         result = md_backfill(store, api_key, product, resolution, start, end)
     except Exception as exc:  # noqa: BLE001
@@ -478,7 +478,7 @@ def cmd_backfill(product: str, resolution: str, start: datetime, end: datetime) 
 def cmd_verify_data(product: str, resolution: str) -> int:
     """Scans the local DB for unexpected gaps -- no API key needed, this
     only reads what's already stored. See `market_data.sync.verify`."""
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         report = md_verify(store, product, resolution)
     finally:
@@ -504,7 +504,7 @@ def cmd_repair_gaps(product: str, resolution: str) -> int:
     if not api_key:
         return 1
 
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         report = md_repair_gaps(store, api_key, product, resolution)
     except Exception as exc:  # noqa: BLE001

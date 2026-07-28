@@ -25,6 +25,7 @@ from .. import __version__
 from ..config import load_settings
 from ..journal import LOGGER_NAME
 from ..research_server.orchestrator import get_research_server
+from .connected_users import ConnectedUsersMiddleware
 from .routes import (
     backtests, compare, experiments, imports, jobs, live, market_data, ml, optimizer, reports, research_server,
     strategies, system, trades,
@@ -80,8 +81,37 @@ def _maybe_start_research_server() -> None:
         log.error("Failed to auto-start the research server: %s", exc, exc_info=True)
 
 
+def _maybe_prime_db_engine() -> None:
+    """Team-deployment mode only: if `FUTURES_BOT_DATABASE_URL` is set,
+    build the shared pooled `Engine` now, tuned from `config.yaml`'s
+    `deployment` section (see `db/engine.py::prime_engine`'s docstring for
+    why this has to happen explicitly rather than relying on whichever
+    store constructs first). A missing/unparseable config file falls back
+    to `prime_engine`'s own defaults -- same "never fail API startup over
+    a bad config file" posture as `_maybe_start_research_server` below."""
+    from ..db.engine import prime_engine
+
+    config_path = _config_path()
+    pool_size, max_overflow, pool_recycle_seconds = 5, 10, 1800
+    if config_path.exists():
+        try:
+            deployment = load_settings(config_path).deployment
+            pool_size, max_overflow, pool_recycle_seconds = (
+                deployment.pool_size, deployment.max_overflow, deployment.pool_recycle_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a bad config must not crash startup.
+            log.error("Could not load %s for database pool tuning: %s", config_path, exc)
+    engine = prime_engine(pool_size=pool_size, max_overflow=max_overflow, pool_recycle_seconds=pool_recycle_seconds)
+    if engine is not None:
+        log.info(
+            "Database engine primed for team-deployment mode (pool_size=%d, max_overflow=%d, pool_recycle_seconds=%d).",
+            pool_size, max_overflow, pool_recycle_seconds,
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    _maybe_prime_db_engine()
     _maybe_start_research_server()
     yield
     try:
@@ -117,6 +147,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Feeds /api/system/health's "connected users" field -- see
+    # connected_users.py's module docstring for exactly what this can and
+    # can't mean without a real auth/session system.
+    app.add_middleware(ConnectedUsersMiddleware)
 
     @app.exception_handler(ApiError)
     async def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:

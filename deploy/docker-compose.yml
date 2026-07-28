@@ -1,9 +1,14 @@
 # Generic compose setup. Works on any Docker host, and translates directly to
 # Railway/Fly/Render's own volume + restart settings.
 #
-# Two independent services -- run either, both, or neither:
+# Three independent services -- run any subset:
 #   futures-bot      Phase 5 CLI-only live-trading bot (Dockerfile)
 #   futures-bot-api   Phases 6-8B research API + dashboard (Dockerfile.api)
+#   timescaledb       Team-deployment mode's shared Postgres/TimescaleDB
+#                     (see TEAM_DEPLOYMENT.md). Single-developer setups
+#                     never need this service -- futures-bot-api falls back
+#                     to its local SQLite files when FUTURES_BOT_DATABASE_URL
+#                     is unset, which it is by default in this file.
 # `docker compose up -d futures-bot-api` starts only the dashboard, for
 # example. They don't share a container, but can share a host if you want
 # the dashboard watching the same product the CLI bot is trading live --
@@ -11,6 +16,42 @@
 # (already set up below) so one's state can never clobber the other's.
 
 services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: futures-bot-timescaledb
+    restart: unless-stopped
+
+    # Local dev/CI default -- a team deployment overrides these via a
+    # real .env / secrets file, never commits a real password here. Same
+    # "credentials are env-var only" convention as MASSIVE_API_KEY/
+    # FUTURES_BOT_DATABASE_URL elsewhere in this repo.
+    environment:
+      - POSTGRES_USER=${TIMESCALEDB_USER:-futures_bot}
+      - POSTGRES_PASSWORD=${TIMESCALEDB_PASSWORD:-futures_bot_dev_only}
+      - POSTGRES_DB=${TIMESCALEDB_DB:-futures_bot}
+
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+
+    ports:
+      # Loopback-only, same reasoning as futures-bot-api's port binding
+      # below: reachable only from this machine unless deliberately
+      # changed. Tailscale (not this port mapping) is the team-mode access
+      # boundary -- see TEAM_DEPLOYMENT.md.
+      - "127.0.0.1:5432:5432"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALEDB_USER:-futures_bot} -d ${TIMESCALEDB_DB:-futures_bot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   futures-bot:
     build:
       context: ..
@@ -67,6 +108,11 @@ services:
       # Required for market-data sync and the autonomous research server;
       # not required just to browse a dashboard with no data synced yet.
       # - MASSIVE_API_KEY=${MASSIVE_API_KEY}
+      # Team-deployment mode only (see TEAM_DEPLOYMENT.md) -- uncomment to
+      # point this container at the timescaledb service (or a real
+      # Tailscale-reachable server) instead of local SQLite. Unset (the
+      # default) is today's single-developer behavior, unchanged.
+      # - FUTURES_BOT_DATABASE_URL=postgresql+psycopg://futures_bot:futures_bot_dev_only@timescaledb:5432/futures_bot
 
     ports:
       # Bound to loopback on the HOST -- reachable only from this machine,
@@ -94,4 +140,6 @@ volumes:
   bot-state:
     driver: local
   bot-api-data:
+    driver: local
+  timescale-data:
     driver: local

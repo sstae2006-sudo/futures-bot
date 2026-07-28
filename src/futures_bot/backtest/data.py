@@ -23,7 +23,7 @@ from typing import Iterator, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from ..contracts import CME_TZ
-from ..market_data.store import MarketDataStore, default_db_path
+from ..market_data.store import get_market_data_store
 from ..models import Bar
 
 # Accepted spellings for each field, lowercased.
@@ -270,7 +270,7 @@ def load_bars_from_db(
     `market_data.sync.verify`/the `gaps` table rather than being
     recomputed here on every load.
     """
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         bars = store.fetch_bars(product_code, resolution, start=start, end=end)
     finally:

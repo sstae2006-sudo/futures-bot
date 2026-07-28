@@ -52,6 +52,56 @@ DEFAULT_DB_PATH = Path("market_data.db")
 def default_db_path() -> Path:
     return Path(os.environ.get("FUTURES_BOT_MARKET_DATA_DB", str(DEFAULT_DB_PATH)))
 
+
+def get_market_data_store(db_path: Optional[Path] = None):
+    """The one seam every caller should use instead of constructing
+    `MarketDataStore(default_db_path())` directly -- this module's own
+    docstring above names this exact function as the extension point a
+    Postgres backend would slot behind. Lives here (not in `api/`),
+    mirroring exactly how `research/trade_store.py::default_db_path`
+    stays in that module rather than only in `api/store.py`: consumers
+    below `api/` in the dependency direction (`market_data/scheduler.py`,
+    `research_server/paper_trader.py`) need this too, and per
+    `docs/ARCHITECTURE.md`'s one-way dependency rule they must never
+    import from `api/`. `api/market_data_store.py` re-exports this
+    unchanged, as a thin wrapper, purely so `api/`-layer code can spell
+    the import path the way the rest of that package's imports read
+    (matching `api/store.py`'s identical thin-wrapper role over this
+    same function's sibling, `TradeStore`'s `get_store()`).
+
+    Returns a fresh store per call, never cached (SQLite connections
+    aren't safe to share across threads -- same reasoning `api/store.py`
+    documents for `TradeStore`). Which class comes back:
+
+    - `FUTURES_BOT_DATABASE_URL` unset (default, every existing single-
+      developer setup): today's `MarketDataStore(db_path or
+      default_db_path())`, byte-identical to before this function
+      existed.
+    - `FUTURES_BOT_DATABASE_URL` set (team/production deployment):
+      `PgMarketDataStore`, backed by the shared pooled Engine --
+      `db_path` is meaningless there (Postgres has no per-call file
+      path) and is ignored.
+
+    ``db_path`` exists only so a caller that needs a *specific* SQLite
+    file rather than the env-resolved default -- `MarketDataScheduler`,
+    whose constructor takes an explicit path precisely so tests can
+    point it at an isolated `tmp_path` -- can still get that exact
+    behavior through this one seam instead of bypassing it. Every other
+    caller omits it.
+
+    Both imports of the Postgres-only pieces (`..db.engine`,
+    `.pg_store`) happen inside this function, only on the branch that
+    needs them, so a plain SQLite setup -- including the entire existing
+    test suite -- never needs the `db` extra installed.
+    """
+    from ..db.engine import database_url
+
+    if database_url():
+        from .pg_store import PgMarketDataStore
+
+        return PgMarketDataStore()
+    return MarketDataStore(db_path or default_db_path())
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS bars (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,6 +229,17 @@ class MarketDataStore:
     @property
     def size_bytes(self) -> int:
         return self.path.stat().st_size if self.path.exists() else 0
+
+    @property
+    def location(self) -> str:
+        """Human-readable, safe-to-display "where is this data" string --
+        the uniform property both this class and `PgMarketDataStore`
+        expose (`.path` itself stays SQLite-only, and is *not* safe to
+        call on the Postgres store, since it has no file path at all).
+        Callers that want to display this to a user (e.g.
+        `MarketDataOverviewOut.database_path`) should use this, not
+        `.path`, so the same code works against either backend."""
+        return str(self.path)
 
     # --- Bars ---
 

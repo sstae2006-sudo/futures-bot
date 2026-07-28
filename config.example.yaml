@@ -123,3 +123,13 @@ research_server:
   data_sync_products: [MES]   # product codes to keep synced via the data scheduler
   nightly_job_hour_ct: 2       # 24h, Central Time
   weekly_report_weekday: 6     # Monday=0 .. Sunday=6 -- also runs a full strategy comparison
+
+# Team deployment (see TEAM_DEPLOYMENT.md). Uncomment to change from the
+# single-developer default -- the database connection string itself
+# (FUTURES_BOT_DATABASE_URL) is NEVER set here; it holds credentials and
+# is env-var only, same as MASSIVE_API_KEY/TRADOVATE_*.
+# deployment:
+#   environment: team          # development | team | production
+#   pool_size: 5                # baseline pooled DB connections (TimescaleDB only)
+#   max_overflow: 10             # extra connections allowed under burst load
+#   pool_recycle_seconds: 1800    # recycle a pooled connection this often

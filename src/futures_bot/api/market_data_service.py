@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timezone
 
 from ..market_data import scheduler as scheduler_module
-from ..market_data.store import MarketDataStore, default_db_path
+from ..market_data.store import default_db_path, get_market_data_store
 from ..market_data.sync import backfill as md_backfill
 from ..market_data.sync import repair_gaps as md_repair_gaps
 from ..market_data.sync import sync_incremental as md_sync_incremental
@@ -41,7 +41,7 @@ def _require_api_key() -> str:
 
 
 def market_data_overview() -> MarketDataOverviewOut:
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         products = []
         total_bars = 0
@@ -78,7 +78,7 @@ def market_data_overview() -> MarketDataOverviewOut:
 
         return MarketDataOverviewOut(
             total_bars=total_bars, products=products, total_open_gaps=total_open_gaps,
-            database_path=str(store.path), database_size_bytes=store.size_bytes,
+            database_path=store.location, database_size_bytes=store.size_bytes,
             last_sync_at=last_run["started_at"] if last_run else None,
             last_sync_status=last_run["status"] if last_run else None,
             recent_rolls=rolls[:10], scheduler_running=scheduler_running,
@@ -88,7 +88,7 @@ def market_data_overview() -> MarketDataOverviewOut:
 
 
 def list_sync_runs(product_code: str | None = None, limit: int = 50) -> list[SyncRunOut]:
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         return [SyncRunOut(**r) for r in store.fetch_sync_runs(product_code=product_code, limit=limit)]
     finally:
@@ -96,7 +96,7 @@ def list_sync_runs(product_code: str | None = None, limit: int = 50) -> list[Syn
 
 
 def list_gaps(product_code: str | None = None) -> list[GapOut]:
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         return [GapOut(**g) for g in store.fetch_gaps(product_code=product_code, unresolved_only=True)]
     finally:
@@ -105,7 +105,7 @@ def list_gaps(product_code: str | None = None) -> list[GapOut]:
 
 def run_sync(product_code: str, resolution: str) -> SyncRunOut:
     api_key = _require_api_key()
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         try:
             result = md_sync_incremental(store, api_key, product_code, resolution)
@@ -125,7 +125,7 @@ def run_backfill(product_code: str, resolution: str, start: str, end: str) -> Sy
     except ValueError as exc:
         raise ApiError(f"Invalid date: {exc}") from exc
 
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         try:
             result = md_backfill(store, api_key, product_code, resolution, start_dt, end_dt)
@@ -138,7 +138,7 @@ def run_backfill(product_code: str, resolution: str, start: str, end: str) -> Sy
 
 
 def run_verify(product_code: str, resolution: str) -> dict:
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         report = md_verify(store, product_code, resolution)
         return {
@@ -154,7 +154,7 @@ def run_verify(product_code: str, resolution: str) -> dict:
 
 def run_repair(product_code: str, resolution: str) -> dict:
     api_key = _require_api_key()
-    store = MarketDataStore(default_db_path())
+    store = get_market_data_store()
     try:
         try:
             report = md_repair_gaps(store, api_key, product_code, resolution)

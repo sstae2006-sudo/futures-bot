@@ -218,6 +218,51 @@ class ResearchServerSettings(BaseModel):
         return [s.strip().upper() for s in v]
 
 
+class DeploymentSettings(BaseModel):
+    """Deployment topology -- team-collaboration support.
+
+    ``environment`` is informational/display only (surfaced in
+    `/api/system/health` and Mission Control's status bar) -- it does not
+    gate any behavior on its own. The actual "is this reachable beyond
+    localhost" decision stays exactly where it already was:
+    `api/__main__.py`'s `--host`/`--allow-network-exposure` guard. This
+    field never bypasses that guard; it only labels which mode an
+    operator intended, the same way `mode` (paper/live) labels intent
+    without itself opening a broker connection.
+
+    The database *connection string* is never in here or in
+    ``config.yaml`` -- it holds credentials, so it's env-var only
+    (``FUTURES_BOT_DATABASE_URL``), the same convention
+    ``MASSIVE_API_KEY``/``TRADOVATE_*`` already established. Only the
+    non-secret pool-tuning knobs live here.
+    """
+
+    environment: Literal["development", "team", "production"] = Field(
+        default="development",
+        description=(
+            "Which deployment topology this process considers itself running under. "
+            "'development': single developer, localhost, SQLite (today's default -- "
+            "unchanged unless deliberately set otherwise). 'team': shared backend + "
+            "shared TimescaleDB reachable over a private Tailscale network, no "
+            "authentication (see TEAM_DEPLOYMENT.md). 'production': reserved for a "
+            "future phase with real authentication in front of it -- not yet "
+            "supported end-to-end by this codebase."
+        ),
+    )
+    pool_size: int = Field(
+        default=5, ge=1,
+        description="Baseline pooled connections kept open to the database (TimescaleDB/Postgres only -- unused when FUTURES_BOT_DATABASE_URL is unset).",
+    )
+    max_overflow: int = Field(
+        default=10, ge=0,
+        description="Extra connections allowed above pool_size under burst load before a caller waits.",
+    )
+    pool_recycle_seconds: int = Field(
+        default=1800, ge=60,
+        description="Recycle a pooled connection after this many seconds, so a connection idle long enough for a firewall/NAT (e.g. across a Tailscale link) to silently drop it is never handed out stale.",
+    )
+
+
 class Settings(BaseModel):
     """Top-level configuration."""
 
@@ -230,6 +275,7 @@ class Settings(BaseModel):
     strategy_name: str = Field(default="ema_crossover")
     strategy_params: dict = Field(default_factory=dict)
     research_server: ResearchServerSettings = Field(default_factory=ResearchServerSettings)
+    deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
     live_feed: Literal["rest", "websocket"] = Field(
         default="rest",
         description="How LiveSessionManager and AutonomousPaperTrader poll for new bars: 'rest' "

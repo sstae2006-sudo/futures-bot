@@ -60,7 +60,7 @@ from ..contracts import session_date
 from ..engine import TradingEngine, build_engine
 from ..journal import LOGGER_NAME
 from ..live_trade_journal import LiveTradeJournal
-from ..market_data.store import MarketDataStore, default_db_path
+from ..market_data.store import get_market_data_store
 from ..models import Position
 from ..strategy.base import StrategyRegistry
 from . import services  # noqa: F401 -- importing this registers every bundled strategy (see its own docstring)
@@ -249,7 +249,7 @@ class LiveSessionManager:
         # docstring on why a `sqlite3.Connection` must stay single-thread,
         # which this already is (this method runs entirely on one
         # background thread).
-        market_data_store = MarketDataStore(default_db_path())
+        market_data_store = get_market_data_store()
         try:
             engine.start()
             self._patch(status="running")

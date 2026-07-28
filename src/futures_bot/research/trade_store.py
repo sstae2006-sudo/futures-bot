@@ -462,6 +462,22 @@ class TradeStore:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    @property
+    def size_bytes(self) -> int:
+        return self.path.stat().st_size if self.path.exists() else 0
+
+    @property
+    def location(self) -> str:
+        """Human-readable, safe-to-display "where is this data" string --
+        the uniform property both this class and `PgTradeStore` expose
+        (`.path` itself stays SQLite-only, and is *not* safe to call on
+        the Postgres store, since it has no file path at all). Callers
+        that want to display this to a user (e.g. `SystemOverview.database_path`)
+        should use this, not `.path`, so the same code works against
+        either backend -- same fix `market_data/store.py::MarketDataStore.location`
+        already established for `market_data.db`."""
+        return str(self.path)
+
     # --- Trades ---
 
     def insert_trades(self, records: Sequence[TradeRecord]) -> None:
