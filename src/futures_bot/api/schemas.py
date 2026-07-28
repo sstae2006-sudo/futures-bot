@@ -977,6 +977,34 @@ class PreWorkCheckOut(BaseModel):
     branch_info: BranchInfoOut
 
 
+class ReadinessFactorOut(BaseModel):
+    name: str
+    penalty: int
+    explanation: str
+
+
+MergeReadinessLevelLiteral = Literal["ready", "needs_review", "risky", "not_ready"]
+
+
+class MergeReadinessRequest(BaseModel):
+    changed_files: list[str] = Field(min_length=1)
+    branch: Optional[str] = None
+    work_item_id: Optional[str] = None
+
+
+class MergeReadinessOut(BaseModel):
+    """A single explainable 0-100 readiness score -- `merge_readiness.py`'s
+    module docstring covers exactly what is and isn't factored in.
+    `test_status` is always `"unknown"`: no CI integration exists yet, and
+    guessing would be worse than admitting that."""
+    score: int = Field(ge=0, le=100)
+    level: MergeReadinessLevelLiteral
+    test_status: Literal["unknown"] = "unknown"
+    factors: list[ReadinessFactorOut]
+    branch_info: BranchInfoOut
+    overlap_warnings: list[OverlapWarningV2Out]
+
+
 class InfrastructureOut(BaseModel):
     """Mission Control's infrastructure panel -- real process/host metrics
     via `psutil`, plus the background job queue's actual depth (the

@@ -366,3 +366,36 @@ class TestPreWorkCheckRoute:
         body = resp.json()
         assert body["suggested_action"] == "choose_different_task"
         assert len(body["overlap_warnings"]) == 1
+
+
+class TestMergeReadinessRoute:
+    def test_clean_change_scores_high(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/merge-readiness", json={"changed_files": ["a.py"]})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["test_status"] == "unknown"
+        assert 0 <= body["score"] <= 100
+        assert "factors" in body
+
+    def test_empty_changed_files_is_422(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/merge-readiness", json={"changed_files": []})
+
+        assert resp.status_code == 422
+
+    def test_overlapping_change_lowers_score(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={
+            "title": "Existing", "estimated_files": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+
+        clean = client.post("/api/work-items/merge-readiness", json={"changed_files": ["z.py"]}).json()
+        conflicting = client.post("/api/work-items/merge-readiness", json={
+            "changed_files": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        }).json()
+
+        assert conflicting["score"] < clean["score"]

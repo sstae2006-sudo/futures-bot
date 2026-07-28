@@ -12,9 +12,10 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut,
-    OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest, UpdateWorkItemStatusRequest,
-    WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
+    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut,
+    MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest,
+    ReassignWorkItemRequest, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
+    WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -103,6 +104,15 @@ def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[
 @router.post("/api/work-items/merge-summary", response_model=MergeSummaryOut)
 def merge_summary(req: MergeSummaryRequest) -> MergeSummaryOut:
     return services.merge_summary(req.changed_files, req.work_item_id)
+
+
+@router.post("/api/work-items/merge-readiness", response_model=MergeReadinessOut)
+def merge_readiness(req: MergeReadinessRequest) -> MergeReadinessOut:
+    """A single explainable 0-100 score -- overlap risk, branch age,
+    behind-base count, and change size. `test_status` is always
+    `"unknown"` (no CI integration exists yet -- see
+    `collaboration/merge_readiness.py`'s module docstring)."""
+    return services.merge_readiness(req.changed_files, branch=req.branch, work_item_id=req.work_item_id)
 
 
 @router.get("/api/git/branch-info", response_model=BranchInfoOut)

@@ -11,11 +11,12 @@ from typing import Optional
 from ..collaboration import git_info
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.overlap import detect_overlap
+from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readiness
 from ..collaboration.overlap_v2 import OverlapWarningV2, compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from .schemas import (
-    BranchInfoOut, CommitOut, ConflictPairOut, MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out,
-    PreWorkCheckOut, WorkItemActivityOut, WorkItemOut,
+    BranchInfoOut, CommitOut, ConflictPairOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
+    OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, WorkItemActivityOut, WorkItemOut,
 )
 from .services import ApiError
 
@@ -247,4 +248,36 @@ def pre_work_check(proposed_files: list[str], title: Optional[str] = None, descr
     return PreWorkCheckOut(
         overlap_warnings=warning_outs, suggested_action=suggested_action,  # type: ignore[arg-type]
         recommendation=recommendation, branch_info=get_branch_info(),
+    )
+
+
+def _readiness_factor_out(factor: ReadinessFactor) -> ReadinessFactorOut:
+    return ReadinessFactorOut(name=factor.name, penalty=factor.penalty, explanation=factor.explanation)
+
+
+def merge_readiness(changed_files: list[str], branch: Optional[str] = None, work_item_id: Optional[str] = None) -> MergeReadinessOut:
+    """Everything `merge_summary` already computes, folded into one
+    explainable 0-100 score alongside branch age/behind-count/change-size
+    -- see `merge_readiness.py`'s module docstring for why test pass/fail
+    is deliberately reported as `"unknown"` rather than guessed at."""
+    store = get_collaboration_store()
+    exclude_id = work_item_id
+    title = description = None
+    if work_item_id is not None:
+        related = store.fetch_work_item(work_item_id)
+        if related is not None:
+            title, description = related.get("title"), related.get("description")
+        else:
+            exclude_id = None
+
+    active = store.fetch_active_work_items(exclude_id=exclude_id)
+    warnings = compute_overlap_v2(changed_files, active, proposed_title=title, proposed_description=description)
+    info = git_info.get_branch_info(branch=branch)
+    readiness = compute_merge_readiness(changed_files, warnings, info)
+
+    return MergeReadinessOut(
+        score=readiness.score, level=readiness.level, test_status=readiness.test_status,
+        factors=[_readiness_factor_out(f) for f in readiness.factors],
+        branch_info=_branch_info_out(info),
+        overlap_warnings=[OverlapWarningV2Out(**w.__dict__) for w in warnings],
     )
