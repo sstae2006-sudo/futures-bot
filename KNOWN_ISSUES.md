@@ -702,3 +702,41 @@ verified fixed — instead mark it Resolved with a date and commit.
   matching the exact pattern already used successfully by every other
   singleton accessor in this codebase. `tests/test_api_jobs.py` +
   `tests/test_api_jobs_routes.py` (22 tests) pass.
+
+---
+
+### ISSUE-021 — `frontend/src/format.ts::dateTime()` parses SQLite (local-mode) timestamps as local time instead of UTC (OPEN, not fixed)
+
+- **Severity:** Medium (a real display bug for every local-mode/SQLite
+  timestamp shown through this shared helper -- Team-mode/Postgres
+  timestamps are unaffected, they already carry an explicit `+00:00`)
+- **Description:** Found 2026-07-28 (Stabilization Mode pass on newly
+  added code) while writing `TeamPanel.tsx`'s own `timeAgo` helper and
+  confirming its date parsing directly, node-by-node. `format.ts::dateTime()`
+  calls `new Date(value)` directly with no normalization. SQLite's
+  `datetime('now')` (every local-mode timestamp column in this codebase)
+  produces `"YYYY-MM-DD HH:MM:SS"` -- no `T`, no timezone marker -- but the
+  *value* is UTC. Every JS engine parses a timezone-less string as
+  **local** time, not UTC (confirmed directly: `new Date("2026-07-28
+  19:06:08")` produced a UTC-equivalent `time` shifted by this machine's
+  own UTC offset, not the original instant). Every existing call site
+  (`dateTime(status.last_bar_time)` in `Live.tsx`, and others) silently
+  displays local-mode timestamps offset by the browser's UTC offset from
+  the actual event time.
+- **Files involved:** `frontend/src/format.ts` (`dateTime`), and by
+  extension every page that calls it with a SQLite-sourced timestamp.
+- **Possible cause:** Written and tested against Team-mode/Postgres
+  timestamps (which already carry a timezone and parse correctly) without
+  separately testing the SQLite local-mode case, which silently degrades
+  instead of erroring -- there is no exception or `NaN` to notice, just a
+  wrong-by-a-fixed-offset displayed time.
+- **Current status:** **Not fixed.** `TeamPanel.tsx`'s own new `timeAgo`
+  helper was written correctly from the start (explicit "T" + "Z"
+  normalization before parsing, verified against both timestamp shapes --
+  see its own inline comment), so this specific finding didn't need a
+  matching fix to ship Phase 3. Fixing `format.ts::dateTime()` itself
+  touches every page that renders a local-mode timestamp -- deliberately
+  deferred rather than rushed through in the same pass that found it,
+  since a shared, widely-used formatter deserves its own focused fix +
+  verification across each call site rather than a drive-by edit.
+  Recommended fix: apply the same normalization `timeAgo` already uses.

@@ -30,6 +30,10 @@ here, ask before assuming it matters.
   unbounded (observed at 9.2 GB / 34.2M lines on this machine, KNOWN_ISSUES.md
   ISSUE-017). Reading it is now cheap regardless of size, but nothing stops
   it growing until it threatens disk space on a long-running deployment.
+- Fix `frontend/src/format.ts::dateTime()` to correctly parse SQLite
+  (local-mode) timestamps as UTC instead of local time (KNOWN_ISSUES.md
+  ISSUE-021) — affects every page rendering a local-mode timestamp through
+  this shared helper.
 
 **Low**
 - New strategies

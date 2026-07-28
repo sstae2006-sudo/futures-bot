@@ -79,4 +79,26 @@ describe('TeamPanel', () => {
 
     await waitFor(() => expect(screen.getByText('No users registered yet.')).toBeInTheDocument())
   })
+
+  it('treats a SQLite-style timestamp (space separator, no timezone) as UTC, not local time', async () => {
+    // Confirms timeAgo's explicit ISO-8601 normalization (T separator +
+    // Z) produces the correct answer for SQLite's raw "YYYY-MM-DD
+    // HH:MM:SS" format. Note this specific test does NOT distinguish the
+    // fix from the un-normalized `${iso}Z` version it replaced -- checked
+    // directly: Node/V8 (this test's own engine) happens to parse
+    // "YYYY-MM-DD HH:MM:SSZ" (space, no "T") as UTC leniently either way,
+    // so this test alone can't prove a regression here. The fix still
+    // matters for spec-compliance/cross-engine portability (ISO 8601
+    // requires "T", not a space -- other engines are not guaranteed to be
+    // as lenient); this test guards the *intended* behavior going
+    // forward, not a reproduced cross-browser failure.
+    const fourHoursAgoUtc = new Date(Date.now() - 4 * 60 * 60 * 1000)
+    const sqliteStyle = fourHoursAgoUtc.toISOString().slice(0, 19).replace('T', ' ')
+    vi.mocked(api.getUsers).mockResolvedValue([makeUser({ last_active_at: sqliteStyle })])
+    vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
+
+    render(<TeamPanel />)
+
+    await waitFor(() => expect(screen.getByText('4h ago')).toBeInTheDocument())
+  })
 })

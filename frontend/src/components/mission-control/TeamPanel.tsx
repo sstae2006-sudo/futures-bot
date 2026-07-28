@@ -19,7 +19,16 @@ const ROLE_TONE: Record<UserRole, 'good' | 'warn' | 'neutral'> = {
 
 function timeAgo(iso: string | null): string {
   if (!iso) return 'never'
-  const then = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`).getTime()
+  // SQLite's timestamps (local mode) come back as "YYYY-MM-DD HH:MM:SS" --
+  // no "T", no timezone marker, but the value is UTC (SQLite's own
+  // datetime('now')). `new Date()` on that raw string is parsed as *local*
+  // time by every JS engine (confirmed directly: no Z means no UTC
+  // assumption), silently shifting it by the browser's own UTC offset --
+  // normalize to real ISO 8601 (T separator + explicit Z) before parsing,
+  // rather than relying on any engine's leniency about the space form.
+  const hasTimezone = iso.endsWith('Z') || /[+-]\d\d:\d\d$/.test(iso)
+  const normalized = hasTimezone ? iso.replace(' ', 'T') : `${iso.replace(' ', 'T')}Z`
+  const then = new Date(normalized).getTime()
   const diffMs = Date.now() - then
   if (diffMs < 0 || Number.isNaN(diffMs)) return iso
   const minutes = Math.floor(diffMs / 60_000)
