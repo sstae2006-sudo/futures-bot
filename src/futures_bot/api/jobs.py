@@ -26,6 +26,7 @@ API clients see no behavior change.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional
@@ -41,13 +42,23 @@ log = logging.getLogger(LOGGER_NAME)
 _MAX_WORKERS = 4
 
 _executor: Optional[ThreadPoolExecutor] = None
+#: Guards the lazy-init below -- every other module-level singleton
+#: accessor in this codebase (get_paper_trader, get_research_server,
+#: get_live_session_manager, market_data.scheduler.get_scheduler) already
+#: uses a lock for exactly this reason: two nearly-simultaneous first
+#: calls could otherwise both see `_executor is None` and each construct
+#: their own ThreadPoolExecutor, leaking one (found 2026-07-28,
+#: Stabilization Mode backend review, for consistency with the
+#: already-correct pattern elsewhere -- not a reported incident).
+_executor_lock = threading.Lock()
 
 
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
-    if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="futures-bot-job")
-    return _executor
+    with _executor_lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="futures-bot-job")
+        return _executor
 
 
 def reset_executor() -> None:
@@ -55,9 +66,10 @@ def reset_executor() -> None:
     pool (or a different `FUTURES_BOT_RESEARCH_DB`) gets one. Production
     code never calls this."""
     global _executor
-    if _executor is not None:
-        _executor.shutdown(wait=True, cancel_futures=False)
-    _executor = None
+    with _executor_lock:
+        if _executor is not None:
+            _executor.shutdown(wait=True, cancel_futures=False)
+        _executor = None
 
 
 class JobProgress:

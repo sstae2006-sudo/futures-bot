@@ -675,3 +675,30 @@ verified fixed — instead mark it Resolved with a date and commit.
   message, `ApiError` is unaffected, and `HTTPException`-based 404s are
   unaffected. Every `test_api_*.py` file (16 files, ~160 tests) verified
   individually, all passing.
+
+---
+
+### ISSUE-020 — `api/jobs.py`'s `_get_executor()` lazy-init had no lock, unlike every other singleton accessor in this codebase (RESOLVED)
+
+- **Severity:** Low (an extremely narrow startup-only race; worst case is
+  a leaked, never-shut-down spare `ThreadPoolExecutor` sitting idle, not
+  a correctness bug — no job would ever be lost or misrouted either way)
+- **Description:** Found 2026-07-28 (Stabilization Mode backend review),
+  by inspection while auditing thread-safety across every module-level
+  singleton accessor in this codebase. `get_paper_trader()`,
+  `get_research_server()`, `get_live_session_manager()`, and
+  `market_data.scheduler.get_scheduler()` all guard their `if _x is None:
+  _x = Constructor()` lazy-init with a dedicated lock; `api/jobs.py`'s
+  `_get_executor()` was the one exception. Two nearly-simultaneous first
+  calls to `submit()` (e.g. two job-submission requests arriving at
+  almost the same instant right after process startup) could both
+  observe `_executor is None` and each construct their own
+  `ThreadPoolExecutor`, with the later assignment silently discarding the
+  earlier one.
+- **Files involved:** `src/futures_bot/api/jobs.py`.
+- **Possible cause:** Written before the lock-guarded pattern was
+  established elsewhere, or simply not revisited once it was.
+- **Current status:** **Resolved 2026-07-28.** Added `_executor_lock`,
+  matching the exact pattern already used successfully by every other
+  singleton accessor in this codebase. `tests/test_api_jobs.py` +
+  `tests/test_api_jobs_routes.py` (22 tests) pass.
