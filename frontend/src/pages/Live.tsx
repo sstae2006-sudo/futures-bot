@@ -100,6 +100,12 @@ export default function Live() {
             )}
           </div>
 
+          {status.status === 'starting' && (
+            <div className="panel">
+              <LoadingState label="Starting the live session… (detecting the active contract, connecting the feed)" />
+            </div>
+          )}
+
           {(status.status === 'running' || status.status === 'stopping') && (
             <div className="panel">
               <h3>Session</h3>

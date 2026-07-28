@@ -92,6 +92,16 @@ describe('Live', () => {
     expect(screen.queryByRole('button', { name: /Start session/ })).not.toBeInTheDocument()
   })
 
+  it('shows a starting indicator while the session is still coming up', async () => {
+    renderLive()
+    FakeEventSource.instances[0].emit(stoppedStatus({ status: 'starting' }))
+
+    await waitFor(() => expect(screen.getByText('starting')).toBeInTheDocument())
+    expect(screen.getByText(/Starting the live session/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Stop session/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Start session/ })).not.toBeInTheDocument()
+  })
+
   it('surfaces a halt reason', async () => {
     renderLive()
     FakeEventSource.instances[0].emit(stoppedStatus({ status: 'running', halted: true, halt_reason: 'daily max loss hit' }))

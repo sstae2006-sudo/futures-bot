@@ -601,3 +601,31 @@ verified fixed — instead mark it Resolved with a date and commit.
   rotated/archived — this fix makes reading it cheap regardless of size,
   but the file will keep growing forever and could eventually threaten
   disk space on a very long-running deployment.
+
+---
+
+### ISSUE-018 — `frontend/src/pages/Live.tsx` rendered nothing but the status badge while a session was `starting` (RESOLVED)
+
+- **Severity:** Low (UX gap, no data loss or incorrect state — just a
+  blank-looking page during a real, if normally brief, transition)
+- **Description:** Found 2026-07-28 (Stabilization Mode frontend review).
+  `Live.tsx` only rendered the "Session" panel for `running`/`stopping` and
+  the "Start a session" form for `stopped`/`error` (`canStart`) -- neither
+  branch covered `starting`, so a session mid-startup showed only the
+  top status badge with no form and no session details. This window got
+  meaningfully longer as a direct consequence of the same day's
+  ISSUE-016 fix: `LiveSessionManager.start()` now claims `status =
+  "starting"` immediately (before contract detection, feed connection,
+  etc.), rather than just before the background thread actually starts --
+  correct for closing the race, but it also means "starting" is now
+  visible for the session's entire slow setup, not just a brief tail
+  moment.
+- **Files involved:** `frontend/src/pages/Live.tsx`.
+- **Possible cause:** Written when "starting" was a near-instantaneous
+  transition; never revisited once ISSUE-016 lengthened it.
+- **Current status:** **Resolved 2026-07-28.** Added a `starting` branch
+  showing a `LoadingState` panel. New regression test in
+  `frontend/src/__tests__/Live.test.tsx` (`shows a starting indicator
+  while the session is still coming up`) asserts the message appears and
+  neither the Stop nor Start button renders during this state. Full
+  frontend suite (65 tests), typecheck, and lint all pass.
