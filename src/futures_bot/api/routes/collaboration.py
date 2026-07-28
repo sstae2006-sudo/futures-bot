@@ -12,8 +12,8 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    ClaimWorkItemRequest, OverlapWarningOut, ReassignWorkItemRequest, WorkItemActivityOut,
-    WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
+    ClaimWorkItemRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut, ReassignWorkItemRequest,
+    WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -66,3 +66,8 @@ def reassign_work_item(item_id: str, req: ReassignWorkItemRequest) -> WorkItemOu
 @router.get("/api/work-items-activity", response_model=list[WorkItemActivityOut])
 def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[WorkItemActivityOut]:
     return services.list_activity(work_item_id=work_item_id, limit=limit)
+
+
+@router.post("/api/work-items/merge-summary", response_model=MergeSummaryOut)
+def merge_summary(req: MergeSummaryRequest) -> MergeSummaryOut:
+    return services.merge_summary(req.changed_files, req.work_item_id)

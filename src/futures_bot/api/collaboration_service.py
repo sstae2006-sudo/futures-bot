@@ -10,8 +10,10 @@ from typing import Optional
 
 from ..collaboration.overlap import detect_overlap
 from ..collaboration.store import CollaborationError, get_collaboration_store
-from .schemas import OverlapWarningOut, WorkItemActivityOut, WorkItemOut
+from .schemas import MergeSummaryOut, OverlapWarningOut, WorkItemActivityOut, WorkItemOut
 from .services import ApiError
+
+_RISK_SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "no_risk": 0}
 
 
 def create_work_item(
@@ -103,3 +105,27 @@ def reassign_work_item(item_id: str, new_owner_user_id: str, actor_user_id: Opti
 def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[WorkItemActivityOut]:
     store = get_collaboration_store()
     return [WorkItemActivityOut(**a) for a in store.fetch_activity(work_item_id=work_item_id, limit=limit)]
+
+
+def merge_summary(changed_files: list[str], work_item_id: Optional[str] = None) -> MergeSummaryOut:
+    """"Before merging, generate a summary showing overlap with active
+    work, potential conflicts, related tasks" -- reuses the exact same
+    overlap detection a new work item gets checked against, applied to a
+    real diff's changed files instead of a task's own estimate. Never
+    blocks a merge; a caller (CI, a human, an AI agent) decides what to
+    do with `highest_risk`."""
+    store = get_collaboration_store()
+    related_item = None
+    exclude_id = work_item_id
+    if work_item_id is not None:
+        related = store.fetch_work_item(work_item_id)
+        if related is not None:
+            related_item = WorkItemOut(**related)
+        else:
+            exclude_id = None  # nothing to exclude if the id doesn't exist
+
+    active = store.fetch_active_work_items(exclude_id=exclude_id)
+    warnings = [OverlapWarningOut(**w.__dict__) for w in detect_overlap(changed_files, active)]
+    highest_risk = max((w.risk for w in warnings), key=lambda r: _RISK_SEVERITY[r], default="no_risk")
+
+    return MergeSummaryOut(related_work_item=related_item, overlap_warnings=warnings, highest_risk=highest_risk)

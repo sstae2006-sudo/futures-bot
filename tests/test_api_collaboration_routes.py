@@ -144,3 +144,67 @@ class TestOverlapAndActivity:
         assert resp.status_code == 200
         events = [a["event"] for a in reversed(resp.json())]
         assert events == ["created", "claimed", "completed"]
+
+
+class TestMergeSummary:
+    def test_no_overlap_reports_no_risk(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/merge-summary", json={"changed_files": ["src/unrelated.py"]})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["overlap_warnings"] == []
+        assert body["highest_risk"] == "no_risk"
+        assert body["related_work_item"] is None
+
+    def test_overlapping_active_work_is_surfaced(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Other task", "estimated_files": ["src/a.py", "src/b.py"]})
+
+        resp = client.post("/api/work-items/merge-summary", json={"changed_files": ["src/a.py", "src/b.py"]})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["overlap_warnings"]) == 1
+        assert body["highest_risk"] == "critical"
+
+    def test_completed_work_items_are_not_flagged_as_overlap(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Done", "estimated_files": ["src/a.py"]}).json()["work_item"]
+        client.post(f"/api/work-items/{item['id']}/complete")
+
+        resp = client.post("/api/work-items/merge-summary", json={"changed_files": ["src/a.py"]})
+
+        assert resp.json()["overlap_warnings"] == []
+
+    def test_related_work_item_included_when_id_supplied(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "My task", "estimated_files": ["src/a.py"]}).json()["work_item"]
+
+        resp = client.post("/api/work-items/merge-summary", json={
+            "changed_files": ["src/a.py"], "work_item_id": item["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["related_work_item"]["id"] == item["id"]
+        # The referenced item itself must not appear in its own overlap list.
+        assert body["overlap_warnings"] == []
+
+    def test_unknown_related_work_item_id_is_tolerated(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/merge-summary", json={
+            "changed_files": ["src/a.py"], "work_item_id": "does-not-exist",
+        })
+
+        assert resp.status_code == 200
+        assert resp.json()["related_work_item"] is None
+
+    def test_empty_changed_files_is_422(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/merge-summary", json={"changed_files": []})
+
+        assert resp.status_code == 422

@@ -859,6 +859,26 @@ class WorkItemActivityOut(BaseModel):
     created_at: str
 
 
+class MergeSummaryRequest(BaseModel):
+    """What a pull request actually touched -- the same shape a work
+    item's own `estimated_files` already uses, so the exact same overlap
+    detection applies to "what I claimed I'd touch" and "what a real diff
+    touched"."""
+    changed_files: list[str] = Field(min_length=1)
+    work_item_id: Optional[str] = None
+
+
+class MergeSummaryOut(BaseModel):
+    """`POST /api/work-items/merge-summary`'s response -- "before merging,
+    generate a summary showing overlap with active work, potential
+    conflicts, related tasks" (SIL Phase 1's own wording). `related_work_item`
+    is set when `work_item_id` was supplied and still exists -- the task
+    this PR is presumably closing out."""
+    related_work_item: Optional[WorkItemOut] = None
+    overlap_warnings: list[OverlapWarningOut]
+    highest_risk: RiskLevelLiteral
+
+
 class WorkItemCreatedOut(BaseModel):
     """`POST /api/work-items`'s response -- the created item plus whatever
     overlap warnings it triggered against other active work, computed in
