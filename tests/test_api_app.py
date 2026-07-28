@@ -8,11 +8,14 @@ implicitly by calling `create_app()` without setting
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from futures_bot.api import services
 from futures_bot.api.app import create_app
+from futures_bot.journal import LOGGER_NAME
 
 
 def _write_fake_build(tmp_path: Path) -> Path:
@@ -104,3 +107,48 @@ class TestFrontendMount:
         result = asyncio.run(route.endpoint(full_path="../secret.txt"))
 
         assert Path(result.path) == (dist / "index.html").resolve()
+
+
+class TestUnhandledExceptionHandler:
+    """Regression coverage (Stabilization Mode, 2026-07-28, KNOWN_ISSUES.md
+    ISSUE-019): an unhandled exception in a route already returned a safe
+    generic 500 (Starlette's own default -- no traceback/message leak
+    either way), but was never logged anywhere this app's own logging
+    system controls, a real "silent failure". These tests confirm the new
+    catch-all handler logs the exception and returns a consistent JSON
+    error shape, without disturbing the existing, more specific ApiError/
+    KeyError/HTTPException handling.
+    """
+
+    def test_logs_and_returns_a_safe_500_for_a_genuinely_unexpected_exception(self, monkeypatch, caplog):
+        monkeypatch.setattr(services, "generate_insights", lambda: (_ for _ in ()).throw(
+            ValueError("deliberate test crash for stabilization sweep")
+        ))
+        client = TestClient(create_app(), raise_server_exceptions=False)
+
+        with caplog.at_level(logging.ERROR, logger=LOGGER_NAME):
+            resp = client.get("/api/insights")
+
+        assert resp.status_code == 500
+        assert resp.json() == {"detail": "Internal server error"}
+        assert "deliberate test crash for stabilization sweep" not in resp.text
+        assert any(
+            "Unhandled exception" in r.message and "deliberate test crash" in (r.exc_text or "")
+            for r in caplog.records
+        )
+
+    def test_api_error_still_returns_400_not_the_generic_500(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FUTURES_BOT_RESEARCH_DB", str(tmp_path / "research.db"))
+        client = TestClient(create_app())
+
+        resp = client.get("/api/performance/does-not-exist")
+
+        assert resp.status_code == 400
+        assert resp.json() != {"detail": "Internal server error"}
+
+    def test_http_exception_404_still_passes_through_unmodified(self):
+        client = TestClient(create_app())
+
+        resp = client.get("/api/this-route-does-not-exist")
+
+        assert resp.status_code == 404

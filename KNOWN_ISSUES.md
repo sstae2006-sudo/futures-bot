@@ -629,3 +629,49 @@ verified fixed — instead mark it Resolved with a date and commit.
   while the session is still coming up`) asserts the message appears and
   neither the Stop nor Start button renders during this state. Full
   frontend suite (65 tests), typecheck, and lint all pass.
+
+---
+
+### ISSUE-019 — Unhandled exceptions in any API route were never logged anywhere (RESOLVED)
+
+- **Severity:** Medium (a real "silent failure" gap, not a crash or
+  information-disclosure risk — Starlette's own default already returned
+  a safe generic 500 with no leaked traceback; the exception was just
+  invisible to this project's own logging/observability)
+- **Description:** Found 2026-07-28 (Stabilization Mode backend review).
+  `api/app.py` only registered exception handlers for `ApiError` (400) and
+  `KeyError` (404) — any other unhandled exception fell through to
+  Starlette's own default handling, confirmed directly: a genuine
+  `ValueError` raised inside a route returned `500 Internal Server Error`
+  (plain text, not even this API's usual JSON `{"detail": ...}` shape) with
+  no traceback or message leaked to the client (the safe part already
+  worked) — but nothing was ever logged through the `futures_bot` logger
+  this project's own `bot.log`/`journal.py` setup controls. Confirmed by
+  capturing the root logger during a real request: nothing but the
+  HTTP-level access log line appeared. Any bug that isn't one of the two
+  specifically-handled types would previously vanish without a trace
+  anywhere the dashboard's own Logs page or `bot.log` could ever surface
+  it.
+- **Files involved:** `src/futures_bot/api/app.py`.
+- **Possible cause:** `ApiError`/`KeyError` were added for the two
+  well-understood, expected error shapes (validation failures, missing
+  lookups); a true catch-all for the *unexpected* case was never added
+  alongside them.
+- **Current status:** **Resolved 2026-07-28.** New
+  `@app.exception_handler(Exception)` logs the full exception (with
+  traceback, via `log.error(..., exc_info=exc)`) through the same
+  `futures_bot` logger every other log line in this process already uses,
+  then returns the same JSON error shape every other handler in this file
+  returns (`{"detail": "Internal server error"}`) — deliberately still no
+  exception text/traceback in the response body, matching this API's own
+  "no authentication in front of it" caution elsewhere. Verified it does
+  not shadow the more specific existing handlers: `ApiError` still 400s,
+  a genuine `HTTPException` (e.g. an unknown route) still 404s normally,
+  only a truly unhandled exception type reaches the new handler (FastAPI/
+  Starlette resolve the most specific registered handler by the raised
+  exception's own type, not registration order). Three new tests in
+  `tests/test_api_app.py::TestUnhandledExceptionHandler` cover: the crash
+  is logged and returns the safe generic body without leaking the real
+  message, `ApiError` is unaffected, and `HTTPException`-based 404s are
+  unaffected. Every `test_api_*.py` file (16 files, ~160 tests) verified
+  individually, all passing.

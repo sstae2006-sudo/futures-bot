@@ -163,6 +163,27 @@ def create_app() -> FastAPI:
         # 404 rather than the generic 500 an uncaught KeyError would produce.
         return JSONResponse(status_code=404, content={"detail": str(exc).strip('"')})
 
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Without this, an unhandled exception in any route already returns
+        # a safe generic 500 (Starlette's own default -- confirmed directly:
+        # no traceback or exception message leaks to the client either way),
+        # but the exception itself was never logged anywhere this app's own
+        # logging system controls -- invisible to logs/bot.log and to the
+        # dashboard's own Logs page (GET /api/logs), a real "silent failure"
+        # (found 2026-07-28, KNOWN_ISSUES.md ISSUE-019). Logging it here,
+        # through the same `futures_bot` logger every other log line in this
+        # process uses, and returning the same JSON error shape
+        # (`{"detail": ...}`) every other handler in this file already
+        # returns -- Starlette's own default is a bare "Internal Server
+        # Error" text body, inconsistent with the rest of this API. The
+        # message itself stays generic (no exception text/traceback in the
+        # response) -- this API has no authentication in front of it (see
+        # this module's own docstring), so the exception detail belongs in
+        # the server-side log, not the response body.
+        log.error("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
     for router_module in (
         system, strategies, backtests, trades, compare, optimizer, reports, ml, jobs, experiments, live,
         market_data, research_server, imports,
