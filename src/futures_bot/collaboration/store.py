@@ -175,6 +175,21 @@ class CollaborationStore:
         return items
 
     def claim_work_item(self, item_id: str, user_id: str) -> dict:
+        """The `UPDATE`'s `WHERE` clause re-checks the same ownership
+        condition the initial read already checked in Python, and
+        `rowcount` tells us whether it actually applied -- not just a
+        defensive-looking duplicate check. Two concurrent callers (two
+        humans, or two AI sessions, racing to claim the same item) can
+        both pass the initial Python-level check before either writes;
+        without the `WHERE` guard here, both unconditional `UPDATE`s would
+        each "succeed" and whichever commits last would silently win,
+        with *both* callers getting back a 200 claiming ownership even
+        though only one of them actually holds it (a lost-update
+        anomaly, not a raised error either caller could react to). With
+        the guard, the loser's `UPDATE` matches zero rows, and this
+        raises the same `CollaborationError` a sequential double-claim
+        already raises -- confirmed via a real two-thread regression test
+        (Stabilization Mode, 2026-07-28)."""
         item = self.fetch_work_item(item_id)
         if item is None:
             raise CollaborationError(f"No such work item: {item_id!r}.")
@@ -182,10 +197,18 @@ class CollaborationStore:
             raise CollaborationError(
                 f"Work item {item_id!r} is already claimed by {item['owner_user_id']!r}."
             )
-        self._conn.execute(
-            "UPDATE work_items SET status='claimed', owner_user_id=?, updated_at=datetime('now') WHERE id = ?",
-            (user_id, item_id),
+        cursor = self._conn.execute(
+            """
+            UPDATE work_items SET status='claimed', owner_user_id=?, updated_at=datetime('now')
+            WHERE id = ? AND (owner_user_id IS NULL OR owner_user_id = ?)
+            """,
+            (user_id, item_id, user_id),
         )
+        if cursor.rowcount == 0:
+            self._conn.commit()  # release the write lock even on the losing path
+            current = self.fetch_work_item(item_id)
+            owner = current["owner_user_id"] if current is not None else None
+            raise CollaborationError(f"Work item {item_id!r} is already claimed by {owner!r}.")
         self._log_activity(item_id, "claimed", user_id, None)
         self._conn.commit()
         return self.fetch_work_item(item_id)  # type: ignore[return-value]

@@ -141,6 +141,71 @@ class TestClaimReleaseCompleteReassign:
         with pytest.raises(CollaborationError, match="No such work item"):
             store.release_work_item("does-not-exist")
 
+    def test_concurrent_claims_never_both_win(self, tmp_path):
+        """Regression test (Stabilization Mode, 2026-07-28): `claim_work_item`
+        used to read the item, decide in Python whether the claim was
+        allowed, then run an unconditional `UPDATE` -- two concurrent
+        callers (two humans, or two AI sessions, racing to claim the same
+        item) could both pass the Python-level check before either
+        committed, and whichever `UPDATE` committed last would silently
+        win: *both* callers would get back a 200 claiming ownership, with
+        no error telling either of them a conflict happened. Fixed by
+        re-checking ownership in the `UPDATE`'s own `WHERE` clause and
+        inspecting `rowcount` -- verified here with two real threads, each
+        on its own `CollaborationStore` connection (matching how two
+        separate HTTP requests would each get their own store instance),
+        and an artificial delay between the initial read and the write to
+        reliably widen the race window rather than relying on incidental
+        thread-scheduling luck."""
+        import threading
+        import time
+
+        path = tmp_path / "concurrent_claim_test.db"
+        setup_store = CollaborationStore(path)
+        setup_store.create_work_item(item_id="w1", title="Task")
+        setup_store.close()
+
+        results: list[object] = []
+        results_lock = threading.Lock()
+
+        def claim_as(user_id: str) -> None:
+            store = CollaborationStore(path)
+            original_fetch = store.fetch_work_item
+
+            def slow_fetch(item_id: str):
+                row = original_fetch(item_id)
+                time.sleep(0.2)
+                return row
+
+            store.fetch_work_item = slow_fetch  # type: ignore[method-assign]
+            try:
+                outcome: object = store.claim_work_item("w1", user_id)
+            except CollaborationError as exc:
+                outcome = exc
+            with results_lock:
+                results.append(outcome)
+            store.close()
+
+        threads = [threading.Thread(target=claim_as, args=(u,)) for u in ("alice", "bob")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        successes = [r for r in results if isinstance(r, dict)]
+        failures = [r for r in results if isinstance(r, CollaborationError)]
+        assert len(successes) == 1, f"expected exactly one winning claim, got {results!r}"
+        assert len(failures) == 1
+        assert "already claimed" in str(failures[0])
+
+        final = CollaborationStore(path)
+        try:
+            item = final.fetch_work_item("w1")
+            assert item is not None
+            assert item["owner_user_id"] == successes[0]["owner_user_id"]
+        finally:
+            final.close()
+
 
 class TestActivityLog:
     def test_every_transition_is_logged(self, store):

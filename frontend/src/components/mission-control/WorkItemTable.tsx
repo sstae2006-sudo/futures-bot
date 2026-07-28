@@ -1,4 +1,5 @@
-import { claimWorkItem, completeWorkItem, releaseWorkItem, updateWorkItemStatus } from '../../api'
+import { useState } from 'react'
+import { ApiRequestError, claimWorkItem, completeWorkItem, releaseWorkItem, updateWorkItemStatus } from '../../api'
 import { useSession } from '../../session'
 import { Badge } from '../UI'
 import type { ManualWorkItemStatus, WorkItem, WorkItemStatus } from '../../types'
@@ -55,39 +56,66 @@ export default function WorkItemTable({
   showLifecycle?: boolean
 }) {
   const { currentUser } = useSession()
+  const [actionError, setActionError] = useState<string | null>(null)
 
-  async function handleClaim(id: string) {
+  // Every action below can legitimately fail even when the UI looked
+  // clickable a moment ago -- most notably, claim can now lose a real
+  // race to another claimant (collaboration/store.py's atomic-claim fix,
+  // Stabilization Mode 2026-07-28) and the server correctly rejects it.
+  // Previously these errors went uncaught (no error boundary exists in
+  // this app), so a failed action just silently did nothing with no
+  // feedback. Surfacing the message and refetching either way keeps the
+  // displayed state honest.
+  async function runAction(action: () => Promise<unknown>) {
+    setActionError(null)
+    try {
+      await action()
+    } catch (err) {
+      setActionError(err instanceof ApiRequestError ? err.message : 'That action failed -- please try again.')
+    } finally {
+      onRefetch()
+    }
+  }
+
+  function handleClaim(id: string) {
     // Defaults to the signed-in user (session.tsx) so claiming your own
     // work is a single click in the common case; still overridable (e.g.
     // claiming on behalf of a teammate who isn't at their keyboard) since
     // there's no auth boundary stopping that anyway.
     const userId = window.prompt('Claim as user ID:', currentUser?.id ?? '')
     if (!userId) return
-    await claimWorkItem(id, userId)
-    onRefetch()
+    runAction(() => claimWorkItem(id, userId))
   }
 
-  async function handleRelease(id: string) {
-    await releaseWorkItem(id)
-    onRefetch()
+  function handleRelease(id: string) {
+    runAction(() => releaseWorkItem(id))
   }
 
-  async function handleComplete(id: string) {
-    await completeWorkItem(id)
-    onRefetch()
+  function handleComplete(id: string) {
+    runAction(() => completeWorkItem(id))
   }
 
-  async function handleAdvance(id: string, status: ManualWorkItemStatus) {
-    await updateWorkItemStatus(id, status)
-    onRefetch()
+  function handleAdvance(id: string, status: ManualWorkItemStatus) {
+    runAction(() => updateWorkItemStatus(id, status))
   }
+
+  const errorBanner = actionError && (
+    <p role="alert" style={{ fontSize: 12, color: 'var(--danger, #d33)', margin: '0 0 8px' }}>{actionError}</p>
+  )
 
   if (items.length === 0) {
-    return <p style={{ fontSize: 13, opacity: 0.7 }}>{emptyMessage}</p>
+    return (
+      <>
+        {errorBanner}
+        <p style={{ fontSize: 13, opacity: 0.7 }}>{emptyMessage}</p>
+      </>
+    )
   }
 
   return (
-    <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+    <>
+      {errorBanner}
+      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
       <tbody>
         {items.map((item) => {
           const nextStage = NEXT_STAGE[item.status]
@@ -132,6 +160,7 @@ export default function WorkItemTable({
           )
         })}
       </tbody>
-    </table>
+      </table>
+    </>
   )
 }

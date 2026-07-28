@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.engine import Engine
 
 from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES
@@ -93,15 +93,24 @@ class PgCollaborationStore:
         return items
 
     def claim_work_item(self, item_id: str, user_id: str) -> dict:
+        """Mirrors `CollaborationStore.claim_work_item`'s atomic-claim fix
+        -- see that method's docstring for the concurrent-claim race this
+        guards against. The `WHERE` clause re-checks ownership at write
+        time; `rowcount == 0` means someone else won the race."""
         item = self.fetch_work_item(item_id)
         if item is None:
             raise CollaborationError(f"No such work item: {item_id!r}.")
         if item["status"] == "claimed" and item["owner_user_id"] not in (None, user_id):
             raise CollaborationError(f"Work item {item_id!r} is already claimed by {item['owner_user_id']!r}.")
         with self._engine.begin() as conn:
-            conn.execute(work_items.update().where(work_items.c.id == item_id).values(
-                status="claimed", owner_user_id=user_id, updated_at=func.now(),
-            ))
+            result = conn.execute(work_items.update().where(
+                work_items.c.id == item_id,
+                or_(work_items.c.owner_user_id.is_(None), work_items.c.owner_user_id == user_id),
+            ).values(status="claimed", owner_user_id=user_id, updated_at=func.now()))
+            if result.rowcount == 0:
+                current = self.fetch_work_item(item_id)
+                owner = current["owner_user_id"] if current is not None else None
+                raise CollaborationError(f"Work item {item_id!r} is already claimed by {owner!r}.")
             self._log_activity(conn, item_id, "claimed", user_id, None)
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
 

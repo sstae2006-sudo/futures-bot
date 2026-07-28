@@ -70,4 +70,21 @@ describe('WorkItemTable', () => {
     renderTable({ items: [makeItem({ owner_type: 'ai' })], onRefetch: vi.fn() })
     expect(screen.getByText('AI')).toBeInTheDocument()
   })
+
+  it('surfaces a failed action instead of silently doing nothing', async () => {
+    // Regression test (Stabilization Mode, 2026-07-28): every action
+    // handler here used to `await` its API call with no try/catch and no
+    // error boundary exists in this app -- a rejected call (e.g. a claim
+    // that loses a real race against another claimant, now that
+    // collaboration/store.py's claim is atomic) previously vanished with
+    // no feedback. `runAction` now catches and displays it.
+    vi.mocked(api.updateWorkItemStatus).mockRejectedValue(new api.ApiRequestError(400, 'already claimed by bob'))
+    const onRefetch = vi.fn()
+    renderTable({ items: [makeItem({ status: 'claimed', owner_user_id: 'alice' })], onRefetch })
+
+    fireEvent.click(screen.getByText('Start'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('already claimed by bob')
+    await waitFor(() => expect(onRefetch).toHaveBeenCalled())
+  })
 })
