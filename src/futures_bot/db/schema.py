@@ -87,7 +87,15 @@ bars = Table(
     Column("close", Numeric, nullable=False),
     Column("volume", BigInteger, nullable=False),
     Column("source", String, nullable=False),
-    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    # Nullable, not NOT NULL: the SQLite source (KNOWN_ISSUES.md ISSUE-004)
+    # declares this column NOT NULL DEFAULT but the live table predates that
+    # revision and was never migrated -- 32.5% of real bars rows (every
+    # source, not an edge case) genuinely have no created_at. A NOT NULL
+    # constraint here would reject real production data outright (confirmed
+    # the hard way: tools/migrate_to_timescaledb.py's first live run against
+    # real data raised NotNullViolation partway through). New inserts still
+    # get one via server_default.
+    Column("created_at", _TSTZ, nullable=True, server_default=func.now()),
     UniqueConstraint("product_code", "resolution", "timestamp", name="uq_bars_identity"),
     Index("idx_bars_contract", "contract"),
 )

@@ -39,10 +39,17 @@ class TestConnectedUsersTracker:
         tracker = ConnectedUsersTracker(window_seconds=0)
         tracker.record("10.0.0.1")
         # window_seconds=0 -- any recorded entry is immediately "stale"
-        # the next time count() runs, since the cutoff equals "now".
+        # the next time count() runs, since the cutoff equals "now". The
+        # sleep must reliably exceed time.monotonic()'s clock resolution
+        # (observed ~31ms on Windows) or both timestamps can land in the
+        # same tick, making the purge's strict "<" comparison a no-op --
+        # confirmed empirically: 0.01s produced a real, reproducible ~30%
+        # flake rate (delta=0.0 exactly on the failing runs), 0.05s did
+        # not fail once in 30 runs. Irrelevant to the real 900s default
+        # window this class is actually used with.
         import time
 
-        time.sleep(0.01)
+        time.sleep(0.05)
         assert tracker.count() == 0
 
     def test_fresh_ip_within_window_is_kept(self):

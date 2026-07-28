@@ -273,3 +273,97 @@ function Remove-ProcessInfo {
         Remove-Item $file -Force
     }
 }
+
+#: Tailscale's own CGNAT range (https://tailscale.com/kb/1015/100.x-addresses)
+#: -- every tailnet peer's IP falls inside this block, nothing outside it
+#: does. Scoping the firewall rule's RemoteAddress to this range (rather
+#: than "any") means the rule only ever opens the port to actual tailnet
+#: traffic, matching --allow-network-exposure's own stated trust model
+#: (api/__main__.py: "only pass this once something in front of it
+#: actually restricts access" -- Tailscale is that something).
+$Script:TailscaleCgnatRange = "100.64.0.0/10"
+
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Confirm-TailscaleFirewallRule {
+    <#
+    .SYNOPSIS
+      Idempotently ensures an inbound firewall rule exists letting
+      tailnet peers (only -- see $TailscaleCgnatRange above) reach
+      $Port. Team mode's single guaranteed-reproducible failure mode is
+      "works from this machine, unreachable from another device": binding
+      uvicorn to the Tailscale IP is necessary but not sufficient --
+      Windows Firewall's Private-profile default is BlockInbound, and a
+      same-machine curl/Invoke-WebRequest against the box's own Tailscale
+      IP is delivered locally without ever crossing the filtered network
+      path, so it succeeds regardless of whether a real remote peer would
+      be dropped. Confirmed empirically: `netsh advfirewall show
+      privateprofile` reports "Firewall Policy: BlockInbound,AllowOutbound"
+      with zero pre-existing rule for python.exe or this port.
+
+    .DESCRIPTION
+      Checks for an existing enabled rule by name first (safe to call on
+      every start-team.ps1 run). If missing and this process is already
+      elevated, creates it directly. If missing and NOT elevated,
+      self-elevates *only* the rule-creation step via a separate
+      `Start-Process -Verb RunAs` (one UAC prompt), then re-checks --
+      never silently continues without the rule actually existing. A
+      declined UAC prompt is reported as a clear warning (with the exact
+      manual command) rather than a hard failure, since local access
+      still works either way.
+    #>
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    $ruleName = "futures-bot Team Mode ($Port/tcp, Tailscale)"
+    $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    if ($existing -and $existing.Enabled -eq "True") {
+        Write-Ok "Firewall rule '$ruleName' already present"
+        return $true
+    }
+
+    $scriptBlock = "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow " +
+        "-Protocol TCP -LocalPort $Port -RemoteAddress $TailscaleCgnatRange -Profile Any | Out-Null"
+
+    if (Test-IsAdministrator) {
+        try {
+            Invoke-Expression $scriptBlock
+            Write-Ok "Created firewall rule '$ruleName' (already elevated)"
+            return $true
+        } catch {
+            Write-WarnLine "Could not create firewall rule even though elevated: $($_.Exception.Message)"
+            return $false
+        }
+    }
+
+    Write-WarnLine "No inbound firewall rule for port $Port yet -- requesting elevation (one UAC prompt) to create it"
+    try {
+        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($scriptBlock))
+        $proc = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile", "-EncodedCommand", $encoded `
+            -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+        if ($proc.ExitCode -ne 0) {
+            throw "elevated helper process exited with code $($proc.ExitCode)"
+        }
+    } catch {
+        Write-WarnLine (
+            "Could not create the firewall rule automatically (UAC prompt declined, or elevation " +
+            "failed: $($_.Exception.Message)). Other devices on your tailnet will NOT be able to " +
+            "reach this backend until it exists. Run this once from an elevated PowerShell: " +
+            "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow " +
+            "-Protocol TCP -LocalPort $Port -RemoteAddress $TailscaleCgnatRange -Profile Any"
+        )
+        return $false
+    }
+
+    $recheck = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    if ($recheck -and $recheck.Enabled -eq "True") {
+        Write-Ok "Created firewall rule '$ruleName' (via elevation)"
+        return $true
+    }
+    Write-WarnLine "Firewall rule still missing after attempting elevation -- other tailnet devices will not be able to reach this backend."
+    return $false
+}

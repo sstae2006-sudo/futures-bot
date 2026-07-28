@@ -61,12 +61,16 @@ db_backups/
 
 # Team deployment: pre-migration backup snapshots taken by hand (see
 # PROJECT_STATE.md's migration instructions) -- large, regenerable, machine-specific.
+# Two naming patterns have been used across sessions (research_backup.db and
+# research.db.backup_<timestamp>) -- both covered so neither slips through.
 research_backup*.db
 research_backup*.db-shm
 research_backup*.db-wal
 market_data_backup*.db
 market_data_backup*.db-shm
 market_data_backup*.db-wal
+research.db.backup_*
+market_data.db.backup_*
 
 # Stray Vite dependency cache when `vite`/`npx vite` runs from the repo root
 # instead of frontend/ (frontend/.vite/ is already covered below).

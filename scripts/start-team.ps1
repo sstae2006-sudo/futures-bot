@@ -118,6 +118,22 @@ if ($BindHost -in @("127.0.0.1", "::1", "localhost")) {
 }
 Write-Ok "Binding to $BindHost`:$Port"
 
+# 5b. Ensure a Windows Firewall rule actually lets tailnet peers reach
+#     this port. Binding uvicorn to the Tailscale IP is necessary but not
+#     sufficient: Windows Firewall's Private-profile default is
+#     BlockInbound, and there is no rule for this app/port until this
+#     step creates one -- without it, this machine's own curl/browser
+#     test against $BindHost succeeds (local delivery to an owned IP
+#     never crosses the filtered network path) while a genuine remote
+#     tailnet peer is silently dropped. This is not a hypothetical: it
+#     was confirmed the hard way on 2026-07-28 (`netsh advfirewall show
+#     privateprofile` showed BlockInbound with zero matching rule) --
+#     "works locally, unreachable from another device" is exactly what a
+#     missing rule looks like. See Confirm-TailscaleFirewallRule's own
+#     docstring in _common.ps1.
+Write-Step "Checking Windows Firewall for an inbound rule on port $Port"
+Confirm-TailscaleFirewallRule -Port $Port | Out-Null
+
 # 6. Build the frontend once. VITE_API_BASE_URL= (empty) bakes in
 #    relative API paths, so the same build works from any Tailscale
 #    address without a rebuild -- same convention Dockerfile.api and
