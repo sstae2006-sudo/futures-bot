@@ -138,3 +138,55 @@ class TestActivityLog:
         all_events = store.fetch_activity()
 
         assert len(all_events) == 2
+
+
+class TestOwnerType:
+    def test_defaults_to_human(self, store):
+        item = store.create_work_item(item_id="w1", title="Task")
+        assert item["owner_type"] == "human"
+
+    def test_can_be_created_as_ai(self, store):
+        item = store.create_work_item(item_id="w1", title="Task", owner_type="ai")
+        assert item["owner_type"] == "ai"
+
+    def test_rejects_unknown_owner_type(self, store):
+        with pytest.raises(CollaborationError, match="Unknown owner_type"):
+            store.create_work_item(item_id="w1", title="Task", owner_type="robot")
+
+
+class TestUpdateStatus:
+    def test_moves_through_manual_lifecycle_stages(self, store):
+        store.create_work_item(item_id="w1", title="Task", owner_user_id="u1")
+
+        for stage in ("in_progress", "testing", "ready_for_review", "merged"):
+            updated = store.update_status("w1", stage, actor_user_id="u1")
+            assert updated["status"] == stage
+
+    def test_rejects_open_claimed_completed(self, store):
+        store.create_work_item(item_id="w1", title="Task")
+        for forbidden in ("open", "claimed", "completed"):
+            with pytest.raises(CollaborationError, match="Unknown status"):
+                store.update_status("w1", forbidden)
+
+    def test_rejects_unknown_status(self, store):
+        store.create_work_item(item_id="w1", title="Task")
+        with pytest.raises(CollaborationError, match="Unknown status"):
+            store.update_status("w1", "blocked")
+
+    def test_unknown_item_raises(self, store):
+        with pytest.raises(CollaborationError, match="No such work item"):
+            store.update_status("does-not-exist", "testing")
+
+    def test_status_change_is_logged(self, store):
+        store.create_work_item(item_id="w1", title="Task")
+        store.update_status("w1", "in_progress", actor_user_id="u1")
+
+        event = next(a for a in store.fetch_activity(work_item_id="w1") if a["event"] == "status_changed")
+        assert event["actor_user_id"] == "u1"
+        assert event["detail"] == "open->in_progress"
+
+    def test_allows_backward_moves(self, store):
+        store.create_work_item(item_id="w1", title="Task")
+        store.update_status("w1", "ready_for_review")
+        moved_back = store.update_status("w1", "in_progress")
+        assert moved_back["status"] == "in_progress"

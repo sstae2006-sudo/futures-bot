@@ -14,7 +14,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
-from . import PRIORITIES
+from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES
 from .store import CollaborationError
 from ..db.engine import get_engine
 from ..db.research_schema import metadata, work_item_activity, work_items
@@ -55,14 +55,18 @@ class PgCollaborationStore:
         self, *, item_id: str, title: str, description: Optional[str] = None,
         owner_user_id: Optional[str] = None, branch: Optional[str] = None,
         estimated_files: Optional[list[str]] = None, priority: str = "medium",
+        owner_type: str = "human",
     ) -> dict:
         if priority not in PRIORITIES:
             raise CollaborationError(f"Unknown priority {priority!r} -- must be one of {PRIORITIES}.")
+        if owner_type not in OWNER_TYPES:
+            raise CollaborationError(f"Unknown owner_type {owner_type!r} -- must be one of {OWNER_TYPES}.")
         status = "claimed" if owner_user_id else "open"
         with self._engine.begin() as conn:
             conn.execute(work_items.insert().values(
                 id=item_id, title=title, description=description, owner_user_id=owner_user_id,
                 branch=branch, status=status, estimated_files=estimated_files or [], priority=priority,
+                owner_type=owner_type,
             ))
             self._log_activity(conn, item_id, "created", owner_user_id, f"status={status}")
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
@@ -127,6 +131,24 @@ class PgCollaborationStore:
                 status="claimed", owner_user_id=new_owner_user_id, updated_at=func.now(),
             ))
             self._log_activity(conn, item_id, "reassigned", actor_user_id, f"new_owner={new_owner_user_id}")
+        return self.fetch_work_item(item_id)  # type: ignore[return-value]
+
+    def update_status(self, item_id: str, new_status: str, *, actor_user_id: Optional[str] = None) -> dict:
+        """Mirrors `CollaborationStore.update_status` -- see its docstring
+        for why transitions are advisory, not a validated state machine."""
+        item = self.fetch_work_item(item_id)
+        if item is None:
+            raise CollaborationError(f"No such work item: {item_id!r}.")
+        if new_status not in MANUAL_STATUSES:
+            raise CollaborationError(
+                f"Unknown status {new_status!r} -- must be one of {MANUAL_STATUSES} "
+                "(use claim/release/complete for open/claimed/completed)."
+            )
+        with self._engine.begin() as conn:
+            conn.execute(work_items.update().where(work_items.c.id == item_id).values(
+                status=new_status, updated_at=func.now(),
+            ))
+            self._log_activity(conn, item_id, "status_changed", actor_user_id, f"{item['status']}->{new_status}")
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
 
     # --- Activity log ---

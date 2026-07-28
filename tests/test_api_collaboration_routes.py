@@ -208,3 +208,82 @@ class TestMergeSummary:
         resp = client.post("/api/work-items/merge-summary", json={"changed_files": []})
 
         assert resp.status_code == 422
+
+
+class TestOwnerTypeAndStatusLifecycle:
+    def test_owner_type_defaults_to_human(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items", json={"title": "Task"})
+
+        assert resp.json()["work_item"]["owner_type"] == "human"
+
+    def test_owner_type_can_be_ai(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items", json={"title": "AI task", "owner_type": "ai"})
+
+        assert resp.json()["work_item"]["owner_type"] == "ai"
+
+    def test_invalid_owner_type_is_422(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items", json={"title": "Task", "owner_type": "robot"})
+
+        assert resp.status_code == 422
+
+    def test_status_route_moves_through_lifecycle(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/status", json={"status": "in_progress"})
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "in_progress"
+
+    def test_status_route_rejects_open_claimed_completed(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/status", json={"status": "completed"})
+
+        assert resp.status_code == 422  # not in ManualWorkItemStatusLiteral
+
+    def test_status_route_unknown_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/does-not-exist/status", json={"status": "testing"})
+
+        assert resp.status_code == 400
+
+
+class TestBranchInfoRoutes:
+    def test_current_branch_info_is_always_200(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/git/branch-info")
+
+        assert resp.status_code == 200
+        assert "notes" in resp.json()
+
+    def test_named_branch_info(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/git/branch-info", params={"branch": "main"})
+
+        assert resp.status_code == 200
+
+    def test_work_item_branch_info_uses_the_items_own_branch(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task", "branch": "main"}).json()["work_item"]
+
+        resp = client.get(f"/api/work-items/{item['id']}/branch-info")
+
+        assert resp.status_code == 200
+
+    def test_work_item_branch_info_unknown_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/work-items/does-not-exist/branch-info")
+
+        assert resp.status_code == 400

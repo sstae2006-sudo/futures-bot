@@ -8,17 +8,50 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
+from ..collaboration import git_info
+from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.overlap import detect_overlap
 from ..collaboration.store import CollaborationError, get_collaboration_store
-from .schemas import MergeSummaryOut, OverlapWarningOut, WorkItemActivityOut, WorkItemOut
+from .schemas import BranchInfoOut, CommitOut, MergeSummaryOut, OverlapWarningOut, WorkItemActivityOut, WorkItemOut
 from .services import ApiError
 
 _RISK_SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "no_risk": 0}
 
 
+def _commit_out(commit: Optional[Commit]) -> Optional[CommitOut]:
+    if commit is None:
+        return None
+    return CommitOut(hash=commit.hash, short_hash=commit.short_hash, subject=commit.subject,
+                      author=commit.author, authored_at=commit.authored_at)
+
+
+def _branch_info_out(info: BranchInfo) -> BranchInfoOut:
+    return BranchInfoOut(
+        branch=info.branch, is_detached=info.is_detached, base_branch=info.base_branch,
+        branch_age_days=info.branch_age_days, ahead=info.ahead, behind=info.behind,
+        last_commit=_commit_out(info.last_commit), notes=list(info.notes),
+    )
+
+
+def get_branch_info(branch: Optional[str] = None) -> BranchInfoOut:
+    return _branch_info_out(git_info.get_branch_info(branch=branch))
+
+
+def get_work_item_branch_info(item_id: str) -> BranchInfoOut:
+    """The work item's own `branch` field (set at creation time) is what
+    ties it to a real git branch -- resolved live against the repo rather
+    than trusting a value that could be stale by the time anyone looks."""
+    store = get_collaboration_store()
+    item = store.fetch_work_item(item_id)
+    if item is None:
+        raise ApiError(f"No such work item: {item_id!r}")
+    return get_branch_info(branch=item.get("branch"))
+
+
 def create_work_item(
     *, title: str, description: Optional[str] = None, owner_user_id: Optional[str] = None,
     branch: Optional[str] = None, estimated_files: Optional[list[str]] = None, priority: str = "medium",
+    owner_type: str = "human",
 ) -> tuple[WorkItemOut, list[OverlapWarningOut]]:
     """Creates the work item, then checks it for file overlap against
     every other currently-active item -- "before any task begins,
@@ -30,7 +63,7 @@ def create_work_item(
         item_id = uuid.uuid4().hex[:12]
         item = store.create_work_item(
             item_id=item_id, title=title, description=description, owner_user_id=owner_user_id,
-            branch=branch, estimated_files=estimated_files, priority=priority,
+            branch=branch, estimated_files=estimated_files, priority=priority, owner_type=owner_type,
         )
     except CollaborationError as exc:
         raise ApiError(str(exc)) from exc
@@ -97,6 +130,15 @@ def reassign_work_item(item_id: str, new_owner_user_id: str, actor_user_id: Opti
     store = get_collaboration_store()
     try:
         item = store.reassign_work_item(item_id, new_owner_user_id, actor_user_id=actor_user_id)
+    except CollaborationError as exc:
+        raise ApiError(str(exc)) from exc
+    return WorkItemOut(**item)
+
+
+def update_work_item_status(item_id: str, new_status: str, actor_user_id: Optional[str] = None) -> WorkItemOut:
+    store = get_collaboration_store()
+    try:
+        item = store.update_status(item_id, new_status, actor_user_id=actor_user_id)
     except CollaborationError as exc:
         raise ApiError(str(exc)) from exc
     return WorkItemOut(**item)

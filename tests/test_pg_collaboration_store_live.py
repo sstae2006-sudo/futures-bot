@@ -104,3 +104,32 @@ class TestWorkItemLifecycle:
         events = [a["event"] for a in reversed(store.fetch_activity(work_item_id=item_id))]
 
         assert events == ["created", "claimed", "completed"]
+
+
+class TestOwnerTypeAndStatusLifecycle:
+    def test_owner_type_defaults_to_human(self, store):
+        item = store.create_work_item(item_id=_item_id(), title="Task")
+        assert item["owner_type"] == "human"
+
+    def test_owner_type_can_be_ai(self, store):
+        item = store.create_work_item(item_id=_item_id(), title="Task", owner_type="ai")
+        assert item["owner_type"] == "ai"
+
+    def test_update_status_moves_through_lifecycle(self, store):
+        item_id = _item_id()
+        store.create_work_item(item_id=item_id, title="Task")
+
+        moved = store.update_status(item_id, "in_progress", actor_user_id="u1")
+
+        assert moved["status"] == "in_progress"
+        event = next(a for a in store.fetch_activity(work_item_id=item_id) if a["event"] == "status_changed")
+        assert event["detail"] == "open->in_progress"
+
+    def test_update_status_rejects_open_claimed_completed(self, store):
+        from futures_bot.collaboration.store import CollaborationError
+
+        item_id = _item_id()
+        store.create_work_item(item_id=item_id, title="Task")
+
+        with pytest.raises(CollaborationError, match="Unknown status"):
+            store.update_status(item_id, "completed")

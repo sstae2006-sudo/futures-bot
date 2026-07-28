@@ -392,6 +392,7 @@ work_items = Table(
     Column("status", String, nullable=False, server_default="open"),
     Column("estimated_files", JSONB, nullable=False, server_default="[]"),
     Column("priority", String, nullable=False, server_default="medium"),
+    Column("owner_type", String, nullable=False, server_default="human"),
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Column("updated_at", _TSTZ, nullable=False, server_default=func.now()),
     Index("idx_work_items_status", "status"),

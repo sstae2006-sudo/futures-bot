@@ -12,8 +12,9 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    ClaimWorkItemRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut, ReassignWorkItemRequest,
-    WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
+    BranchInfoOut, ClaimWorkItemRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut,
+    ReassignWorkItemRequest, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
+    WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -24,6 +25,7 @@ def create_work_item(req: WorkItemCreateRequest) -> WorkItemCreatedOut:
     item, warnings = services.create_work_item(
         title=req.title, description=req.description, owner_user_id=req.owner_user_id,
         branch=req.branch, estimated_files=req.estimated_files, priority=req.priority,
+        owner_type=req.owner_type,
     )
     return WorkItemCreatedOut(work_item=item, overlap_warnings=warnings)
 
@@ -63,6 +65,15 @@ def reassign_work_item(item_id: str, req: ReassignWorkItemRequest) -> WorkItemOu
     return services.reassign_work_item(item_id, req.user_id)
 
 
+@router.post("/api/work-items/{item_id}/status", response_model=WorkItemOut)
+def update_work_item_status(item_id: str, req: UpdateWorkItemStatusRequest) -> WorkItemOut:
+    """Moves a work item through the SIL Phase 2 lifecycle (planned ->
+    in_progress -> testing -> ready_for_review -> merged). Use
+    claim/release/complete for open/claimed/completed -- unchanged from
+    Phase 1."""
+    return services.update_work_item_status(item_id, req.status)
+
+
 @router.get("/api/work-items-activity", response_model=list[WorkItemActivityOut])
 def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[WorkItemActivityOut]:
     return services.list_activity(work_item_id=work_item_id, limit=limit)
@@ -71,3 +82,17 @@ def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[
 @router.post("/api/work-items/merge-summary", response_model=MergeSummaryOut)
 def merge_summary(req: MergeSummaryRequest) -> MergeSummaryOut:
     return services.merge_summary(req.changed_files, req.work_item_id)
+
+
+@router.get("/api/git/branch-info", response_model=BranchInfoOut)
+def get_branch_info(branch: Optional[str] = None) -> BranchInfoOut:
+    """Live git introspection (`collaboration/git_info.py`) -- current
+    branch by default, or a named one. Always 200: an unrecognized repo
+    state (detached HEAD, no `main`, not a git checkout at all) comes
+    back as `notes`, not an error."""
+    return services.get_branch_info(branch=branch)
+
+
+@router.get("/api/work-items/{item_id}/branch-info", response_model=BranchInfoOut)
+def get_work_item_branch_info(item_id: str) -> BranchInfoOut:
+    return services.get_work_item_branch_info(item_id)

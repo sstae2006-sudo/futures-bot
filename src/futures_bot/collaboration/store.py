@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..research.trade_store import default_db_path
-from . import PRIORITIES
+from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES
 
 #: Same convention `accounts/store.py`/`api/store.py::get_store()` already
 #: established.
@@ -70,6 +70,18 @@ class CollaborationStore:
     request/script, same convention `TradeStore`/`AccountStore` document
     for themselves."""
 
+    #: SIL Phase 2 ("Workflow Integration", 2026-07-28): `owner_type` added
+    #: to `work_items` after that table already shipped -- `CREATE TABLE IF
+    #: NOT EXISTS` can't retrofit a column onto an existing table, so it's
+    #: added via `ALTER TABLE` here if missing, same "ALTER TABLE if
+    #: missing" pattern `research/trade_store.py::ensure_schema` already
+    #: established. Every existing row backfills to 'human' via the column
+    #: default -- correct for every work item created before this existed,
+    #: since Phase 1 had no AI/human distinction at all.
+    _WORK_ITEM_COLLABORATION_COLUMNS = (
+        ("owner_type", "TEXT NOT NULL DEFAULT 'human'"),
+    )
+
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path is not None else default_db_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +92,13 @@ class CollaborationStore:
         self.ensure_schema()
 
     def ensure_schema(self) -> None:
+        """Idempotent -- safe to call on every startup, same convention
+        every other store in this codebase follows."""
         self._conn.executescript(_SCHEMA)
+        existing_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(work_items)")}
+        for name, sqltype in self._WORK_ITEM_COLLABORATION_COLUMNS:
+            if name not in existing_columns:
+                self._conn.execute(f"ALTER TABLE work_items ADD COLUMN {name} {sqltype}")
         self._conn.commit()
 
     def close(self) -> None:
@@ -98,17 +116,20 @@ class CollaborationStore:
         self, *, item_id: str, title: str, description: Optional[str] = None,
         owner_user_id: Optional[str] = None, branch: Optional[str] = None,
         estimated_files: Optional[list[str]] = None, priority: str = "medium",
+        owner_type: str = "human",
     ) -> dict:
         if priority not in PRIORITIES:
             raise CollaborationError(f"Unknown priority {priority!r} -- must be one of {PRIORITIES}.")
+        if owner_type not in OWNER_TYPES:
+            raise CollaborationError(f"Unknown owner_type {owner_type!r} -- must be one of {OWNER_TYPES}.")
         status = "claimed" if owner_user_id else "open"
         self._conn.execute(
             """
-            INSERT INTO work_items (id, title, description, owner_user_id, branch, status, estimated_files, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO work_items (id, title, description, owner_user_id, branch, status, estimated_files, priority, owner_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (item_id, title, description, owner_user_id, branch, status,
-             json.dumps(estimated_files or []), priority),
+             json.dumps(estimated_files or []), priority, owner_type),
         )
         self._log_activity(item_id, "created", owner_user_id, f"status={status}")
         self._conn.commit()
@@ -185,6 +206,37 @@ class CollaborationStore:
             (new_owner_user_id, item_id),
         )
         self._log_activity(item_id, "reassigned", actor_user_id, f"new_owner={new_owner_user_id}")
+        self._conn.commit()
+        return self.fetch_work_item(item_id)  # type: ignore[return-value]
+
+    def update_status(self, item_id: str, new_status: str, *, actor_user_id: Optional[str] = None) -> dict:
+        """Moves a work item to one of the intermediate lifecycle stages
+        (`in_progress`, `testing`, `ready_for_review`, etc. -- see
+        `collaboration.MANUAL_STATUSES`). Deliberately does NOT validate
+        that `new_status` is a "forward" move in `STATUSES`' pipeline
+        order: a real workflow needs to go backward too (a review finds a
+        problem, `ready_for_review` -> `in_progress`), and a hard state
+        machine would just get bypassed via release+reassign anyway. The
+        pipeline order in `STATUSES` is advisory (drives the Mission
+        Control visualization), not enforced here -- matches this
+        package's existing warn-only philosophy (see `overlap.py`'s
+        docstring) applied to workflow instead of file conflicts. Use
+        `claim_work_item`/`release_work_item`/`complete_work_item` for
+        `claimed`/`open`/`completed` -- those three keep their existing,
+        separately-tested ownership semantics unchanged."""
+        item = self.fetch_work_item(item_id)
+        if item is None:
+            raise CollaborationError(f"No such work item: {item_id!r}.")
+        if new_status not in MANUAL_STATUSES:
+            raise CollaborationError(
+                f"Unknown status {new_status!r} -- must be one of {MANUAL_STATUSES} "
+                "(use claim/release/complete for open/claimed/completed)."
+            )
+        self._conn.execute(
+            "UPDATE work_items SET status=?, updated_at=datetime('now') WHERE id = ?",
+            (new_status, item_id),
+        )
+        self._log_activity(item_id, "status_changed", actor_user_id, f"{item['status']}->{new_status}")
         self._conn.commit()
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
 

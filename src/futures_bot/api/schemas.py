@@ -807,7 +807,18 @@ class UserUpdateRequest(BaseModel):
 
 
 PriorityLiteral = Literal["low", "medium", "high", "critical"]
-WorkItemStatusLiteral = Literal["open", "claimed", "completed"]
+#: `open`/`planned` are synonyms for "not yet claimed" (see
+#: `collaboration.STATUSES`'s docstring for why both are kept). The rest
+#: are the SIL Phase 2 lifecycle stages a claimed item moves through en
+#: route to `completed`; reachable only via `PATCH /api/work-items/{id}/status`
+#: (`claimed`/`open`/`completed` stay reachable only via
+#: claim/release/complete, unchanged from Phase 1).
+WorkItemStatusLiteral = Literal[
+    "open", "planned", "claimed", "in_progress", "testing",
+    "ready_for_review", "merged", "completed",
+]
+ManualWorkItemStatusLiteral = Literal["planned", "in_progress", "testing", "ready_for_review", "merged"]
+OwnerTypeLiteral = Literal["human", "ai"]
 RiskLevelLiteral = Literal["no_risk", "low", "medium", "high", "critical"]
 
 
@@ -816,6 +827,7 @@ class WorkItemOut(BaseModel):
     title: str
     description: Optional[str] = None
     owner_user_id: Optional[str] = None
+    owner_type: OwnerTypeLiteral = "human"
     branch: Optional[str] = None
     status: WorkItemStatusLiteral
     estimated_files: list[str]
@@ -828,6 +840,7 @@ class WorkItemCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: Optional[str] = None
     owner_user_id: Optional[str] = None
+    owner_type: OwnerTypeLiteral = "human"
     branch: Optional[str] = None
     estimated_files: list[str] = Field(default_factory=list)
     priority: PriorityLiteral = "medium"
@@ -839,6 +852,10 @@ class ClaimWorkItemRequest(BaseModel):
 
 class ReassignWorkItemRequest(BaseModel):
     user_id: str
+
+
+class UpdateWorkItemStatusRequest(BaseModel):
+    status: ManualWorkItemStatusLiteral
 
 
 class OverlapWarningOut(BaseModel):
@@ -886,6 +903,30 @@ class WorkItemCreatedOut(BaseModel):
     see them."""
     work_item: WorkItemOut
     overlap_warnings: list[OverlapWarningOut]
+
+
+class CommitOut(BaseModel):
+    hash: str
+    short_hash: str
+    subject: str
+    author: str
+    authored_at: Optional[str] = None
+
+
+class BranchInfoOut(BaseModel):
+    """Live git introspection (`collaboration/git_info.py`) -- nothing
+    here is stored, it's recomputed on every request from `git` itself,
+    so it can never go stale. `notes` explains any field left `None`
+    (detached HEAD, missing base branch, not a git repo, etc.) instead of
+    leaving a client to guess why."""
+    branch: Optional[str] = None
+    is_detached: bool = False
+    base_branch: Optional[str] = None
+    branch_age_days: Optional[float] = None
+    ahead: Optional[int] = None
+    behind: Optional[int] = None
+    last_commit: Optional[CommitOut] = None
+    notes: list[str] = Field(default_factory=list)
 
 
 class InfrastructureOut(BaseModel):
