@@ -28,6 +28,7 @@ import type {
   ModelTrainResponse,
   ModelType,
   OptimizerResultOut,
+  Organization,
   OverfitVerdict,
   PerformanceOut,
   PredictionResult,
@@ -44,6 +45,8 @@ import type {
   TradeAnalyticsSummary,
   TradeOut,
   TrialOut,
+  User,
+  UserRole,
 } from './types'
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
@@ -486,3 +489,42 @@ export interface AiBacktestComparisonRequest {
 
 export const submitAiBacktestComparison = (body: AiBacktestComparisonRequest) =>
   request<JobOut>('/api/jobs/ai-backtest-compare', { method: 'POST', body: JSON.stringify(body) })
+
+// --- Lightweight user/organization accounts (Team Collaboration MVP) ---
+
+export const createOrganization = (name: string) =>
+  request<Organization>('/api/organizations', { method: 'POST', body: JSON.stringify({ name }) })
+
+export const getOrganizations = () => request<Organization[]>('/api/organizations')
+
+export const getOrganization = (orgId: string) => request<Organization>(`/api/organizations/${orgId}`)
+
+export interface UserCreateRequest {
+  display_name: string
+  username: string
+  org_id: string
+  role: UserRole
+  email?: string
+  avatar_url?: string
+}
+
+export const createUser = (body: UserCreateRequest) =>
+  request<User>('/api/users', { method: 'POST', body: JSON.stringify(body) })
+
+export const getUsers = (orgId?: string) =>
+  request<User[]>(orgId ? `/api/users?org_id=${encodeURIComponent(orgId)}` : '/api/users')
+
+export const getUser = (userId: string) => request<User>(`/api/users/${userId}`)
+
+export interface UserUpdateRequest {
+  display_name?: string
+  email?: string
+  avatar_url?: string
+  role?: UserRole
+}
+
+export const updateUser = (userId: string, body: UserUpdateRequest) =>
+  request<User>(`/api/users/${userId}`, { method: 'PATCH', body: JSON.stringify(body) })
+
+export const sendUserHeartbeat = (userId: string) =>
+  request<User>(`/api/users/${userId}/heartbeat`, { method: 'POST' })

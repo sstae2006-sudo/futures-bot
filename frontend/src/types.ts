@@ -663,3 +663,27 @@ export interface ImportHistoryOut {
   error_message: string | null
   created_at: string
 }
+
+// --- Lightweight user/organization accounts (Team Collaboration MVP) ---
+// See src/futures_bot/accounts/store.py's docstring: a data model plus
+// basic CRUD, deliberately not an authentication system.
+
+export type UserRole = 'owner' | 'admin' | 'member' | 'viewer'
+
+export interface Organization {
+  id: string
+  name: string
+  created_at: string
+}
+
+export interface User {
+  id: string
+  display_name: string
+  username: string
+  email: string | null
+  avatar_url: string | null
+  org_id: string
+  role: UserRole
+  created_at: string
+  last_active_at: string | null
+}

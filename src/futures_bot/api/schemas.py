@@ -753,3 +753,54 @@ class ResearchServerStatusOut(BaseModel):
     data_scheduler: dict[str, Any]
     paper_trader: dict[str, Any]
     nightly_jobs: dict[str, Any]
+
+
+# --- Lightweight user/organization accounts (Team Collaboration MVP) ---
+# See accounts/store.py's module docstring: a data model plus basic CRUD,
+# deliberately not an authentication system.
+
+#: Fixed role vocabulary -- kept in sync with `accounts.ROLES` by hand
+#: (four short string literals, not worth importing across the api/
+#: boundary just to avoid repeating them).
+RoleLiteral = Literal["owner", "admin", "member", "viewer"]
+
+
+class OrganizationOut(BaseModel):
+    id: str
+    name: str
+    created_at: str
+
+
+class OrganizationCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class UserOut(BaseModel):
+    id: str
+    display_name: str
+    username: str
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+    org_id: str
+    role: RoleLiteral
+    created_at: str
+    last_active_at: Optional[str] = None
+
+
+class UserCreateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+    username: str = Field(min_length=1, max_length=100)
+    org_id: str
+    role: RoleLiteral
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class UserUpdateRequest(BaseModel):
+    """Every field optional -- a PATCH only touches what's actually
+    supplied (see `AccountStore.update_user`'s identical "None means
+    leave unchanged" contract)."""
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: Optional[RoleLiteral] = None

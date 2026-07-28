@@ -348,3 +348,31 @@ config_deployments = Table(
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Index("idx_config_deployments_strategy", "strategy", "created_at"),
 )
+
+# --- Lightweight user/organization accounts (Team Collaboration MVP) ---
+# See src/futures_bot/accounts/store.py's module docstring for the full
+# design rationale (not an auth system -- a data model plus basic CRUD).
+# Same two tables, same shape as accounts/store.py's SQLite _SCHEMA.
+
+organizations = Table(
+    "organizations",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("name", String, nullable=False, unique=True),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+)
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("display_name", String, nullable=False),
+    Column("username", String, nullable=False, unique=True),
+    Column("email", String),
+    Column("avatar_url", String),
+    Column("org_id", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    Column("last_active_at", _TSTZ),
+    Index("idx_users_org_id", "org_id"),
+)
