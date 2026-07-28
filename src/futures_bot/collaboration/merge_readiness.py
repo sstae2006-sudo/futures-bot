@@ -17,7 +17,6 @@ human-readable explanation, not a black-box model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .git_info import BranchInfo
 from .overlap_v2 import OverlapWarningV2

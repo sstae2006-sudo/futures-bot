@@ -12,7 +12,7 @@ from ..collaboration import git_info
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.overlap import detect_overlap
 from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readiness
-from ..collaboration.overlap_v2 import OverlapWarningV2, compute_all_conflicts, compute_overlap_v2
+from ..collaboration.overlap_v2 import compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
 from .schemas import (
