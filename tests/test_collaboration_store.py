@@ -68,6 +68,37 @@ class TestListAndFilterByStatus:
         assert [i["id"] for i in active] == ["w2"]
 
 
+class TestOrgScoping:
+    def test_org_id_defaults_to_none(self, store):
+        item = store.create_work_item(item_id="w1", title="Task")
+        assert item["org_id"] is None
+
+    def test_fetch_work_items_filters_by_org(self, store):
+        store.create_work_item(item_id="w1", title="Org A task", org_id="org-a")
+        store.create_work_item(item_id="w2", title="Org B task", org_id="org-b")
+        store.create_work_item(item_id="w3", title="Unscoped task")
+
+        assert [i["id"] for i in store.fetch_work_items(org_id="org-a")] == ["w1"]
+        assert {i["id"] for i in store.fetch_work_items()} == {"w1", "w2", "w3"}
+
+    def test_fetch_active_work_items_filters_by_org(self, store):
+        store.create_work_item(item_id="w1", title="Org A", org_id="org-a")
+        store.create_work_item(item_id="w2", title="Org B", org_id="org-b")
+
+        active = store.fetch_active_work_items(org_id="org-a")
+
+        assert [i["id"] for i in active] == ["w1"]
+
+    def test_org_id_and_status_filters_combine(self, store):
+        store.create_work_item(item_id="w1", title="Org A open", org_id="org-a")
+        store.create_work_item(item_id="w2", title="Org A claimed", org_id="org-a", owner_user_id="u1")
+        store.create_work_item(item_id="w3", title="Org B open", org_id="org-b")
+
+        result = store.fetch_work_items(status="open", org_id="org-a")
+
+        assert [i["id"] for i in result] == ["w1"]
+
+
 class TestClaimReleaseCompleteReassign:
     def test_claim_sets_owner_and_status(self, store):
         store.create_work_item(item_id="w1", title="Task")

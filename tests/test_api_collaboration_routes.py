@@ -89,6 +89,25 @@ class TestListAndGet:
 
         assert resp.status_code == 400
 
+    def test_list_filters_by_org_id(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Org A", "org_id": "org-a"})
+        client.post("/api/work-items", json={"title": "Org B", "org_id": "org-b"})
+
+        resp = client.get("/api/work-items", params={"org_id": "org-a"})
+
+        assert [i["title"] for i in resp.json()] == ["Org A"]
+
+    def test_org_scoped_overlap_does_not_leak_across_orgs(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Org A task", "estimated_files": ["shared.py"], "org_id": "org-a"})
+
+        resp = client.post("/api/work-items", json={
+            "title": "Org B task", "estimated_files": ["shared.py"], "org_id": "org-b",
+        })
+
+        assert resp.json()["overlap_warnings"] == []
+
 
 class TestClaimReleaseCompleteReassign:
     def test_full_lifecycle(self, tmp_path, monkeypatch):

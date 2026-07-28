@@ -57,31 +57,35 @@ def get_work_item_branch_info(item_id: str) -> BranchInfoOut:
 def create_work_item(
     *, title: str, description: Optional[str] = None, owner_user_id: Optional[str] = None,
     branch: Optional[str] = None, estimated_files: Optional[list[str]] = None, priority: str = "medium",
-    owner_type: str = "human",
+    owner_type: str = "human", org_id: Optional[str] = None,
 ) -> tuple[WorkItemOut, list[OverlapWarningOut]]:
     """Creates the work item, then checks it for file overlap against
     every other currently-active item -- "before any task begins,
     analyze... assign a risk level... do not block work, warn only" is
     exactly this call's contract: the item is created either way, the
-    warnings are informational."""
+    warnings are informational. Overlap is checked within `org_id`'s own
+    scope when supplied (see `fetch_active_work_items`'s docstring) --
+    two unrelated organizations sharing one instance shouldn't warn each
+    other about "conflicts" that are really just coincidence."""
     store = get_collaboration_store()
     try:
         item_id = uuid.uuid4().hex[:12]
         item = store.create_work_item(
             item_id=item_id, title=title, description=description, owner_user_id=owner_user_id,
             branch=branch, estimated_files=estimated_files, priority=priority, owner_type=owner_type,
+            org_id=org_id,
         )
     except CollaborationError as exc:
         raise ApiError(str(exc)) from exc
 
-    active = store.fetch_active_work_items(exclude_id=item_id)
+    active = store.fetch_active_work_items(exclude_id=item_id, org_id=org_id)
     warnings = detect_overlap(estimated_files or [], active)
     return WorkItemOut(**item), [OverlapWarningOut(**w.__dict__) for w in warnings]
 
 
-def list_work_items(status: Optional[str] = None) -> list[WorkItemOut]:
+def list_work_items(status: Optional[str] = None, org_id: Optional[str] = None) -> list[WorkItemOut]:
     store = get_collaboration_store()
-    return [WorkItemOut(**i) for i in store.fetch_work_items(status=status)]
+    return [WorkItemOut(**i) for i in store.fetch_work_items(status=status, org_id=org_id)]
 
 
 def get_work_item(item_id: str) -> WorkItemOut:
@@ -95,12 +99,16 @@ def get_work_item(item_id: str) -> WorkItemOut:
 def check_overlap(item_id: str) -> list[OverlapWarningOut]:
     """Recomputes overlap for an existing item against every other
     currently-active item -- lets a client re-check after other work
-    items have come and gone, not just at creation time."""
+    items have come and gone, not just at creation time. Scoped to the
+    item's own `org_id` (`None` for a legacy/unscoped item, which then
+    compares against every other unscoped item plus every org's -- see
+    `fetch_active_work_items`'s docstring for why `org_id=None` means
+    "no filter," not "only unscoped")."""
     store = get_collaboration_store()
     item = store.fetch_work_item(item_id)
     if item is None:
         raise ApiError(f"No such work item: {item_id!r}")
-    active = store.fetch_active_work_items(exclude_id=item_id)
+    active = store.fetch_active_work_items(exclude_id=item_id, org_id=item.get("org_id"))
     warnings = detect_overlap(item["estimated_files"], active)
     return [OverlapWarningOut(**w.__dict__) for w in warnings]
 
@@ -166,7 +174,7 @@ def get_timeline(
     return [TimelineEntryOut(**e.__dict__) for e in entries]
 
 
-def merge_summary(changed_files: list[str], work_item_id: Optional[str] = None) -> MergeSummaryOut:
+def merge_summary(changed_files: list[str], work_item_id: Optional[str] = None, org_id: Optional[str] = None) -> MergeSummaryOut:
     """"Before merging, generate a summary showing overlap with active
     work, potential conflicts, related tasks" -- reuses the exact same
     overlap detection a new work item gets checked against, applied to a
@@ -180,10 +188,11 @@ def merge_summary(changed_files: list[str], work_item_id: Optional[str] = None) 
         related = store.fetch_work_item(work_item_id)
         if related is not None:
             related_item = WorkItemOut(**related)
+            org_id = org_id or related.get("org_id")
         else:
             exclude_id = None  # nothing to exclude if the id doesn't exist
 
-    active = store.fetch_active_work_items(exclude_id=exclude_id)
+    active = store.fetch_active_work_items(exclude_id=exclude_id, org_id=org_id)
     warnings = [OverlapWarningOut(**w.__dict__) for w in detect_overlap(changed_files, active)]
     highest_risk = max((w.risk for w in warnings), key=lambda r: _RISK_SEVERITY[r], default="no_risk")
 
@@ -198,18 +207,20 @@ def check_overlap_v2(item_id: str) -> list[OverlapWarningV2Out]:
     item = store.fetch_work_item(item_id)
     if item is None:
         raise ApiError(f"No such work item: {item_id!r}")
-    active = store.fetch_active_work_items(exclude_id=item_id)
+    active = store.fetch_active_work_items(exclude_id=item_id, org_id=item.get("org_id"))
     warnings = compute_overlap_v2(
         item["estimated_files"], active, proposed_title=item.get("title"), proposed_description=item.get("description"),
     )
     return [OverlapWarningV2Out(**w.__dict__) for w in warnings]
 
 
-def list_conflicts() -> list[ConflictPairOut]:
+def list_conflicts(org_id: Optional[str] = None) -> list[ConflictPairOut]:
     """Every pairwise Overlap V2 conflict across the whole currently-active
-    set, in one call -- backs Mission Control's "Conflict Warnings" view."""
+    set, in one call -- backs Mission Control's "Conflict Warnings" view.
+    Scoped to `org_id` when supplied, same "None means no filter"
+    contract every other listing here follows."""
     store = get_collaboration_store()
-    active = store.fetch_active_work_items()
+    active = store.fetch_active_work_items(org_id=org_id)
     pairs = compute_all_conflicts(active)
     return [
         ConflictPairOut(
@@ -220,7 +231,10 @@ def list_conflicts() -> list[ConflictPairOut]:
     ]
 
 
-def pre_work_check(proposed_files: list[str], title: Optional[str] = None, description: Optional[str] = None) -> PreWorkCheckOut:
+def pre_work_check(
+    proposed_files: list[str], title: Optional[str] = None, description: Optional[str] = None,
+    org_id: Optional[str] = None,
+) -> PreWorkCheckOut:
     """"Before any AI task begins... inspect active work... if overlap
     exists, explain it, recommend coordination, suggest an alternate
     task" -- callable before a work item even exists, so an AI session
@@ -228,7 +242,7 @@ def pre_work_check(proposed_files: list[str], title: Optional[str] = None, descr
     creating one. Never blocks; `suggested_action` is advice, the caller
     decides."""
     store = get_collaboration_store()
-    active = store.fetch_active_work_items()
+    active = store.fetch_active_work_items(org_id=org_id)
     warnings = compute_overlap_v2(proposed_files, active, proposed_title=title, proposed_description=description)
     warning_outs = [OverlapWarningV2Out(**w.__dict__) for w in warnings]
 
@@ -267,7 +281,10 @@ def _readiness_factor_out(factor: ReadinessFactor) -> ReadinessFactorOut:
     return ReadinessFactorOut(name=factor.name, penalty=factor.penalty, explanation=factor.explanation)
 
 
-def merge_readiness(changed_files: list[str], branch: Optional[str] = None, work_item_id: Optional[str] = None) -> MergeReadinessOut:
+def merge_readiness(
+    changed_files: list[str], branch: Optional[str] = None, work_item_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+) -> MergeReadinessOut:
     """Everything `merge_summary` already computes, folded into one
     explainable 0-100 score alongside branch age/behind-count/change-size
     -- see `merge_readiness.py`'s module docstring for why test pass/fail
@@ -279,10 +296,11 @@ def merge_readiness(changed_files: list[str], branch: Optional[str] = None, work
         related = store.fetch_work_item(work_item_id)
         if related is not None:
             title, description = related.get("title"), related.get("description")
+            org_id = org_id or related.get("org_id")
         else:
             exclude_id = None
 
-    active = store.fetch_active_work_items(exclude_id=exclude_id)
+    active = store.fetch_active_work_items(exclude_id=exclude_id, org_id=org_id)
     warnings = compute_overlap_v2(changed_files, active, proposed_title=title, proposed_description=description)
     info = git_info.get_branch_info(branch=branch)
     readiness = compute_merge_readiness(changed_files, warnings, info)

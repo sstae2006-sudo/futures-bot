@@ -78,8 +78,15 @@ class CollaborationStore:
     #: established. Every existing row backfills to 'human' via the column
     #: default -- correct for every work item created before this existed,
     #: since Phase 1 had no AI/human distinction at all.
+    #: `org_id` added for Registration & Organization Management
+    #: (2026-07-28) -- nullable: a work item created before organizations
+    #: existed (or by a caller that never supplies one, e.g. the CLI used
+    #: without a session) is simply unscoped, visible regardless of which
+    #: org is asking. See `fetch_work_items`/`fetch_active_work_items`'s
+    #: `org_id` filter for how that's applied.
     _WORK_ITEM_COLLABORATION_COLUMNS = (
         ("owner_type", "TEXT NOT NULL DEFAULT 'human'"),
+        ("org_id", "TEXT"),
     )
 
     def __init__(self, path: Path | str | None = None) -> None:
@@ -116,7 +123,7 @@ class CollaborationStore:
         self, *, item_id: str, title: str, description: Optional[str] = None,
         owner_user_id: Optional[str] = None, branch: Optional[str] = None,
         estimated_files: Optional[list[str]] = None, priority: str = "medium",
-        owner_type: str = "human",
+        owner_type: str = "human", org_id: Optional[str] = None,
     ) -> dict:
         if priority not in PRIORITIES:
             raise CollaborationError(f"Unknown priority {priority!r} -- must be one of {PRIORITIES}.")
@@ -125,11 +132,11 @@ class CollaborationStore:
         status = "claimed" if owner_user_id else "open"
         self._conn.execute(
             """
-            INSERT INTO work_items (id, title, description, owner_user_id, branch, status, estimated_files, priority, owner_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO work_items (id, title, description, owner_user_id, branch, status, estimated_files, priority, owner_type, org_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (item_id, title, description, owner_user_id, branch, status,
-             json.dumps(estimated_files or []), priority, owner_type),
+             json.dumps(estimated_files or []), priority, owner_type, org_id),
         )
         self._log_activity(item_id, "created", owner_user_id, f"status={status}")
         self._conn.commit()
@@ -141,21 +148,28 @@ class CollaborationStore:
         self._conn.row_factory = None
         return _row_with_files(dict(row)) if row is not None else None
 
-    def fetch_work_items(self, *, status: Optional[str] = None) -> list[dict]:
+    def fetch_work_items(self, *, status: Optional[str] = None, org_id: Optional[str] = None) -> list[dict]:
+        """`org_id=None` means "every work item regardless of org" (the
+        pre-multi-org default, and what a session-less caller like the CLI
+        still gets) -- it does NOT mean "only unscoped items." Pass a real
+        `org_id` to scope the result to one organization's own work."""
         self._conn.row_factory = sqlite3.Row
+        clauses, params = [], []
         if status is not None:
-            rows = self._conn.execute(
-                "SELECT * FROM work_items WHERE status = ? ORDER BY created_at DESC", (status,),
-            ).fetchall()
-        else:
-            rows = self._conn.execute("SELECT * FROM work_items ORDER BY created_at DESC").fetchall()
+            clauses.append("status = ?")
+            params.append(status)
+        if org_id is not None:
+            clauses.append("org_id = ?")
+            params.append(org_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._conn.execute(f"SELECT * FROM work_items {where} ORDER BY created_at DESC", params).fetchall()
         self._conn.row_factory = None
         return [_row_with_files(dict(r)) for r in rows]
 
-    def fetch_active_work_items(self, *, exclude_id: Optional[str] = None) -> list[dict]:
+    def fetch_active_work_items(self, *, exclude_id: Optional[str] = None, org_id: Optional[str] = None) -> list[dict]:
         """Every work item not yet completed -- what overlap detection
         checks a proposed new task against."""
-        items = [i for i in self.fetch_work_items() if i["status"] != "completed"]
+        items = [i for i in self.fetch_work_items(org_id=org_id) if i["status"] != "completed"]
         if exclude_id is not None:
             items = [i for i in items if i["id"] != exclude_id]
         return items

@@ -55,7 +55,7 @@ class PgCollaborationStore:
         self, *, item_id: str, title: str, description: Optional[str] = None,
         owner_user_id: Optional[str] = None, branch: Optional[str] = None,
         estimated_files: Optional[list[str]] = None, priority: str = "medium",
-        owner_type: str = "human",
+        owner_type: str = "human", org_id: Optional[str] = None,
     ) -> dict:
         if priority not in PRIORITIES:
             raise CollaborationError(f"Unknown priority {priority!r} -- must be one of {PRIORITIES}.")
@@ -66,7 +66,7 @@ class PgCollaborationStore:
             conn.execute(work_items.insert().values(
                 id=item_id, title=title, description=description, owner_user_id=owner_user_id,
                 branch=branch, status=status, estimated_files=estimated_files or [], priority=priority,
-                owner_type=owner_type,
+                owner_type=owner_type, org_id=org_id,
             ))
             self._log_activity(conn, item_id, "created", owner_user_id, f"status={status}")
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
@@ -76,16 +76,18 @@ class PgCollaborationStore:
             row = conn.execute(select(work_items).where(work_items.c.id == item_id)).first()
         return _row_dict(row)
 
-    def fetch_work_items(self, *, status: Optional[str] = None) -> list[dict]:
+    def fetch_work_items(self, *, status: Optional[str] = None, org_id: Optional[str] = None) -> list[dict]:
         stmt = select(work_items).order_by(work_items.c.created_at.desc())
         if status is not None:
             stmt = stmt.where(work_items.c.status == status)
+        if org_id is not None:
+            stmt = stmt.where(work_items.c.org_id == org_id)
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).fetchall()
         return [_row_dict(r) for r in rows]
 
-    def fetch_active_work_items(self, *, exclude_id: Optional[str] = None) -> list[dict]:
-        items = [i for i in self.fetch_work_items() if i["status"] != "completed"]
+    def fetch_active_work_items(self, *, exclude_id: Optional[str] = None, org_id: Optional[str] = None) -> list[dict]:
+        items = [i for i in self.fetch_work_items(org_id=org_id) if i["status"] != "completed"]
         if exclude_id is not None:
             items = [i for i in items if i["id"] != exclude_id]
         return items

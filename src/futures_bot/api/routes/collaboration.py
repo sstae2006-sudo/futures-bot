@@ -26,14 +26,14 @@ def create_work_item(req: WorkItemCreateRequest) -> WorkItemCreatedOut:
     item, warnings = services.create_work_item(
         title=req.title, description=req.description, owner_user_id=req.owner_user_id,
         branch=req.branch, estimated_files=req.estimated_files, priority=req.priority,
-        owner_type=req.owner_type,
+        owner_type=req.owner_type, org_id=req.org_id,
     )
     return WorkItemCreatedOut(work_item=item, overlap_warnings=warnings)
 
 
 @router.get("/api/work-items", response_model=list[WorkItemOut])
-def list_work_items(status: Optional[str] = None) -> list[WorkItemOut]:
-    return services.list_work_items(status=status)
+def list_work_items(status: Optional[str] = None, org_id: Optional[str] = None) -> list[WorkItemOut]:
+    return services.list_work_items(status=status, org_id=org_id)
 
 
 @router.post("/api/work-items/pre-work-check", response_model=PreWorkCheckOut)
@@ -41,15 +41,15 @@ def pre_work_check(req: PreWorkCheckRequest) -> PreWorkCheckOut:
     """AI-awareness check, callable *before* a work item is created --
     "before any AI task begins, inspect active work... if overlap exists,
     explain it, recommend coordination, suggest an alternate task."""
-    return services.pre_work_check(req.proposed_files, title=req.title, description=req.description)
+    return services.pre_work_check(req.proposed_files, title=req.title, description=req.description, org_id=req.org_id)
 
 
 @router.get("/api/work-items/conflicts", response_model=list[ConflictPairOut])
-def list_conflicts() -> list[ConflictPairOut]:
+def list_conflicts(org_id: Optional[str] = None) -> list[ConflictPairOut]:
     """Every pairwise Overlap V2 conflict across the whole currently-active
     set -- registered ahead of `GET /api/work-items/{item_id}` so
     "conflicts" is never swallowed as a (nonexistent) work item id."""
-    return services.list_conflicts()
+    return services.list_conflicts(org_id=org_id)
 
 
 @router.get("/api/work-items/{item_id}", response_model=WorkItemOut)
@@ -103,7 +103,7 @@ def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[
 
 @router.post("/api/work-items/merge-summary", response_model=MergeSummaryOut)
 def merge_summary(req: MergeSummaryRequest) -> MergeSummaryOut:
-    return services.merge_summary(req.changed_files, req.work_item_id)
+    return services.merge_summary(req.changed_files, req.work_item_id, org_id=req.org_id)
 
 
 @router.post("/api/work-items/merge-readiness", response_model=MergeReadinessOut)
@@ -112,7 +112,7 @@ def merge_readiness(req: MergeReadinessRequest) -> MergeReadinessOut:
     behind-base count, and change size. `test_status` is always
     `"unknown"` (no CI integration exists yet -- see
     `collaboration/merge_readiness.py`'s module docstring)."""
-    return services.merge_readiness(req.changed_files, branch=req.branch, work_item_id=req.work_item_id)
+    return services.merge_readiness(req.changed_files, branch=req.branch, work_item_id=req.work_item_id, org_id=req.org_id)
 
 
 @router.get("/api/activity/timeline", response_model=list[TimelineEntryOut])

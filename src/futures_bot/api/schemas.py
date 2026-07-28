@@ -860,6 +860,7 @@ class WorkItemOut(BaseModel):
     status: WorkItemStatusLiteral
     estimated_files: list[str]
     priority: PriorityLiteral
+    org_id: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -872,6 +873,7 @@ class WorkItemCreateRequest(BaseModel):
     branch: Optional[str] = None
     estimated_files: list[str] = Field(default_factory=list)
     priority: PriorityLiteral = "medium"
+    org_id: Optional[str] = None
 
 
 class ClaimWorkItemRequest(BaseModel):
@@ -911,6 +913,7 @@ class MergeSummaryRequest(BaseModel):
     touched"."""
     changed_files: list[str] = Field(min_length=1)
     work_item_id: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 class MergeSummaryOut(BaseModel):
@@ -993,6 +996,7 @@ class PreWorkCheckRequest(BaseModel):
     proposed_files: list[str] = Field(default_factory=list)
     title: Optional[str] = None
     description: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 SuggestedActionLiteral = Literal["proceed", "coordinate", "choose_different_task"]
@@ -1018,6 +1022,7 @@ class MergeReadinessRequest(BaseModel):
     changed_files: list[str] = Field(min_length=1)
     branch: Optional[str] = None
     work_item_id: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 class MergeReadinessOut(BaseModel):
