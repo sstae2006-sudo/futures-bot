@@ -13,7 +13,7 @@ import uuid
 from typing import Optional
 
 from ..accounts.store import AccountError, get_account_store
-from .schemas import OrganizationOut, UserOut
+from .schemas import OrganizationOut, UserMeOut, UserOut
 from .services import ApiError
 
 
@@ -40,10 +40,22 @@ def get_organization(org_id: str) -> OrganizationOut:
     return OrganizationOut(**org)
 
 
+def update_organization(org_id: str, *, name: Optional[str] = None) -> OrganizationOut:
+    store = get_account_store()
+    try:
+        org = store.update_organization(org_id, name=name)
+    except AccountError as exc:
+        raise ApiError(str(exc)) from exc
+    return OrganizationOut(**org)
+
+
 def create_user(
     *, display_name: str, username: str, org_id: str, role: str,
     email: Optional[str] = None, avatar_url: Optional[str] = None,
-) -> UserOut:
+) -> UserMeOut:
+    """Returns `UserMeOut` (includes `api_key`) -- registration is the one
+    moment a freshly-generated key needs to reach the client so it can be
+    saved; every other read of this user goes through `UserOut`."""
     store = get_account_store()
     try:
         user_id = uuid.uuid4().hex[:12]
@@ -53,7 +65,7 @@ def create_user(
         )
     except AccountError as exc:
         raise ApiError(str(exc)) from exc
-    return UserOut(**user)
+    return UserMeOut(**user)
 
 
 def list_users(org_id: Optional[str] = None) -> list[UserOut]:
@@ -69,18 +81,41 @@ def get_user(user_id: str) -> UserOut:
     return UserOut(**user)
 
 
+def get_user_me(user_id: str) -> UserMeOut:
+    """The one other place (besides registration) a user's own `api_key`
+    is exposed -- the profile page fetches this, never `GET /api/users/{id}`."""
+    store = get_account_store()
+    user = store.fetch_user(user_id)
+    if user is None:
+        raise ApiError(f"No such user: {user_id!r}")
+    return UserMeOut(**user)
+
+
 def update_user(
     user_id: str, *, display_name: Optional[str] = None, email: Optional[str] = None,
-    avatar_url: Optional[str] = None, role: Optional[str] = None,
+    avatar_url: Optional[str] = None, role: Optional[str] = None, timezone: Optional[str] = None,
+    preferred_ai_model: Optional[str] = None, default_branch_prefix: Optional[str] = None,
+    notification_preferences: Optional[dict] = None,
 ) -> UserOut:
     store = get_account_store()
     try:
         user = store.update_user(
             user_id, display_name=display_name, email=email, avatar_url=avatar_url, role=role,
+            timezone=timezone, preferred_ai_model=preferred_ai_model,
+            default_branch_prefix=default_branch_prefix, notification_preferences=notification_preferences,
         )
     except AccountError as exc:
         raise ApiError(str(exc)) from exc
     return UserOut(**user)
+
+
+def regenerate_api_key(user_id: str) -> UserMeOut:
+    store = get_account_store()
+    try:
+        user = store.regenerate_api_key(user_id)
+    except AccountError as exc:
+        raise ApiError(str(exc)) from exc
+    return UserMeOut(**user)
 
 
 def touch_last_active(user_id: str) -> UserOut:

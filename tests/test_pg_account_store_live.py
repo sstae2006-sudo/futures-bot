@@ -132,3 +132,39 @@ class TestOrganizationsAndUsers:
 
         usernames = {u["username"] for u in s.fetch_users(org_id=org_a)}
         assert usernames == {f"alice-{org_a}"}
+
+    def test_api_key_generated_and_regeneratable(self, store):
+        s, _ = store
+        org_id = _org_id()
+        s.create_organization(org_id=org_id, name=f"Acme {org_id}")
+        user_id = _user_id()
+        user = s.create_user(
+            user_id=user_id, display_name="Seth", username=f"seth-{user_id}", org_id=org_id, role="owner",
+        )
+        assert user["api_key"].startswith("fbot_")
+
+        regenerated = s.regenerate_api_key(user_id)
+        assert regenerated["api_key"] != user["api_key"]
+
+    def test_profile_fields_round_trip(self, store):
+        s, _ = store
+        org_id = _org_id()
+        s.create_organization(org_id=org_id, name=f"Acme {org_id}")
+        user_id = _user_id()
+        s.create_user(user_id=user_id, display_name="Seth", username=f"seth-{user_id}", org_id=org_id, role="owner")
+
+        updated = s.update_user(
+            user_id, timezone="America/New_York", notification_preferences={"email": True},
+        )
+
+        assert updated["timezone"] == "America/New_York"
+        assert updated["notification_preferences"] == {"email": True}
+
+    def test_update_organization_renames(self, store):
+        s, _ = store
+        org_id = _org_id()
+        s.create_organization(org_id=org_id, name=f"Acme {org_id}")
+
+        updated = s.update_organization(org_id, name=f"Renamed {org_id}")
+
+        assert updated["name"] == f"Renamed {org_id}"

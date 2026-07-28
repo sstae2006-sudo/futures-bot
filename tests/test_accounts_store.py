@@ -38,6 +38,25 @@ class TestOrganizations:
         names = [o["name"] for o in store.fetch_organizations()]
         assert names == ["Alpha", "Zeta"]
 
+    def test_update_organization_renames(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        updated = store.update_organization("org1", name="Acme Research")
+        assert updated["name"] == "Acme Research"
+
+    def test_update_organization_rejects_duplicate_name(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        store.create_organization(org_id="org2", name="Widgets")
+        with pytest.raises(AccountError, match="already exists"):
+            store.update_organization("org2", name="Acme")
+
+    def test_update_organization_unknown_raises(self, store):
+        with pytest.raises(AccountError, match="No such organization"):
+            store.update_organization("does-not-exist", name="X")
+
+    def test_update_organization_with_no_name_is_a_no_op(self, store):
+        org = store.create_organization(org_id="org1", name="Acme")
+        assert store.update_organization("org1") == org
+
 
 class TestUsers:
     def test_create_requires_existing_organization(self, store):
@@ -115,6 +134,62 @@ class TestUsers:
     def test_touch_last_active_unknown_user_raises(self, store):
         with pytest.raises(AccountError, match="No such user"):
             store.touch_last_active("does-not-exist")
+
+
+class TestApiKey:
+    def test_generated_automatically_on_create(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        user = store.create_user(user_id="u1", display_name="Seth", username="seth", org_id="org1", role="owner")
+        assert user["api_key"]
+        assert user["api_key"].startswith("fbot_")
+
+    def test_each_user_gets_a_distinct_key(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        u1 = store.create_user(user_id="u1", display_name="A", username="a", org_id="org1", role="owner")
+        u2 = store.create_user(user_id="u2", display_name="B", username="b", org_id="org1", role="member")
+        assert u1["api_key"] != u2["api_key"]
+
+    def test_regenerate_replaces_the_key(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        original = store.create_user(user_id="u1", display_name="Seth", username="seth", org_id="org1", role="owner")
+        regenerated = store.regenerate_api_key("u1")
+        assert regenerated["api_key"] != original["api_key"]
+        assert regenerated["api_key"].startswith("fbot_")
+
+    def test_regenerate_unknown_user_raises(self, store):
+        with pytest.raises(AccountError, match="No such user"):
+            store.regenerate_api_key("does-not-exist")
+
+
+class TestProfileFields:
+    def test_default_to_none_or_empty(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        user = store.create_user(user_id="u1", display_name="Seth", username="seth", org_id="org1", role="owner")
+        assert user["timezone"] is None
+        assert user["preferred_ai_model"] is None
+        assert user["default_branch_prefix"] is None
+        assert user["notification_preferences"] == {}
+
+    def test_update_sets_profile_fields(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        store.create_user(user_id="u1", display_name="Seth", username="seth", org_id="org1", role="owner")
+
+        updated = store.update_user(
+            "u1", timezone="America/New_York", preferred_ai_model="claude-sonnet-5",
+            default_branch_prefix="seth/", notification_preferences={"email": True, "digest": "daily"},
+        )
+
+        assert updated["timezone"] == "America/New_York"
+        assert updated["preferred_ai_model"] == "claude-sonnet-5"
+        assert updated["default_branch_prefix"] == "seth/"
+        assert updated["notification_preferences"] == {"email": True, "digest": "daily"}
+
+    def test_update_notification_preferences_round_trips_through_fetch(self, store):
+        store.create_organization(org_id="org1", name="Acme")
+        store.create_user(user_id="u1", display_name="Seth", username="seth", org_id="org1", role="owner")
+        store.update_user("u1", notification_preferences={"email": False})
+
+        assert store.fetch_user("u1")["notification_preferences"] == {"email": False}
 
 
 class TestFactory:

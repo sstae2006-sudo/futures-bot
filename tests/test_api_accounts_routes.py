@@ -58,6 +58,31 @@ class TestOrganizations:
 
         assert resp.status_code == 422
 
+    def test_rename_via_patch(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        org = client.post("/api/organizations", json={"name": "Acme"}).json()
+
+        resp = client.patch(f"/api/organizations/{org['id']}", json={"name": "Acme Research"})
+
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Acme Research"
+
+    def test_rename_unknown_organization_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.patch("/api/organizations/does-not-exist", json={"name": "X"})
+
+        assert resp.status_code == 400
+
+    def test_rename_to_a_taken_name_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/organizations", json={"name": "Acme"})
+        widgets = client.post("/api/organizations", json={"name": "Widgets"}).json()
+
+        resp = client.patch(f"/api/organizations/{widgets['id']}", json={"name": "Acme"})
+
+        assert resp.status_code == 400
+
 
 class TestUsers:
     def _make_org(self, client) -> str:
@@ -76,10 +101,14 @@ class TestUsers:
         assert user["username"] == "seth"
         assert user["role"] == "owner"
         assert user["last_active_at"] is None
+        assert user["api_key"]  # registration is the one place the key is exposed
 
         resp = client.get(f"/api/users/{user['id']}")
         assert resp.status_code == 200
-        assert resp.json() == user
+        fetched = resp.json()
+        assert "api_key" not in fetched  # GET /api/users/{id} never leaks it
+        del user["api_key"]
+        assert fetched == user
 
     def test_invalid_role_is_422(self, tmp_path, monkeypatch):
         client = _client(tmp_path, monkeypatch)
@@ -167,3 +196,75 @@ class TestUsers:
         resp = client.post("/api/users/does-not-exist/heartbeat")
 
         assert resp.status_code == 400
+
+    def test_patch_updates_profile_fields(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        org_id = self._make_org(client)
+        user = client.post("/api/users", json={
+            "display_name": "Seth", "username": "seth", "org_id": org_id, "role": "member",
+        }).json()
+
+        resp = client.patch(f"/api/users/{user['id']}", json={
+            "timezone": "America/New_York", "preferred_ai_model": "claude-sonnet-5",
+            "default_branch_prefix": "seth/", "notification_preferences": {"email": True},
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["timezone"] == "America/New_York"
+        assert body["preferred_ai_model"] == "claude-sonnet-5"
+        assert body["default_branch_prefix"] == "seth/"
+        assert body["notification_preferences"] == {"email": True}
+
+
+class TestUserMeAndApiKey:
+    def _make_org(self, client) -> str:
+        return client.post("/api/organizations", json={"name": "Acme"}).json()["id"]
+
+    def test_me_includes_api_key(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        org_id = self._make_org(client)
+        user = client.post("/api/users", json={
+            "display_name": "Seth", "username": "seth", "org_id": org_id, "role": "owner",
+        }).json()
+
+        resp = client.get(f"/api/users/{user['id']}/me")
+
+        assert resp.status_code == 200
+        assert resp.json()["api_key"] == user["api_key"]
+
+    def test_me_unknown_user_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/users/does-not-exist/me")
+
+        assert resp.status_code == 400
+
+    def test_regenerate_api_key_changes_it(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        org_id = self._make_org(client)
+        user = client.post("/api/users", json={
+            "display_name": "Seth", "username": "seth", "org_id": org_id, "role": "owner",
+        }).json()
+
+        resp = client.post(f"/api/users/{user['id']}/regenerate-api-key")
+
+        assert resp.status_code == 200
+        assert resp.json()["api_key"] != user["api_key"]
+
+    def test_regenerate_api_key_unknown_user_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/users/does-not-exist/regenerate-api-key")
+
+        assert resp.status_code == 400
+
+    def test_list_users_never_includes_api_key(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        org_id = self._make_org(client)
+        client.post("/api/users", json={"display_name": "Seth", "username": "seth", "org_id": org_id, "role": "owner"})
+
+        resp = client.get("/api/users")
+
+        assert resp.status_code == 200
+        assert all("api_key" not in u for u in resp.json())

@@ -15,7 +15,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from . import ROLES
-from .store import AccountError
+from .store import AccountError, _generate_api_key
 from ..db.engine import get_engine
 from ..db.research_schema import metadata, organizations, users
 
@@ -68,6 +68,17 @@ class PgAccountStore:
             rows = conn.execute(select(organizations).order_by(organizations.c.name)).fetchall()
         return [_row_dict(r) for r in rows]
 
+    def update_organization(self, org_id: str, *, name: Optional[str] = None) -> dict:
+        if self.fetch_organization(org_id) is None:
+            raise AccountError(f"No such organization: {org_id!r}.")
+        if name is not None:
+            try:
+                with self._engine.begin() as conn:
+                    conn.execute(organizations.update().where(organizations.c.id == org_id).values(name=name))
+            except IntegrityError as exc:
+                raise AccountError(f"An organization named {name!r} already exists.") from exc
+        return self.fetch_organization(org_id)  # type: ignore[return-value]
+
     # --- Users ---
 
     def create_user(
@@ -83,6 +94,7 @@ class PgAccountStore:
                 conn.execute(users.insert().values(
                     id=user_id, display_name=display_name, username=username,
                     email=email, avatar_url=avatar_url, org_id=org_id, role=role,
+                    api_key=_generate_api_key(),
                 ))
         except IntegrityError as exc:
             raise AccountError(f"A user with username {username!r} already exists.") from exc
@@ -108,7 +120,9 @@ class PgAccountStore:
 
     def update_user(
         self, user_id: str, *, display_name: Optional[str] = None, email: Optional[str] = None,
-        avatar_url: Optional[str] = None, role: Optional[str] = None,
+        avatar_url: Optional[str] = None, role: Optional[str] = None, timezone: Optional[str] = None,
+        preferred_ai_model: Optional[str] = None, default_branch_prefix: Optional[str] = None,
+        notification_preferences: Optional[dict] = None,
     ) -> dict:
         if self.fetch_user(user_id) is None:
             raise AccountError(f"No such user: {user_id!r}.")
@@ -118,12 +132,22 @@ class PgAccountStore:
         values = {
             k: v for k, v in (
                 ("display_name", display_name), ("email", email),
-                ("avatar_url", avatar_url), ("role", role),
+                ("avatar_url", avatar_url), ("role", role), ("timezone", timezone),
+                ("preferred_ai_model", preferred_ai_model), ("default_branch_prefix", default_branch_prefix),
             ) if v is not None
         }
+        if notification_preferences is not None:
+            values["notification_preferences"] = notification_preferences
         if values:
             with self._engine.begin() as conn:
                 conn.execute(users.update().where(users.c.id == user_id).values(**values))
+        return self.fetch_user(user_id)  # type: ignore[return-value]
+
+    def regenerate_api_key(self, user_id: str) -> dict:
+        if self.fetch_user(user_id) is None:
+            raise AccountError(f"No such user: {user_id!r}.")
+        with self._engine.begin() as conn:
+            conn.execute(users.update().where(users.c.id == user_id).values(api_key=_generate_api_key()))
         return self.fetch_user(user_id)  # type: ignore[return-value]
 
     def touch_last_active(self, user_id: str) -> dict:

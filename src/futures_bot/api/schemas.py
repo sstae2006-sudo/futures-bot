@@ -775,7 +775,19 @@ class OrganizationCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class OrganizationUpdateRequest(BaseModel):
+    """Every field optional -- same "None means leave unchanged" contract
+    `UserUpdateRequest` already establishes. Today just a rename; the UI
+    gates this behind `accounts.permissions.can(role, "manage_organization")`
+    (advisory only -- see that module's docstring)."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+
+
 class UserOut(BaseModel):
+    """Never includes `api_key` -- this is what team-member listings use
+    (`GET /api/users`), and one member's key has no business appearing in
+    another member's view of the roster. See `UserMeOut` for the one place
+    a user's own key is exposed."""
     id: str
     display_name: str
     username: str
@@ -785,6 +797,18 @@ class UserOut(BaseModel):
     role: RoleLiteral
     created_at: str
     last_active_at: Optional[str] = None
+    timezone: Optional[str] = None
+    preferred_ai_model: Optional[str] = None
+    default_branch_prefix: Optional[str] = None
+    notification_preferences: dict = Field(default_factory=dict)
+
+
+class UserMeOut(UserOut):
+    """`GET /api/users/{id}/me` and `POST /api/users` (registration) both
+    return this instead of `UserOut` -- the one place a user's own
+    `api_key` is exposed (at signup, so there's something to save; on the
+    profile page, to display/copy it). Never used for a roster listing."""
+    api_key: Optional[str] = None
 
 
 class UserCreateRequest(BaseModel):
@@ -804,6 +828,10 @@ class UserUpdateRequest(BaseModel):
     email: Optional[str] = None
     avatar_url: Optional[str] = None
     role: Optional[RoleLiteral] = None
+    timezone: Optional[str] = None
+    preferred_ai_model: Optional[str] = None
+    default_branch_prefix: Optional[str] = None
+    notification_preferences: Optional[dict] = None
 
 
 PriorityLiteral = Literal["low", "medium", "high", "critical"]

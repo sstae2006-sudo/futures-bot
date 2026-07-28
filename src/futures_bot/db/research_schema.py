@@ -374,6 +374,14 @@ users = Table(
     Column("role", String, nullable=False),
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Column("last_active_at", _TSTZ),
+    # Profile fields added for the registration/profile feature (2026-07-28)
+    # -- see accounts/store.py's module docstring for why api_key isn't an
+    # enforced credential yet.
+    Column("api_key", String, unique=True),
+    Column("timezone", String),
+    Column("preferred_ai_model", String),
+    Column("default_branch_prefix", String),
+    Column("notification_preferences", JSONB),
     Index("idx_users_org_id", "org_id"),
 )
 
