@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
 import TeamPanel from '../components/mission-control/TeamPanel'
+import { SessionProvider } from '../session'
 import * as api from '../api'
 import type { Infrastructure, SystemHealth, User } from '../types'
 
@@ -12,7 +13,24 @@ vi.mock('../api', async () => {
     getInfrastructure: vi.fn(),
     getUsers: vi.fn(),
     getSystemHealth: vi.fn(),
+    getUserMe: vi.fn(),
+    getOrganization: vi.fn(),
   }
+})
+
+const SESSION_KEY = 'futures-bot:session:user-id'
+
+// TeamPanel reads useSession() (to scope the roster to the signed-in
+// user's organization) -- every render needs a SessionProvider ancestor.
+// No localStorage user id is set in these tests, so the session resolves
+// to "no current user, no organization" without any network call --
+// getUsers(undefined) is still exactly what the mock below expects.
+function renderTeamPanel() {
+  return render(<SessionProvider><TeamPanel /></SessionProvider>)
+}
+
+beforeEach(() => {
+  window.localStorage.clear()
 })
 
 function makeInfrastructure(overrides: Partial<Infrastructure> = {}): Infrastructure {
@@ -65,7 +83,7 @@ describe('TeamPanel', () => {
     vi.mocked(api.getUsers).mockResolvedValue([makeUser({ display_name: 'Seth', role: 'owner' })])
     vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth({ connected_users: 3 }))
 
-    render(<TeamPanel />)
+    renderTeamPanel()
 
     await waitFor(() => expect(screen.getByText('Seth')).toBeInTheDocument())
     expect(screen.getByText('owner')).toBeInTheDocument()
@@ -76,9 +94,26 @@ describe('TeamPanel', () => {
     vi.mocked(api.getUsers).mockResolvedValue([])
     vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
 
-    render(<TeamPanel />)
+    renderTeamPanel()
 
     await waitFor(() => expect(screen.getByText('No users registered yet.')).toBeInTheDocument())
+  })
+
+  it('scopes the roster to the signed-in user organization, not every user globally', async () => {
+    // Regression test (Stabilization Mode, 2026-07-28): TeamPanel used to
+    // call getUsers() with no org filter at all, showing every registered
+    // user across every organization once multi-org support existed --
+    // this was missed when session.tsx/org-scoping was added elsewhere.
+    window.localStorage.setItem(SESSION_KEY, 'alice')
+    const me = makeUser({ id: 'alice', display_name: 'Alice', org_id: 'org1' })
+    vi.mocked(api.getUserMe).mockResolvedValue({ ...me, api_key: 'fbot_x' })
+    vi.mocked(api.getOrganization).mockResolvedValue({ id: 'org1', name: 'Acme', created_at: '' })
+    vi.mocked(api.getUsers).mockResolvedValue([me])
+    vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
+
+    renderTeamPanel()
+
+    await waitFor(() => expect(api.getUsers).toHaveBeenCalledWith('org1'))
   })
 
   it('treats a SQLite-style timestamp (space separator, no timezone) as UTC, not local time', async () => {
@@ -98,7 +133,7 @@ describe('TeamPanel', () => {
     vi.mocked(api.getUsers).mockResolvedValue([makeUser({ last_active_at: sqliteStyle })])
     vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
 
-    render(<TeamPanel />)
+    renderTeamPanel()
 
     await waitFor(() => expect(screen.getByText('4h ago')).toBeInTheDocument())
   })

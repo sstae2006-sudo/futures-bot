@@ -104,4 +104,42 @@ describe('Register', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/required/i)
     expect(api.createUser).not.toHaveBeenCalled()
   })
+
+  it('retrying after a failed createUser reuses the already-created org instead of creating a duplicate', async () => {
+    // Regression test (Stabilization Mode, 2026-07-28): org creation
+    // succeeding followed by createUser failing (e.g. a taken username)
+    // used to leave the user stuck -- retrying re-ran createOrganization
+    // with the same name, which then failed with "already exists" since
+    // the org from the first attempt was still there with no owner.
+    const org: Organization = { id: 'org1', name: 'Acme', created_at: '2026-07-28T00:00:00+00:00' }
+    vi.mocked(api.createOrganization).mockResolvedValue(org)
+    const created: UserMe = {
+      id: 'u1', display_name: 'Seth', username: 'seth2', email: null, avatar_url: null,
+      org_id: 'org1', role: 'owner', created_at: '2026-07-28T00:00:00+00:00', last_active_at: null,
+      timezone: null, preferred_ai_model: null, default_branch_prefix: null, notification_preferences: {},
+      api_key: 'fbot_retry',
+    }
+    vi.mocked(api.createUser)
+      .mockRejectedValueOnce(new Error('A user with username "seth" already exists.'))
+      .mockResolvedValueOnce(created)
+
+    renderRegister()
+
+    fireEvent.change(screen.getByLabelText('Organization name'), { target: { value: 'Acme' } })
+    fireEvent.click(screen.getByText('Next'))
+    await waitFor(() => expect(screen.getByLabelText('Display Name')).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText('Display Name'), { target: { value: 'Seth' } })
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'seth' } })
+    fireEvent.click(screen.getByText('Create Account'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/already exists/)
+    expect(api.createOrganization).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'seth2' } })
+    fireEvent.click(screen.getByText('Create Account'))
+
+    await waitFor(() => expect(screen.getByText('fbot_retry')).toBeInTheDocument())
+    expect(api.createOrganization).toHaveBeenCalledTimes(1)
+    expect(api.createUser).toHaveBeenLastCalledWith(expect.objectContaining({ org_id: 'org1', username: 'seth2' }))
+  })
 })

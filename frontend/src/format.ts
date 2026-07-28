@@ -41,3 +41,22 @@ export function tone(value: string | null | undefined): 'good' | 'bad' | 'neutra
   if (n < 0) return 'bad'
   return 'neutral'
 }
+
+//: How far back a user's `last_active_at` heartbeat still counts as
+//: "online" -- deliberately short (there's no real presence/websocket
+//: system, just whatever a client's own heartbeat last reported; see
+//: `accounts/store.py`'s docstring). Explicitly does NOT reuse `dateTime`
+//: above -- that helper has a known bug (KNOWN_ISSUES.md ISSUE-021)
+//: parsing SQLite's timezone-less local-mode timestamps as local time
+//: instead of UTC; this normalizes the same way `TeamPanel.tsx`'s
+//: `timeAgo` already does, rather than inheriting that bug.
+const ONLINE_WINDOW_MS = 2 * 60 * 1000
+
+export function isOnline(lastActiveAt: string | null | undefined): boolean {
+  if (!lastActiveAt) return false
+  const hasTimezone = lastActiveAt.endsWith('Z') || /[+-]\d\d:\d\d$/.test(lastActiveAt)
+  const normalized = hasTimezone ? lastActiveAt.replace(' ', 'T') : `${lastActiveAt.replace(' ', 'T')}Z`
+  const then = new Date(normalized).getTime()
+  if (Number.isNaN(then)) return false
+  return Date.now() - then < ONLINE_WINDOW_MS
+}

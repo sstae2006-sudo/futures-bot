@@ -740,3 +740,109 @@ verified fixed — instead mark it Resolved with a date and commit.
   since a shared, widely-used formatter deserves its own focused fix +
   verification across each call site rather than a drive-by edit.
   Recommended fix: apply the same normalization `timeAgo` already uses.
+
+---
+
+### ISSUE-022 — `claim_work_item` had a check-then-set race letting two concurrent claims on the same item both "succeed" (RESOLVED)
+
+- **Severity:** High (silent data-integrity issue, not just an error path
+  gap -- both callers get a 200, only one is actually true, and neither
+  learns a conflict happened)
+- **Description:** Found 2026-07-28 (Stabilization Mode sweep, concurrency
+  review) by inspecting `collaboration/store.py`/`pg_store.py` for the
+  same check-then-set shape already found and fixed three times in
+  ISSUE-016. `claim_work_item` read the item, decided in Python whether
+  the claim was allowed (item open, or already owned by the same caller),
+  then ran an unconditional `UPDATE ... WHERE id = ?` with no re-check of
+  ownership at write time. Two concurrent callers (two humans, or two AI
+  sessions, racing to claim the same work item -- exactly the scenario
+  Mission Control's Collaboration Workspace exists to support) could both
+  pass the Python-level check before either committed; whichever `UPDATE`
+  committed last silently won. Confirmed as a *real*, reliably-reproducible
+  race, not theoretical: a new regression test
+  (`test_concurrent_claims_never_both_win`, two real threads each on their
+  own `CollaborationStore` connection, with an artificial delay between
+  the read and the write to widen the window) failed against the pre-fix
+  code (both threads reported success, one silently overwriting the
+  other) and was confirmed to fail by temporarily reverting the fix and
+  re-running it, then passed cleanly once restored.
+- **Files involved:** `src/futures_bot/collaboration/store.py`
+  (`CollaborationStore.claim_work_item`), `src/futures_bot/collaboration/pg_store.py`
+  (`PgCollaborationStore.claim_work_item`).
+- **Possible cause:** Written and tested against sequential double-claim
+  behavior only (`test_claiming_already_claimed_by_another_user_raises`),
+  which the original unconditional `UPDATE` already handled correctly --
+  a second caller reading *after* the first one's commit sees the new
+  `status`/`owner_user_id` and is rejected by the Python-level check
+  before ever reaching the `UPDATE`. True concurrency (both callers
+  reading *before* either commits) was never exercised.
+- **Current status:** **Resolved 2026-07-28.** The `UPDATE`'s own `WHERE`
+  clause now re-checks `owner_user_id IS NULL OR owner_user_id = ?`, and
+  the affected-row count (`cursor.rowcount` / SQLAlchemy `result.rowcount`)
+  determines whether the claim actually applied -- zero rows means someone
+  else won the race, and the loser now gets the same "already claimed"
+  `CollaborationError` a sequential double-claim already raised, instead
+  of a false success. Full `test_collaboration_store.py` (35 tests) and
+  `test_api_collaboration_routes.py` (43 tests) suites pass.
+
+---
+
+### ISSUE-023 — Every work-item action handler in `WorkItemTable.tsx` silently swallowed a failed API call (RESOLVED)
+
+- **Severity:** Medium (a real UX gap, not a crash -- a rejected
+  claim/release/complete/advance previously left the UI looking
+  unchanged with zero feedback, no error boundary exists anywhere in this
+  app to catch it)
+- **Description:** Found 2026-07-28 (Stabilization Mode sweep) while
+  fixing ISSUE-022, which made a previously-unreachable failure path
+  (losing a claim race) newly reachable in normal use. `handleClaim`/
+  `handleRelease`/`handleComplete`/`handleAdvance` each `await`ed their
+  API call directly inside an `onClick` handler with no `try`/`catch`;
+  a rejected promise became an unhandled rejection (logged to the
+  console, nothing shown to the user) and `onRefetch()` never ran, so the
+  displayed row didn't even refresh to show the item's real current
+  state.
+- **Files involved:** `frontend/src/components/mission-control/WorkItemTable.tsx`.
+- **Possible cause:** Every action was written and tested against its
+  success path only; no test exercised a rejected call, so the gap wasn't
+  visible until ISSUE-022 made rejection a realistic outcome of ordinary
+  concurrent use rather than only reachable via a stale/deleted item.
+- **Current status:** **Resolved 2026-07-28.** Every handler now runs
+  through a shared `runAction()` that catches `ApiRequestError`, displays
+  its message in an inline `role="alert"` banner, and always calls
+  `onRefetch()` in a `finally` block so the row reflects reality either
+  way. Regression test added (mocks a rejected `updateWorkItemStatus`
+  call, asserts the alert renders with the server's message).
+
+---
+
+### ISSUE-024 — `Register.tsx` retrying after a failed account creation re-created a duplicate, now-orphaned organization (RESOLVED)
+
+- **Severity:** Medium (a real dead-end in the registration flow, not a
+  crash -- reachable any time `createUser` fails after `createOrganization`
+  already succeeded, e.g. a taken username)
+- **Description:** Found 2026-07-28 (Stabilization Mode sweep, edge-case
+  review of the newly-added registration flow). `handleAccountSubmit`
+  always called `createOrganization` when `orgMode === 'create'`, with no
+  memory of a previous attempt. If that call succeeded but the following
+  `createUser` call then failed (most plausibly: the chosen username was
+  already taken), the organization the user picked already existed in the
+  database with no owner. Retrying the exact same form re-ran
+  `createOrganization` with the same name, which now failed with
+  "already exists" (the org name is unique) -- a dead end with no way
+  forward from that screen, and a stray ownerless organization left
+  behind from the first attempt.
+- **Files involved:** `frontend/src/pages/Register.tsx`.
+- **Possible cause:** The two-call sequence (create org, then create
+  user) was written and tested against its success path and against
+  `createUser` failing on the *first* attempt only; a *second* attempt
+  after a partial first success wasn't exercised.
+- **Current status:** **Resolved 2026-07-28.** The created organization's
+  id is now cached in component state once that call succeeds, and a
+  retry reuses it instead of calling `createOrganization` again;
+  changing the organization name field (a genuine change of intent, not
+  a retry) clears the cached id so a different name still creates a new
+  org. Regression test added (`createUser` rejects once then succeeds,
+  asserts `createOrganization` was called exactly once across both
+  attempts) -- confirmed failing against the pre-fix code by temporarily
+  reverting the fix and re-running it.

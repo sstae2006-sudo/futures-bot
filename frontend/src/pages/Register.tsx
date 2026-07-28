@@ -35,6 +35,14 @@ export default function Register() {
   const [error, setError] = useState<string | null>(null)
   const [createdUser, setCreatedUser] = useState<UserMe | null>(null)
   const [copied, setCopied] = useState(false)
+  // If org creation succeeds but the subsequent createUser call fails
+  // (e.g. the chosen username is already taken), retrying the form used
+  // to call createOrganization again with the same name and fail with
+  // "already exists," leaving the user stuck -- the org now exists with
+  // no owner, and there was no way to get past this screen. Caching the
+  // id here means a retry reuses the org it already created instead of
+  // trying to create it again.
+  const [createdOrgId, setCreatedOrgId] = useState<string | null>(null)
 
   if (currentUser) {
     return <Navigate to="/" replace />
@@ -63,10 +71,11 @@ export default function Register() {
     }
     setBusy(true)
     try {
-      let orgId = selectedOrgId
-      if (orgMode === 'create') {
+      let orgId = orgMode === 'create' ? createdOrgId ?? selectedOrgId : selectedOrgId
+      if (orgMode === 'create' && !createdOrgId) {
         const org = await createOrganization(newOrgName.trim())
         orgId = org.id
+        setCreatedOrgId(org.id)
       }
       const user = await createUser({
         display_name: displayName.trim(),
@@ -122,7 +131,7 @@ export default function Register() {
                 <input
                   placeholder="Organization name"
                   value={newOrgName}
-                  onChange={(e) => setNewOrgName(e.target.value)}
+                  onChange={(e) => { setNewOrgName(e.target.value); setCreatedOrgId(null) }}
                   aria-label="Organization name"
                   style={{ width: '100%', marginLeft: 24, marginBottom: 8 }}
                 />

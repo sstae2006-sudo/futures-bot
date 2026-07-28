@@ -1,15 +1,18 @@
-import { useCallback, useEffect } from 'react'
+import { useEffect } from 'react'
 import { getSystemHealth, getUsers } from '../../api'
 import { useApi } from '../../useApi'
+import { useSession } from '../../session'
+import { isOnline } from '../../format'
 import { Badge } from '../UI'
 import type { UserRole } from '../../types'
 
-// Real registered users (Team Collaboration MVP -- accounts/store.py) plus
-// the connected-users estimate /api/system/health already tracks. No
-// "current session per user" concept yet (that needs real auth/session
-// middleware, deliberately not built here -- see accounts/store.py's
-// module docstring) -- this shows who *exists*, not who's live right now,
-// alongside the one honest "how many distinct clients recently" number.
+// Real registered users (accounts/store.py) scoped to the signed-in
+// user's own organization (session.tsx -- Registration & Organization
+// Management, 2026-07-28), plus the connected-users estimate
+// /api/system/health already tracks. Online status is derived from
+// last_active_at (the heartbeat an active client session sends), not a
+// real presence/websocket system -- see accounts/store.py's docstring
+// for why nothing more precise exists without real auth.
 const ROLE_TONE: Record<UserRole, 'good' | 'warn' | 'neutral'> = {
   owner: 'good',
   admin: 'good',
@@ -40,8 +43,9 @@ function timeAgo(iso: string | null): string {
 }
 
 export default function TeamPanel() {
-  const fetchUsers = useCallback(() => getUsers(), [])
-  const { data: users, refetch: refetchUsers } = useApi(fetchUsers, [])
+  const { organization } = useSession()
+  const orgId = organization?.id
+  const { data: users, refetch: refetchUsers } = useApi(() => getUsers(orgId), [orgId])
   const { data: health, refetch: refetchHealth } = useApi(getSystemHealth, [])
 
   useEffect(() => {
@@ -68,7 +72,12 @@ export default function TeamPanel() {
           <tbody>
             {users.map((user) => (
               <tr key={user.id}>
-                <td style={{ padding: '4px 0' }}>{user.display_name}</td>
+                <td style={{ padding: '4px 0' }}>
+                  <Badge tone={isOnline(user.last_active_at) ? 'good' : 'neutral'}>
+                    {isOnline(user.last_active_at) ? 'online' : 'offline'}
+                  </Badge>{' '}
+                  {user.display_name}
+                </td>
                 <td style={{ padding: '4px 0' }}>
                   <Badge tone={ROLE_TONE[user.role]}>{user.role}</Badge>
                 </td>

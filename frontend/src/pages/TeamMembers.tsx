@@ -2,6 +2,7 @@ import { getUsers, updateUser } from '../api'
 import { useApi } from '../useApi'
 import { useSession } from '../session'
 import { Badge } from '../components/UI'
+import { isOnline } from '../format'
 import type { User, UserRole } from '../types'
 
 const ROLE_TONE: Record<UserRole, 'good' | 'warn' | 'neutral'> = {
@@ -9,21 +10,6 @@ const ROLE_TONE: Record<UserRole, 'good' | 'warn' | 'neutral'> = {
   admin: 'good',
   member: 'neutral',
   viewer: 'neutral',
-}
-
-//: A user "seen" this recently is shown online -- derived from
-//: `last_active_at` (the heartbeat every active client session sends),
-//: not a real presence/websocket system. See `accounts/store.py`'s
-//: docstring for why nothing more precise exists without real auth.
-const ONLINE_WINDOW_MS = 2 * 60 * 1000
-
-function isOnline(lastActiveAt: string | null): boolean {
-  if (!lastActiveAt) return false
-  const hasTimezone = lastActiveAt.endsWith('Z') || /[+-]\d\d:\d\d$/.test(lastActiveAt)
-  const normalized = hasTimezone ? lastActiveAt.replace(' ', 'T') : `${lastActiveAt.replace(' ', 'T')}Z`
-  const then = new Date(normalized).getTime()
-  if (Number.isNaN(then)) return false
-  return Date.now() - then < ONLINE_WINDOW_MS
 }
 
 // Team Members -- the fuller roster view TeamPanel's Mission Control
