@@ -20,6 +20,11 @@ dependencies = [
     # without one too -- without this package, every import of the package
     # (and every session-boundary calculation) raises ZoneInfoNotFoundError.
     "tzdata>=2024.1",
+    # Mission Control's infrastructure panel (CPU/memory/disk) -- the
+    # standard library has no cross-platform way to read these; psutil is
+    # the standard, lightweight (no heavy transitive deps) choice, same
+    # bar the other base deps above already clear.
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]

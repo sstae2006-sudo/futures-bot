@@ -42,10 +42,10 @@ from .schemas import (
     AiBacktestComparisonRequest, BacktestRunRequest, ClientProfileCreateRequest, ClientProfileOut,
     CompareEntryOut, CompareRequest, CompareResult, CorrelationRowOut, DatasetHealthOut, DatasetInfo,
     DeploymentOut, DeploymentStatusOut, EquityPoint, DrawdownPoint, ExperimentCreateRequest, ExperimentOut,
-    FeatureDistributionOut, ImportHistoryOut, ImportUploadResponse, InsightOut, MlModelOut, ModelTrainRequest,
-    OptimizerResultOut, OptimizerRunRequest, OverfitVerdict, PerformanceOut, PredictRequest, PredictionOut,
-    RegimeBucket, RegimePerformanceOut, ReportOut, RunDetail, RunSummary, StrategyInfo, StrategyParamOut,
-    SystemOverview, TradeAnalyticsSummary, TradeOut, TrialOut,
+    FeatureDistributionOut, ImportHistoryOut, ImportUploadResponse, InfrastructureOut, InsightOut, MlModelOut,
+    ModelTrainRequest, OptimizerResultOut, OptimizerRunRequest, OverfitVerdict, PerformanceOut, PredictRequest,
+    PredictionOut, RegimeBucket, RegimePerformanceOut, ReportOut, RunDetail, RunSummary, StrategyInfo,
+    StrategyParamOut, SystemOverview, TradeAnalyticsSummary, TradeOut, TrialOut,
 )
 from .market_data_store import get_market_data_store
 from .store import get_store
@@ -1711,6 +1711,41 @@ def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
         last_report_generated=last_report,
         database_path=store.location,
         database_status=db_status,
+    )
+
+
+# --- Infrastructure (Mission Control) ---
+
+def infrastructure_status() -> InfrastructureOut:
+    """Real process/host metrics for Mission Control's infrastructure
+    panel -- `psutil` for CPU/memory/disk, the `jobs` table's own status
+    counts for queue depth (not a second, parallel queue-tracking
+    mechanism). `psutil.cpu_percent(interval=None)` is deliberately
+    non-blocking: it reports usage since the *last* call in this process,
+    not a fresh blocking measurement -- correct for a periodically-polled
+    endpoint (meaningful once Mission Control's own poll interval is
+    running), unlike `interval=0.1`, which would add real per-request
+    latency for every caller, not just the first."""
+    import psutil
+
+    cpu_percent = psutil.cpu_percent(interval=None)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage(str(Path.cwd()))
+
+    store = get_store()
+    jobs_queued = len(store.fetch_jobs(status="queued", limit=10_000))
+    jobs_running = len(store.fetch_jobs(status="running", limit=10_000))
+
+    return InfrastructureOut(
+        cpu_percent=cpu_percent,
+        memory_used_mb=memory.used / (1024 * 1024),
+        memory_total_mb=memory.total / (1024 * 1024),
+        memory_percent=memory.percent,
+        disk_used_gb=disk.used / (1024 ** 3),
+        disk_total_gb=disk.total / (1024 ** 3),
+        disk_percent=disk.percent,
+        jobs_queued=jobs_queued,
+        jobs_running=jobs_running,
     )
 
 

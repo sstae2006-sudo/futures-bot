@@ -2,8 +2,10 @@ import { Link } from 'react-router-dom'
 import AlertCenter from '../components/mission-control/AlertCenter'
 import ActivityFeed from '../components/mission-control/ActivityFeed'
 import HealthGrid from '../components/mission-control/HealthGrid'
+import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
 import QuickActions from '../components/mission-control/QuickActions'
 import RoadmapPanel from '../components/mission-control/RoadmapPanel'
+import TeamPanel from '../components/mission-control/TeamPanel'
 import { DatabaseSummaryCard, MarketContextSummaryCard, PerformanceCard, ResearchSummaryCard } from '../components/mission-control/SummaryCards'
 
 // Mission Control is the platform's "operating system home screen" --
@@ -33,6 +35,10 @@ export default function MissionControl() {
         <div className="mc-column">
           <AlertCenter />
           <ActivityFeed />
+        </div>
+        <div className="mc-column">
+          <InfrastructurePanel />
+          <TeamPanel />
         </div>
         <div className="mc-column">
           <QuickActions />

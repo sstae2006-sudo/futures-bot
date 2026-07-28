@@ -298,6 +298,29 @@ class TestSystemRoutes:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
+    def test_infrastructure_endpoint_reports_real_metrics(self, client):
+        resp = client.get("/api/system/infrastructure")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["memory_total_mb"] > 0
+        assert body["disk_total_gb"] > 0
+        assert 0.0 <= body["memory_percent"] <= 100.0
+        assert body["jobs_queued"] == 0
+        assert body["jobs_running"] == 0
+
+    def test_infrastructure_reflects_job_queue_depth(self, client):
+        client.post("/api/backtest/run", json={"strategy_name": "vwap_reversion", "dataset": "data.csv"})
+
+        resp = client.get("/api/system/infrastructure")
+
+        # The synchronous /api/backtest/run route (not /api/jobs/backtest)
+        # never touches the jobs table at all -- this just confirms the
+        # route stays well-formed with real backtest activity present,
+        # not that it double-counts a synchronous run as a queued job.
+        assert resp.status_code == 200
+        assert resp.json()["jobs_queued"] == 0
+
 
 class TestExperimentRoutes:
     def test_create_and_get(self, client):

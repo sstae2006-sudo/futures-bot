@@ -687,3 +687,15 @@ export interface User {
   created_at: string
   last_active_at: string | null
 }
+
+export interface Infrastructure {
+  cpu_percent: number
+  memory_used_mb: number
+  memory_total_mb: number
+  memory_percent: number
+  disk_used_gb: number
+  disk_total_gb: number
+  disk_percent: number
+  jobs_queued: number
+  jobs_running: number
+}

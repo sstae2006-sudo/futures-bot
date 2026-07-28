@@ -12,7 +12,7 @@ from ... import __version__
 from ...config import load_settings
 from .. import services
 from ..connected_users import TRACKER
-from ..schemas import DatabaseHealthOut, InsightOut, LogEntry, SystemHealthOut, SystemOverview
+from ..schemas import DatabaseHealthOut, InfrastructureOut, InsightOut, LogEntry, SystemHealthOut, SystemOverview
 
 router = APIRouter(tags=["system"])
 
@@ -99,6 +99,11 @@ def get_health() -> SystemHealthOut:
 @router.get("/api/system/overview", response_model=SystemOverview)
 def get_overview() -> SystemOverview:
     return services.system_overview()
+
+
+@router.get("/api/system/infrastructure", response_model=InfrastructureOut)
+def get_infrastructure() -> InfrastructureOut:
+    return services.infrastructure_status()
 
 
 @router.get("/api/insights", response_model=list[InsightOut])

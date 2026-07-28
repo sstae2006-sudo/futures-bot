@@ -18,6 +18,7 @@ import type {
   GapOut,
   ImportHistoryOut,
   ImportUploadResponse,
+  Infrastructure,
   InsightOut,
   JobOut,
   LiveSessionStatus,
@@ -85,6 +86,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // --- System ---
 export const getSystemOverview = () => request<SystemOverview>('/api/system/overview')
 export const getSystemHealth = () => request<SystemHealth>('/api/system/health')
+export const getInfrastructure = () => request<Infrastructure>('/api/system/infrastructure')
 export const getLogs = (params: { limit?: number; kind?: string } = {}) => {
   const qs = new URLSearchParams()
   if (params.limit) qs.set('limit', String(params.limit))

@@ -804,3 +804,22 @@ class UserUpdateRequest(BaseModel):
     email: Optional[str] = None
     avatar_url: Optional[str] = None
     role: Optional[RoleLiteral] = None
+
+
+class InfrastructureOut(BaseModel):
+    """Mission Control's infrastructure panel -- real process/host metrics
+    via `psutil`, plus the background job queue's actual depth (the
+    `jobs` table `TradeStore`/`PgTradeStore` already track, not a second
+    queue implementation). `cpu_percent` is measured non-blocking
+    (`psutil.cpu_percent(interval=None)`), so it reads "since the last
+    call in this process" -- meaningful once Mission Control's own poll
+    interval is running, `0.0` only on the very first call after startup."""
+    cpu_percent: float
+    memory_used_mb: float
+    memory_total_mb: float
+    memory_percent: float
+    disk_used_gb: float
+    disk_total_gb: float
+    disk_percent: float
+    jobs_queued: int
+    jobs_running: int
