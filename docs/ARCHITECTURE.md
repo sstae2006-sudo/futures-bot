@@ -587,6 +587,88 @@ behalf), and whether `MarketContext`/`EnvironmentScore` snapshots get
 persisted to a database for research (a schema change, needs its own
 explicit approval per `CLAUDE.md` section 8).
 
+## Team Collaboration Platform (Active Work Registry, MVP 2026-07-28 + SIL Phase 2 "Workflow Integration" 2026-07-28)
+
+A layer alongside (not inside) the trading pipeline above -- it coordinates
+*people and AI sessions working on this codebase*, not market data or
+trades. Lives in `accounts/` (users/organizations/roles, no auth yet) and
+`collaboration/` (everything below), surfaced through `api/routes/
+accounts.py`/`collaboration.py` and Mission Control's `CollaborationWorkspace`
+panel.
+
+```
+collaboration/store.py, pg_store.py   work_items / work_item_activity tables.
+  |                                   Lifecycle: planned -> claimed ->
+  |                                   in_progress -> testing ->
+  |                                   ready_for_review -> merged -> completed
+  |                                   (advisory, not enforced -- a review can
+  |                                   send work backward). owner_type
+  |                                   (human/ai) distinguishes an AI
+  |                                   session's own claimed work.
+  v
+collaboration/overlap.py (V1)         Exact file-path overlap between a
+collaboration/overlap_v2.py (V2)      proposed task and every other active
+                                       item. V1: file paths only, four risk
+                                       buckets. V2 (additive, V1 untouched):
+                                       also compares Python/TS imports, API
+                                       route paths, DB table names, frontend
+                                       component names, config files, and
+                                       title/description keywords -- one
+                                       explainable 0-100 confidence score
+                                       with a factor breakdown, never a
+                                       black-box number. Both are warn-only:
+                                       neither ever blocks a claim, a task,
+                                       or a merge.
+  v
+collaboration/git_info.py             Live, read-only git introspection
+                                       (current branch, ahead/behind vs a
+                                       base branch, last commit) via `git`
+                                       subprocess calls. Nothing persisted --
+                                       recomputed on every request, so it
+                                       can't go stale. Best-effort: a
+                                       detached HEAD or missing base branch
+                                       degrades to `None`/explanatory notes,
+                                       never an exception.
+  v
+collaboration/merge_readiness.py      One explainable 0-100 score from
+                                       Overlap V2's risk, branch age,
+                                       behind-base count, and change size.
+                                       test_status is always the literal
+                                       "unknown" -- no CI integration exists
+                                       to read a real pass/fail from, and
+                                       guessing would be worse than admitting
+                                       that gap.
+  v
+collaboration/timeline.py             Merges work_item_activity with real
+                                       git commits into one searchable,
+                                       filterable feed -- Mission Control's
+                                       "Recent Activity" / project timeline.
+```
+
+**Why warn-only, everywhere.** Every check in this layer (V1/V2 overlap,
+merge readiness, the pre-work-check) produces information, never a lock or
+a block. A small team (or a small team plus AI sessions) needs coordination
+signals, not a gate that can wrongly stop real work -- see `overlap.py`'s
+own docstring for the original rationale, which every later addition here
+deliberately preserved rather than "upgraded" into something stricter.
+
+**Why `test_status` is always `"unknown"`.** Reading a real pass/fail would
+need actual CI integration (a workflow-run API, or executing the suite and
+blocking on it) -- a separate, larger effort. Reporting a guess dressed up
+as a real status would be worse than admitting the gap; see
+`merge_readiness.py`'s own docstring.
+
+**What's still out of scope**, in increasing order of effort: real
+authentication for `accounts/`/`collaboration/` (every route today is
+reachable by anyone who can reach the port); a true architecture/dependency
+graph (Overlap V2's import/route/table signals are real but shallow --
+still not a graph that understands *indirect* impact); AI-assisted semantic
+merge conflict resolution; a persistent AI-worker execution layer (this
+package tracks and coordinates work, it does not run it -- an "AI worker"
+today is a Claude Code session following CLAUDE.md section 6's step 7, not
+a daemon claiming work on its own); a distributed worker network. See
+ROADMAP.md's "Future" section for the fuller list.
+
 ## Why strategies cannot execute trades directly
 
 `Strategy.on_bar` returns a `Signal` — a decision, not an order. The engine

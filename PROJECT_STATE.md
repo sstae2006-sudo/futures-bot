@@ -25,14 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1279 tests as of 2026-07-27** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1250 passed, 29 skipped, 0 failed). The 29
+- Test suite: **1480 tests as of 2026-07-28** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1433 passed, 47 skipped, 0 failed). The 47
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
-  `test_pg_trade_store_live.py`, `test_db_health.py`'s live cases,
+  `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
+  `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1279 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1480 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -146,6 +147,15 @@ version is bumped by hand.
   SQLite + Postgres, Alembic-migrated, wired into two new real (not mock)
   Mission Control panels. Deliberately not an authentication system yet.
   See "Last Completed Work" below.
+- **SIL Phase 2 "Workflow Integration" (2026-07-28).** Built on the MVP
+  above: the full work-item lifecycle + `owner_type`, Overlap Engine V2
+  (imports/routes/DB tables/components/config/keywords, one explainable
+  confidence score), live git branch info, a merge-readiness dashboard
+  (`test_status` always `"unknown"` — no CI integration exists),
+  a searchable activity timeline (work-item events + real git commits),
+  `tools/work_item_cli.py`, and Mission Control's 7-tab
+  `CollaborationWorkspace`. See "Last Completed Work" below and
+  `docs/ARCHITECTURE.md`'s "Team Collaboration Platform" section.
 
 ## Broken / Incomplete Features
 
@@ -159,6 +169,67 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-28: **SIL Phase 2 "Workflow Integration" — the Collaboration
+Platform becomes the actual workflow, not just infrastructure.** Built
+directly on the MVP below with no redesign. Full detail in `CHANGELOG.md`'s
+matching dated entry (appears above the MVP entry below); this is the
+summary.
+
+- **Full work-item lifecycle**: `STATUSES` grows from
+  open/claimed/completed to a full pipeline
+  (`planned→claimed→in_progress→testing→ready_for_review→merged→completed`,
+  advisory not enforced — a review can send work backward) via a new
+  `update_status()`/`POST /api/work-items/{id}/status`. `owner_type`
+  (human/ai) added to `work_items` (Alembic-migrated on Postgres, `ALTER
+  TABLE` on SQLite, defaults to `human` for every pre-existing row).
+- **Overlap Engine V2** (`collaboration/overlap_v2.py`): shared Python/TS
+  imports, API route paths, DB table names, frontend component names,
+  config files, and title/description keywords — one explainable 0-100
+  confidence score with a factor breakdown, additive alongside the
+  original file-path-only V1 (untouched, still what `create_work_item`/
+  `check_overlap`/`merge_summary` use). New `GET /api/work-items/{id}/
+  overlap-v2`, `GET /api/work-items/conflicts` (bulk pairwise scan),
+  `POST /api/work-items/pre-work-check` (the "AI awareness" contract —
+  callable before a work item even exists).
+- **Live git branch info** (`collaboration/git_info.py`): branch age,
+  ahead/behind vs a base branch, last commit — via `git` subprocess
+  calls, nothing persisted, best-effort (detached HEAD/no upstream/not a
+  repo degrade to notes, never an exception). `GET /api/git/branch-info`,
+  `GET /api/work-items/{id}/branch-info`.
+- **Merge readiness dashboard** (`collaboration/merge_readiness.py`): one
+  explainable 0-100 score from Overlap V2 risk, branch age, behind-base
+  count, and change size. `test_status` is always the literal `"unknown"`
+  — no CI integration exists, and guessing would be worse than admitting
+  that gap. `POST /api/work-items/merge-readiness`.
+- **Searchable activity timeline** (`collaboration/timeline.py`): merges
+  `work_item_activity` with real git commits into one filterable feed
+  (event_type/query/since/until). `GET /api/activity/timeline`. While
+  building it, found and fixed a real bug: SQLite's `datetime('now')` is
+  only second-resolution, so rapid same-second events (realistic for an
+  automated/AI-driven claim-then-complete) tied and sorted unpredictably
+  — fixed with a `rowid` tiebreaker, regression test added.
+- **`tools/work_item_cli.py`**: create/list/claim/release/complete/
+  status/check subcommands, no API server needed. CLAUDE.md's session
+  protocol gained a new step requiring non-trivial work to run `check`
+  and register a work item first — turns the "AI awareness" requirement
+  into something sessions actually do, not just a documented ask.
+- **Mission Control's `CollaborationWorkspace`**: 7 tabs (My Active Work,
+  Team Active Work, AI Workers, Recent Activity, Merge Queue, Conflict
+  Warnings, Ready For Review), every one real data, 15s polling like
+  `InfrastructurePanel`. Extracted the list/action rendering out of
+  `WorkRegistryPanel` into a shared `WorkItemTable` (claim/release/
+  complete/advance-to-next-stage, a compact lifecycle-stage indicator)
+  used by both.
+- **~70 new backend tests, 13 new frontend tests** (85 total, up from
+  72) — `tsc -b` and `oxlint` both clean. Full backend suite (1433
+  passed, 47 skipped — live-Postgres only) and full frontend suite
+  verified passing.
+- Still deliberately out of scope: real authentication, a true
+  architecture/dependency graph, semantic merge assistance, real CI
+  integration, persistent AI worker processes, a distributed worker
+  network — see `docs/ARCHITECTURE.md`'s "Team Collaboration Platform"
+  section and `ROADMAP.md`'s "Future" section.
 
 2026-07-28: **Team Collaboration Platform: lightweight accounts, live
 Mission Control data, and an Active Work Registry.** Full detail in
@@ -1025,10 +1096,13 @@ breakdown.
 ## Recommended Next Task
 
 **The real production data migration is done, Team Mode's core networking
-bug is fixed, and a Team Collaboration Platform MVP (accounts + Active
-Work Registry) now exists** (see "Last Completed Work" above). What's
-left is a mix of genuine operator/human actions and real follow-on
-feature work:
+bug is fixed, and the Team Collaboration Platform now covers both the MVP
+(accounts + Active Work Registry) and SIL Phase 2 "Workflow Integration"**
+(lifecycle, Overlap Engine V2, live git branch info, merge readiness,
+activity timeline, the work-item CLI, and Mission Control's
+`CollaborationWorkspace`) — see "Last Completed Work" above. What's left
+is a mix of genuine operator/human actions and real follow-on feature
+work:
 
 1. **Create the Windows Firewall rule for real** (or click the UAC prompt
    next time `scripts\start-team.ps1` runs unelevated). One-time, from an
@@ -1045,10 +1119,11 @@ feature work:
    is) for both the API and the built dashboard.
 3. **Visually verify Mission Control in a browser** — Claude in Chrome
    was unavailable all session (connection failed/disabled); typecheck/
-   lint/vitest/build are all clean and the underlying API data was
-   verified directly, but the actual rendered page (including the two new
-   panels) hasn't been looked at. Run `/chrome` to reconnect, or look
-   yourself at `http://127.0.0.1:5173` (local mode).
+   lint/vitest are all clean (85 frontend tests passing) and the
+   underlying API data was verified directly, but the actual rendered
+   page (including `CollaborationWorkspace`'s 7 tabs) hasn't been looked
+   at. Run `/chrome` to reconnect, or look yourself at
+   `http://127.0.0.1:5173` (local mode).
 4. **Decide whether/how real authentication gets built.** Accounts
    (`accounts/`) and the Active Work Registry (`collaboration/`) are both
    deliberately built with no login/session/password — every route is
@@ -1056,12 +1131,18 @@ feature work:
    API. A real auth layer (who is "the current user" for a given
    request) is the natural next step before this is used by more than one
    trusted person on a private tailnet.
-5. **Consider the larger Collaboration Platform follow-on phases**
-   (architecture/dependency graph for smarter overlap detection, semantic
-   merge assistance, persistent AI worker processes, a distributed
-   compute cluster) — each substantially larger than this session's MVP,
-   deliberately not started; the current `collaboration/` package is
-   built so they can layer on without a redesign.
+5. **Consider the remaining Collaboration Platform follow-on work** — a
+   true architecture/dependency graph (Overlap V2's import/route/table
+   signals are real but shallow, not a persisted graph of indirect
+   impact), semantic merge assistance beyond a risk score
+   (duplicate-implementation detection, AI-assisted conflict
+   resolution), real CI integration (`merge_readiness.py`'s `test_status`
+   is deliberately always `"unknown"`), persistent AI worker processes,
+   and a distributed compute cluster — each substantially larger than
+   what exists now, deliberately not started; `collaboration/` is built
+   so they can layer on without a redesign. See `docs/ARCHITECTURE.md`'s
+   "Team Collaboration Platform" section and `ROADMAP.md`'s "Future"
+   section.
 6. **Fix `frontend/src/format.ts::dateTime()`'s timestamp-parsing bug**
    (KNOWN_ISSUES.md ISSUE-021) — affects every page rendering a
    local-mode (SQLite) timestamp, deferred because it touches many call

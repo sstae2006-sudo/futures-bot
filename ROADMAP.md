@@ -309,28 +309,52 @@ into git history):
   and two new real (not mock) Mission Control panels. See
   `PROJECT_STATE.md`'s "Last Completed Work" and `CHANGELOG.md`'s
   2026-07-28 entry.
+- **SIL Phase 2 "Workflow Integration"** (2026-07-28), built directly on
+  the MVP above with no redesign: the full work-item lifecycle
+  (`planned→claimed→in_progress→testing→ready_for_review→merged→completed`,
+  advisory not enforced) plus `owner_type` (human/ai); Overlap Engine V2
+  (shared imports/API routes/DB tables/frontend components/config/title
+  keywords, one explainable 0-100 confidence score, additive alongside
+  the original file-path-only V1); live git branch introspection
+  (`git_info.py` — branch age, ahead/behind, last commit, nothing
+  persisted); a merge-readiness dashboard (`merge_readiness.py` — one
+  explainable 0-100 score; `test_status` always `"unknown"`, no CI
+  integration exists); a searchable activity timeline merging work-item
+  events with real git commits; `tools/work_item_cli.py` plus a new
+  CLAUDE.md session-protocol step so AI-assisted sessions actually
+  register/check work instead of the requirement only being documented;
+  Mission Control's `CollaborationWorkspace` (My/Team/AI Active Work,
+  Recent Activity, Merge Queue, Conflict Warnings, Ready For Review — all
+  real data). See `docs/ARCHITECTURE.md`'s "Team Collaboration Platform"
+  section and `CHANGELOG.md`'s 2026-07-28 entry.
 
-### Future: Collaboration Platform, beyond the MVP
+### Future: Collaboration Platform, beyond SIL Phase 2
 
 Not started, deliberately — each is a substantially larger effort than
-the 2026-07-28 MVP above, meant to layer on top of it without a redesign
-once actually prioritized:
+what's built so far, meant to layer on top of it without a redesign once
+actually prioritized:
 
 - **Real authentication.** Accounts/work-items today have no login,
   session, or API key — every route is reachable by anyone who can reach
   the port. Needed before this is used by more than one trusted person on
   a private tailnet.
-- **Architecture/dependency graph.** Today's overlap detection is exact
-  file-path intersection only; a real graph (which modules/services/DB
-  tables a file actually affects) would let it warn about *indirect*
-  conflicts, not just literal shared files.
-- **Semantic merge assistance.** Duplicate-implementation detection,
-  AI-assisted conflict resolution, a merge-readiness score beyond the
-  current file-overlap-only summary.
+- **A true architecture/dependency graph.** Overlap V2 (2026-07-28) added
+  real but shallow signals — shared imports, API routes, DB tables,
+  frontend components — computed fresh per request, not a persisted graph
+  that understands *indirect*/transitive impact (e.g. "these two files
+  don't share anything, but both call a function that reads this table").
+- **Semantic merge assistance.** Merge readiness (2026-07-28) gives an
+  explainable score from what's directly observable; still missing:
+  duplicate-implementation detection and AI-assisted conflict
+  resolution/suggested fixes, not just a risk number.
+- **Real CI integration.** `merge_readiness.py`'s `test_status` is always
+  `"unknown"` by design — reading an actual pass/fail needs a workflow-run
+  API or executing the suite here and blocking on it.
 - **Persistent AI worker processes.** Long-running agents that claim
   work from the registry, work independently, report progress, and open
-  their own PRs — today's registry is claim/track only, not an execution
-  layer.
+  their own PRs — today's registry is claim/track only (an "AI worker" is
+  a Claude Code session following CLAUDE.md section 6's step 7, not a
+  daemon claiming work autonomously), not an execution layer.
 - **Distributed worker network.** Trusted machines contributing compute
   (backtesting, optimization, model training, inference) that Mission
   Control monitors and assigns compatible jobs to.

@@ -4,6 +4,99 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-28 — SIL Phase 2 "Workflow Integration": the Collaboration Platform becomes the actual workflow
+
+Continuation of the same day's Team Collaboration Platform MVP entry
+(below) — a follow-on brief explicitly building on that foundation with
+no redesign: mandatory work registration, automatic branch tracking, a
+full Mission Control workspace, a deeper overlap engine, a work lifecycle,
+AI awareness, a merge-readiness dashboard, a searchable activity timeline,
+a reliability pass, and documentation. Full detail in each milestone's own
+commit message (six commits); this is the summary.
+
+**Lifecycle + owner_type.** `collaboration.STATUSES` grows from
+open/claimed/completed to a full pipeline (`planned→claimed→in_progress→
+testing→ready_for_review→merged→completed`) via a new `update_status()`/
+`POST /api/work-items/{id}/status` — advisory, not enforced (a review can
+send work backward; claim/release/complete keep their exact Phase 1
+behavior for open/claimed/completed). `owner_type` ('human'/'ai') added to
+`work_items` (Alembic revision `4ec561b51e64` for Postgres, `ALTER TABLE`
+for SQLite, defaults to `'human'`).
+
+**Live git branch info** (`collaboration/git_info.py`). Branch age,
+ahead/behind vs a base branch, last commit — via `git` subprocess calls,
+nothing persisted, best-effort (detached HEAD/missing base branch/not a
+repo degrade to notes, never an exception). `GET /api/git/branch-info`,
+`GET /api/work-items/{id}/branch-info`.
+
+**Overlap Engine V2** (`collaboration/overlap_v2.py`). Shared Python
+imports (`ast`-parsed)/TS imports/API route paths/DB table names/frontend
+component names/config files/title-description keywords — one explainable
+0-100 confidence score with a factor-by-factor breakdown, additive
+alongside the original file-path-only V1 (untouched — still what
+`create_work_item`/`check_overlap`/`merge_summary` use). New
+`GET /api/work-items/{id}/overlap-v2`, `GET /api/work-items/conflicts`
+(bulk pairwise scan across all active work in one pass), and
+`POST /api/work-items/pre-work-check` — the AI-awareness contract,
+callable before a work item even exists, returning a `suggested_action`
+(proceed/coordinate/choose_different_task) and a recommendation naming
+the conflicting item's owner.
+
+**Merge readiness dashboard** (`collaboration/merge_readiness.py`). One
+explainable 0-100 score from Overlap V2 risk, branch age, behind-base
+count, and change size. `test_status` is always the literal `"unknown"`
+— no CI integration exists, and guessing would be worse than admitting
+that gap (documented in the module's own docstring). New
+`POST /api/work-items/merge-readiness`.
+
+**Searchable activity timeline** (`collaboration/timeline.py`). Merges
+`work_item_activity` with real git commits into one filterable feed
+(`event_type`/`q`/`since`/`until`). New `GET /api/activity/timeline`.
+While building it: found and fixed a real ordering bug —
+`CollaborationStore.fetch_activity` ordered only by `created_at`, which
+SQLite's `datetime('now')` resolves to whole seconds, so events logged
+within the same second (realistic for an automated/AI-driven
+claim-then-complete) tied and sorted unpredictably. Fixed with a `rowid`
+tiebreaker (SQLite's own implicit, monotonically-increasing insert-order
+column); regression test added. `PgCollaborationStore` didn't need the
+same fix — `func.now()` there resolves per-transaction with real
+microsecond precision.
+
+**`tools/work_item_cli.py`.** create/list/claim/release/complete/status/
+check subcommands talking to `collaboration_service` in-process — no API
+server needed. `check` runs the pre-work-check and exits nonzero on a
+critical overlap. `CLAUDE.md`'s Session Protocol gained a new step 7:
+for non-trivial work, run `check` and register a work item before
+starting — turns the "AI awareness" requirement into something sessions
+actually do, not just a documented ask.
+
+**Mission Control's `CollaborationWorkspace`.** Seven tabs — My Active
+Work, Team Active Work, AI Workers, Recent Activity, Merge Queue,
+Conflict Warnings, Ready For Review — every one real data
+(`getWorkItems`/`getTimeline`/`getWorkItemConflicts`), polling every 15s
+like `InfrastructurePanel` already does. Extracted the list/action
+rendering (claim/release/complete/advance-to-next-stage, status badges,
+a compact per-item lifecycle-stage dot indicator) out of
+`WorkRegistryPanel` into a shared `WorkItemTable`, used by both.
+
+**Reliability pass.** AST-based unused-import scan found and removed two
+(`merge_readiness.py`'s unused `Optional`, `collaboration_service.py`'s
+unused `OverlapWarningV2` dataclass import); confirmed the Alembic
+migration chain stays linear with a single head; the `rowid` tiebreaker
+above was the one behavioral bug found and fixed.
+
+**Testing.** ~70 new backend tests (1433 passed, 47 skipped — live-Postgres
+only, up from 1279/1250/29), 13 new frontend tests (85 total, up from 72)
+— `tsc -b` and `oxlint` both clean.
+
+**Documentation.** `docs/ARCHITECTURE.md` gained a "Team Collaboration
+Platform" section covering the full layer (accounts + collaboration,
+V1/V2 overlap, git info, merge readiness, timeline) and what's still out
+of scope. `ROADMAP.md`'s Future section updated to reflect what SIL Phase
+2 actually closed vs. what's still ahead (real auth, a true dependency
+graph, semantic merge assistance, real CI integration, persistent AI
+workers, a distributed worker network).
+
 ## 2026-07-28 — Team Collaboration Platform: lightweight accounts, live Mission Control data, and an Active Work Registry
 
 Continuation of the same day's earlier Stabilization Mode entry (below).
