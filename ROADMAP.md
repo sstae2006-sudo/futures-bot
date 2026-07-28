@@ -337,6 +337,17 @@ into git history):
   onboarding UI (Welcome, Register, Profile, Organization Settings, Team
   Members). See `PROJECT_STATE.md`'s "Last Completed Work" and
   `CHANGELOG.md`'s 2026-07-28 entry.
+- **Stabilization Mode: concurrency and edge-case sweep** (2026-07-28):
+  4 real bugs found and fixed across the two entries directly above --
+  a genuine concurrent-claim race letting two callers both silently
+  "win" (`claim_work_item`, High severity), silently-swallowed action
+  failures with no error boundary anywhere in the app
+  (`WorkItemTable.tsx`), a registration retry that created a duplicate
+  orphaned organization (`Register.tsx`), and a Mission Control widget
+  that skipped the new org-scoping (`TeamPanel.tsx`). Every fix
+  confirmed against a regression test shown to fail on the pre-fix code.
+  See KNOWN_ISSUES.md ISSUE-022 through ISSUE-024 and `CHANGELOG.md`'s
+  2026-07-28 entry.
 
 ### Future: Collaboration Platform, beyond what's built so far
 

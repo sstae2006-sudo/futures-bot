@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1517 tests as of 2026-07-28** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1467 passed, 50 skipped, 0 failed). The 50
+- Test suite: **1518 tests as of 2026-07-28** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1468 passed, 50 skipped, 0 failed). The 50
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1517 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1518 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,42 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-28: **Stabilization Mode: concurrency and edge-case sweep.** A
+~1-hour skeptical bug hunt across the same day's two preceding entries
+(SIL Phase 2, User Registration & Organization Management). Full detail
+in `CHANGELOG.md`'s matching dated entry and `KNOWN_ISSUES.md` ISSUE-022
+through ISSUE-024; this is the summary.
+
+- **Fixed a real concurrent-claim race** (ISSUE-022, High severity):
+  `claim_work_item` could let two racing callers both "win" silently,
+  with neither told about the conflict. Fixed with an atomic
+  conditional `UPDATE` + rowcount check in both SQLite and Postgres
+  stores.
+- **Fixed silent action failures** (ISSUE-023): every
+  claim/release/complete/advance handler in `WorkItemTable.tsx` had no
+  error handling and this app has no error boundary — a rejected call
+  vanished with no feedback. Now caught and displayed.
+- **Fixed a Register retry dead-end** (ISSUE-024): a failed account
+  creation after a successful org creation left an orphaned org and no
+  way to retry without hitting "already exists." The created org id is
+  now cached across retries.
+- **Fixed a scoping gap**: `TeamPanel.tsx` (Mission Control) still
+  showed every registered user globally instead of the signed-in user's
+  own organization — missed when org-scoping landed elsewhere. Also
+  added an online/offline badge and refreshed a stale docstring.
+- Every fix independently confirmed against a regression test that
+  fails on the pre-fix code (verified by temporarily reverting each fix
+  and re-running its test). Full backend suite (1468 passed, 50
+  skipped) and full frontend suite (110 passed, up from 107; `tsc -b`/
+  `oxlint` clean) verified passing after every fix.
+- **Swept and found clean**: every other check-then-set-shaped method,
+  username uniqueness (DB-level, already atomic), every frontend
+  `setInterval` (all have matching cleanup), the org-scoping SQL
+  builder (parameterized, no injection risk). Two items from the
+  stabilization brief ("Architecture Intelligence Engine", a persisted
+  "dependency graph") don't exist as literal systems in this codebase —
+  noted rather than fabricating findings against something not built.
 
 2026-07-28: **User Registration & Organization Management.** Expands the
 lightweight accounts MVP into a full onboarding experience, staying

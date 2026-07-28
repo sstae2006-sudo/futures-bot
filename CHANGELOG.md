@@ -4,6 +4,76 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-28 — Stabilization Mode: concurrency and edge-case sweep of the Collaboration/Registration features
+
+A ~1-hour, skeptical bug hunt across everything added in the same day's
+two preceding entries (SIL Phase 2, User Registration & Organization
+Management) — assume hidden bugs exist, try to break every new feature,
+fix every legitimate issue found. Four real bugs found, fixed, and each
+confirmed against a regression test that fails on the pre-fix code
+(verified directly by temporarily reverting each fix and re-running its
+test) before restoring the fix. Full detail in `KNOWN_ISSUES.md`
+ISSUE-022 through ISSUE-024 and each commit's own message; this is the
+summary.
+
+**ISSUE-022 (High) — a real concurrent-claim race.** `claim_work_item`
+read the item, decided in Python whether the claim was allowed, then ran
+an unconditional `UPDATE` — two concurrent callers (two humans, or two AI
+sessions, racing to claim the same item) could both pass the check before
+either committed, and whichever `UPDATE` committed last silently won:
+*both* callers got back a 200 claiming ownership, no error either way.
+Fixed in both `CollaborationStore` and `PgCollaborationStore` by
+re-checking ownership in the `UPDATE`'s own `WHERE` clause and inspecting
+the affected-row count — the loser now gets the same "already claimed"
+error a sequential double-claim already raised.
+
+**ISSUE-023 (Medium) — silent action failures.** Every action handler in
+`WorkItemTable.tsx` (claim/release/complete/advance) awaited its API call
+with no `try`/`catch`, and this app has no error boundary — a rejected
+call (newly reachable in normal use once ISSUE-022 made losing a claim
+race a real outcome) vanished with zero feedback. Fixed via a shared
+`runAction()` wrapper that catches and displays the error, then always
+refetches so the UI stays honest.
+
+**ISSUE-024 (Medium) — Register retry created a duplicate, orphaned org.**
+If `createOrganization` succeeded but the following `createUser` call
+failed (e.g. a taken username), the org already existed with no owner;
+retrying re-ran `createOrganization` with the same name and hit "already
+exists" — a dead end. Fixed by caching the created org id across retries
+within the same form session.
+
+**Also found and fixed (not a numbered KNOWN_ISSUES entry, a scoping gap
+rather than a bug with a failure mode): `TeamPanel.tsx`** (Mission
+Control's "Team" widget) was still calling `getUsers()` with no
+organization filter — missed when `session.tsx`/org-scoping landed
+elsewhere in the same effort, so a multi-org instance's Team widget
+showed every registered user globally. Scoped to the signed-in user's
+own organization; added an online/offline badge (`format.ts::isOnline`,
+shared with `TeamMembers.tsx` rather than duplicated); refreshed a stale
+module docstring that still claimed no session concept existed.
+
+**Swept and found clean** (no bug, or a pre-existing/documented design
+choice, not something this pass needed to change): `release_work_item`/
+`complete_work_item`/`reassign_work_item`/`update_status` (none has
+`claim`'s ownership-exclusivity invariant to protect, so the same
+check-then-set shape isn't a race there); `accounts/store.py`'s
+username-uniqueness enforcement (DB-level `UNIQUE` constraint, already
+atomic); every `setInterval` in the frontend (all have a matching
+`clearInterval` cleanup — no leaks); the new `fetch_work_items` dynamic
+`WHERE`-clause builder (parameterized throughout, no injection risk);
+Postgres's `notification_preferences` JSONB round-trip (already a dict,
+not double-decoded). Two named items from the stabilization brief —
+"Architecture Intelligence Engine" and a persisted "dependency graph" —
+don't exist as literal systems in this codebase (Overlap Engine V1/V2 are
+what exists today, and are real but deliberately shallower; see
+`ROADMAP.md`'s "Future" section) — noted rather than fabricating findings
+against something not actually built.
+
+**Testing**: 4 new backend/frontend regression tests, each independently
+confirmed to fail against its bug's pre-fix code. Full backend suite
+(1468 passed, 50 skipped) and full frontend suite (110 passed, `tsc -b`/
+`oxlint` clean) verified passing after every fix.
+
 ## 2026-07-28 — User Registration & Organization Management
 
 Continuation of the same day's SIL Phase 2 entry (below) — expands the
