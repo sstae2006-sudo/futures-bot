@@ -506,3 +506,48 @@ verified fixed — instead mark it Resolved with a date and commit.
   Verified: 0 failures in 30 instrumented repro iterations (vs. 10/30
   failing at 10ms), and 8/8 clean `pytest` runs of the full test file
   afterward.
+
+---
+
+### ISSUE-016 — `ResearchServer.start()`/`AutonomousPaperTrader.start()` had a check-then-set race letting two concurrent calls both proceed (RESOLVED)
+
+- **Severity:** Medium (thread-safety correctness gap; not reachable from
+  normal single-user dashboard clicks — the race window is far narrower
+  than a human double-click — but reachable from any two genuinely
+  concurrent callers, e.g. scripted/automated API calls)
+- **Description:** Found 2026-07-28 (Stabilization Mode sweep) by reading
+  `orchestrator.py`/`paper_trader.py`'s existing lock discipline closely.
+  Both `start()` methods checked `self._running` under a lock, released
+  the lock, then did substantial slow work (network calls, a blocking
+  websocket handshake, building strategy engines) before finally setting
+  `self._running = True` under the lock again. Two concurrent `start()`
+  calls could both pass the initial check before either actually marked
+  itself running, both proceeding into the expensive setup path — for
+  `AutonomousPaperTrader`, that means two feeds/thread sets built
+  concurrently against the same instance. Confirmed as a *real*,
+  reliably-reproducible race, not theoretical: a new regression test
+  (`test_concurrent_start_calls_never_both_win`, using an artificially
+  slowed fake Contracts session to widen the window) failed 3/3 runs
+  against the pre-fix code (both callers won, `FakeMassiveBarFeed`
+  produced 2 instances) and passed 3/3 after the fix.
+- **Files involved:** `src/futures_bot/research_server/paper_trader.py`
+  (`AutonomousPaperTrader.start()`), `src/futures_bot/research_server/orchestrator.py`
+  (`ResearchServer.start()`).
+- **Possible cause:** Both methods were written to delay the "running"
+  flag until every subsystem had actually, successfully started (itself a
+  deliberate, documented design choice — see orchestrator.py's own comment
+  on the *other* bug this was originally avoiding: claiming "running" too
+  early when a later subsystem could still fail). Neither considered a
+  second concurrent caller arriving during that window.
+- **Current status:** **Resolved 2026-07-28.** `_running` is now claimed
+  atomically with the initial check (before any slow work starts) in both
+  methods; a wrapping `try/except` releases the claim (`_running = False`)
+  if anything downstream fails, including the pre-existing "empty
+  strategies" early-return path in `AutonomousPaperTrader.start()` — so a
+  failed or no-op start never leaves the tracker permanently stuck
+  reporting `running: True`. `ResearchServer.start()`'s existing rollback
+  path (stopping whichever subsystems already started) is unchanged; the
+  claim is just released before its final `raise`. Verified: the new
+  regression test plus the full existing `test_research_server_paper_trader.py`/
+  `test_research_server_orchestrator.py`/`test_research_server_nightly_jobs.py`/
+  `test_api_research_server.py` suites (31 tests) all pass.

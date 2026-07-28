@@ -227,18 +227,41 @@ class AutonomousPaperTrader:
         with self._lock:
             if self._running:
                 raise PaperTraderError("The autonomous paper trader is already running.")
+            # Claimed atomically with the check above -- everything from here
+            # to the final `with self._lock` block below (thread construction)
+            # is slow (network calls, a blocking websocket handshake) and used
+            # to run with `_running` still False, so two concurrent start()
+            # calls could both pass the check before either actually marked
+            # itself running (confirmed: no test covered this, but the same
+            # shape exists one layer up in ResearchServer.start()). Released
+            # back to False by the early return below or the except block if
+            # this call doesn't end up actually running anything.
+            self._running = True
 
-        # Structural guard -- see module docstring. Fails before anything
-        # broker-adjacent is constructed, mirroring LiveSessionManager.start().
-        if settings.broker.name != "paper":
-            raise PaperTraderError(
-                f"Refusing to autonomously paper trade with broker.name={settings.broker.name!r}. "
-                f"research_server only ever drives the paper broker."
-            )
-        if not settings.research_server.paper_strategies:
-            log.info("research_server.paper_strategies is empty -- nothing to autonomously paper trade.")
-            return self.status()
+        try:
+            # Structural guard -- see module docstring. Fails before anything
+            # broker-adjacent is constructed, mirroring LiveSessionManager.start().
+            if settings.broker.name != "paper":
+                raise PaperTraderError(
+                    f"Refusing to autonomously paper trade with broker.name={settings.broker.name!r}. "
+                    f"research_server only ever drives the paper broker."
+                )
+            if not settings.research_server.paper_strategies:
+                log.info("research_server.paper_strategies is empty -- nothing to autonomously paper trade.")
+                with self._lock:
+                    self._running = False
+                return self.status()
 
+            return self._start_locked(settings, api_key, session)
+        except Exception:
+            with self._lock:
+                self._running = False
+            raise
+
+    def _start_locked(self, settings: Settings, api_key: str, session: Optional[requests.Session]) -> dict:
+        """The rest of `start()`'s body -- split out only so `start()` itself
+        can wrap it in one `try/except` that releases the `_running` claim on
+        any failure, without re-indenting this whole block."""
         session = session or requests.Session()
         contracts_client = MassiveContractsClient(api_key, session=session)
         try:
@@ -328,7 +351,8 @@ class AutonomousPaperTrader:
             self._live_symbol = active.ticker
             self._last_feed_error = None
             self._stop_event = stop_event
-            self._running = True
+            # _running is already True -- claimed atomically with the check
+            # at the top of start(), before this method's slow setup work ran.
 
         thread = threading.Thread(
             target=self._run, args=(feed, settings, contracts_client, stop_event),

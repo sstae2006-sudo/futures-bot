@@ -60,6 +60,14 @@ class ResearchServer:
         with self._lock:
             if self._running:
                 raise ResearchServerError("The research server is already running.")
+            # Claimed atomically with the check above -- everything below (three
+            # subsystem starts, each potentially slow) used to run with
+            # `_running` still False, so two concurrent start() calls could
+            # both pass the check before either actually marked itself running
+            # (the same shape existed one layer down in
+            # AutonomousPaperTrader.start(), fixed alongside this). Released
+            # back to False by the except block below if anything fails.
+            self._running = True
 
         rs = settings.research_server
 
@@ -109,11 +117,14 @@ class ResearchServer:
                 get_nightly_job_scheduler().stop()
             except Exception:  # noqa: BLE001
                 log.error("Rollback: failed to stop the nightly job scheduler.", exc_info=True)
+            with self._lock:
+                self._running = False  # release the claim made at the top of start()
             raise
 
         with self._lock:
             self._data_scheduler_started_here = started_scheduler_here
-            self._running = True
+            # _running is already True -- claimed atomically with the check
+            # at the top of start(), before the three subsystems above started.
             self._started_at = datetime.now(timezone.utc)
         return self.status()
 

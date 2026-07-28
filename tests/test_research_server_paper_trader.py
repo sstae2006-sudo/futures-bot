@@ -259,6 +259,52 @@ class TestLifecycle:
         finally:
             trader.stop(timeout=10)
 
+    def test_concurrent_start_calls_never_both_win(self, tmp_path, monkeypatch):
+        """Regression test (Stabilization Mode, 2026-07-28): `start()` used to
+        check `self._running` and only set it True *after* all the slow setup
+        work (contract detection, feed construction) -- two concurrent calls
+        could both pass the check before either actually marked itself
+        running, both proceeding to build a feed. `_running` is now claimed
+        atomically with the check, before any slow work starts, so at most one
+        concurrent caller can ever get past it -- verified here by widening
+        the race window with an artificial delay in the contract-lookup call
+        (the first slow step) and running two real threads against it."""
+        import threading
+
+        monkeypatch.setenv("FUTURES_BOT_MARKET_DATA_DB", str(tmp_path / "market_data.db"))
+        monkeypatch.setenv("FUTURES_BOT_RESEARCH_DB", str(tmp_path / "research.db"))
+        settings = write_config(tmp_path)
+        trader = AutonomousPaperTrader()
+
+        class SlowContractsSession(FakeContractsSession):
+            def get(self, url, params=None, timeout=None):
+                time.sleep(0.2)
+                return super().get(url, params=params, timeout=timeout)
+
+        results: list[object] = []
+
+        def call_start():
+            try:
+                results.append(trader.start(settings, "test-key", session=SlowContractsSession()))
+            except PaperTraderError as exc:
+                results.append(exc)
+
+        threads = [threading.Thread(target=call_start) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        try:
+            successes = [r for r in results if isinstance(r, dict)]
+            failures = [r for r in results if isinstance(r, PaperTraderError)]
+            assert len(successes) == 1, f"expected exactly one caller to win, got {len(successes)}: {results}"
+            assert len(failures) == 1
+            assert "already running" in str(failures[0])
+            assert len(FakeMassiveBarFeed.instances) == 1
+        finally:
+            trader.stop(timeout=10)
+
 
 class TestRollDetection:
     """`_check_for_roll` must prefer `MarketDataStore.get_active_contract`
