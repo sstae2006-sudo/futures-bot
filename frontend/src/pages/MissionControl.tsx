@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import AlertCenter from '../components/mission-control/AlertCenter'
 import ActivityFeed from '../components/mission-control/ActivityFeed'
+import CollaborationWorkspace from '../components/mission-control/CollaborationWorkspace'
 import HealthGrid from '../components/mission-control/HealthGrid'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
 import QuickActions from '../components/mission-control/QuickActions'
@@ -14,11 +15,11 @@ import { DatabaseSummaryCard, MarketContextSummaryCard, PerformanceCard, Researc
 // glance: is the platform healthy, is anything broken, what's running,
 // what needs attention, what's next. Every other page is reached by
 // branching outward from here (sidebar nav, or the summary cards'
-// "View →" links). See the approved plan
-// (C:\Users\sstae\.claude\plans\polymorphic-nibbling-lamport.md) for
-// the full design rationale -- this is a design/scaffold pass: layout
-// and component structure are real, the data behind it is placeholder
-// (missionControlData.ts) until a system-health API exists.
+// "View →" links). Every panel here reads real data from the API --
+// infrastructure metrics, team/connected-user state, and (SIL Phase 2,
+// 2026-07-28) the Active Work Registry's full Collaboration Workspace
+// (my/team/AI active work, recent activity, merge queue, conflict
+// warnings, ready-for-review) -- nothing on this page is mocked.
 export default function MissionControl() {
   return (
     <div className="mission-control">
@@ -43,6 +44,7 @@ export default function MissionControl() {
         </div>
         <div className="mc-column">
           <WorkRegistryPanel />
+          <CollaborationWorkspace />
         </div>
         <div className="mc-column">
           <QuickActions />

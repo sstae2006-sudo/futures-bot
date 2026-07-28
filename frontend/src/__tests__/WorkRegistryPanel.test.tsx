@@ -18,7 +18,7 @@ vi.mock('../api', async () => {
 
 function makeItem(overrides: Partial<WorkItem> = {}): WorkItem {
   return {
-    id: 'w1', title: 'Fix login bug', description: null, owner_user_id: null, branch: null,
+    id: 'w1', title: 'Fix login bug', description: null, owner_user_id: null, owner_type: 'human', branch: null,
     status: 'open', estimated_files: ['src/auth.py'], priority: 'medium',
     created_at: '2026-07-28T00:00:00+00:00', updated_at: '2026-07-28T00:00:00+00:00',
     ...overrides,

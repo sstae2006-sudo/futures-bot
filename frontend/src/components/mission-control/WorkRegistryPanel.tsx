@@ -1,23 +1,18 @@
 import { useState } from 'react'
-import {
-  claimWorkItem, completeWorkItem, createWorkItem, getWorkItems, releaseWorkItem,
-} from '../../api'
+import { createWorkItem, getWorkItems } from '../../api'
 import { useApi } from '../../useApi'
 import { Badge } from '../UI'
-import type { OverlapWarning, WorkItem, WorkItemPriority } from '../../types'
+import WorkItemTable from './WorkItemTable'
+import type { OverlapWarning, OwnerType, WorkItemPriority } from '../../types'
 
-// Active Work Registry (Team Collaboration MVP) -- who's doing what, so
-// multiple humans/AI agents on this codebase don't step on each other.
+// Active Work Registry (Team Collaboration Platform) -- who's doing what,
+// so multiple humans/AI agents on this codebase don't step on each other.
 // File-level overlap warnings surface at creation time (see the
 // overlap_warnings this panel's create form displays inline); nothing
 // here ever blocks a claim or a new task, only warns -- see
-// collaboration/overlap.py's own docstring.
-const STATUS_TONE: Record<WorkItem['status'], 'good' | 'warn' | 'neutral'> = {
-  open: 'neutral',
-  claimed: 'warn',
-  completed: 'good',
-}
-
+// collaboration/overlap.py's own docstring. The list/action rendering
+// itself lives in WorkItemTable.tsx, shared with CollaborationWorkspace's
+// several filtered tabs.
 const RISK_TONE: Record<string, 'good' | 'warn' | 'bad' | 'neutral'> = {
   no_risk: 'good',
   low: 'good',
@@ -31,6 +26,7 @@ export default function WorkRegistryPanel() {
   const [title, setTitle] = useState('')
   const [files, setFiles] = useState('')
   const [priority, setPriority] = useState<WorkItemPriority>('medium')
+  const [ownerType, setOwnerType] = useState<OwnerType>('human')
   const [warnings, setWarnings] = useState<OverlapWarning[]>([])
   const [busy, setBusy] = useState(false)
 
@@ -43,6 +39,7 @@ export default function WorkRegistryPanel() {
         title,
         estimated_files: files.split(',').map((f) => f.trim()).filter(Boolean),
         priority,
+        owner_type: ownerType,
       })
       setWarnings(result.overlap_warnings)
       setTitle('')
@@ -51,23 +48,6 @@ export default function WorkRegistryPanel() {
     } finally {
       setBusy(false)
     }
-  }
-
-  async function handleClaim(id: string) {
-    const userId = window.prompt('Your user ID (or name) to claim this task:')
-    if (!userId) return
-    await claimWorkItem(id, userId)
-    refetch()
-  }
-
-  async function handleRelease(id: string) {
-    await releaseWorkItem(id)
-    refetch()
-  }
-
-  async function handleComplete(id: string) {
-    await completeWorkItem(id)
-    refetch()
   }
 
   return (
@@ -102,6 +82,12 @@ export default function WorkRegistryPanel() {
               <option value="critical">Critical</option>
             </select>
           </div>
+          <div className="field">
+            <select value={ownerType} onChange={(e) => setOwnerType(e.target.value as OwnerType)} aria-label="Owner type">
+              <option value="human">Human</option>
+              <option value="ai">AI</option>
+            </select>
+          </div>
           <button type="submit" className="btn btn-primary" disabled={busy || !title.trim()}>
             Add
           </button>
@@ -118,37 +104,7 @@ export default function WorkRegistryPanel() {
         </div>
       )}
 
-      {items && items.length === 0 && <p style={{ fontSize: 13, opacity: 0.7 }}>No active work items.</p>}
-      {items && items.length > 0 && (
-        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td style={{ padding: '4px 0' }}>
-                  <div>{item.title}</div>
-                  <div style={{ opacity: 0.6, fontSize: 11 }}>
-                    {item.owner_user_id ?? 'unclaimed'} · {item.estimated_files.length} file(s) · {item.priority}
-                  </div>
-                </td>
-                <td style={{ padding: '4px 8px' }}>
-                  <Badge tone={STATUS_TONE[item.status]}>{item.status}</Badge>
-                </td>
-                <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {item.status !== 'completed' && item.status !== 'claimed' && (
-                    <button type="button" className="btn btn-secondary" onClick={() => handleClaim(item.id)}>Claim</button>
-                  )}
-                  {item.status === 'claimed' && (
-                    <>
-                      <button type="button" className="btn btn-secondary" onClick={() => handleRelease(item.id)}>Release</button>{' '}
-                      <button type="button" className="btn btn-secondary" onClick={() => handleComplete(item.id)}>Complete</button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {items && <WorkItemTable items={items} onRefetch={refetch} emptyMessage="No active work items." />}
     </div>
   )
 }

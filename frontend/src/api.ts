@@ -27,11 +27,16 @@ import type {
   MlDatasetInfo,
   MlModelOut,
   ModelTrainResponse,
+  BranchInfo,
+  ConflictPair,
+  ManualWorkItemStatus,
   ModelType,
   OptimizerResultOut,
   Organization,
   OverfitVerdict,
   OverlapWarning,
+  OverlapWarningV2,
+  OwnerType,
   PerformanceOut,
   PredictionResult,
   RegimePerformanceOut,
@@ -44,6 +49,7 @@ import type {
   SyncRunOut,
   SystemHealth,
   SystemOverview,
+  TimelineEntry,
   TradeAnalyticsSummary,
   TradeOut,
   TrialOut,
@@ -542,6 +548,7 @@ export interface WorkItemCreateRequest {
   title: string
   description?: string
   owner_user_id?: string
+  owner_type?: OwnerType
   branch?: string
   estimated_files?: string[]
   priority?: WorkItemPriority
@@ -575,4 +582,37 @@ export const getWorkItemActivity = (workItemId?: string, limit = 100) => {
   if (workItemId) qs.set('work_item_id', workItemId)
   qs.set('limit', String(limit))
   return request<WorkItemActivity[]>(`/api/work-items-activity?${qs.toString()}`)
+}
+
+export const updateWorkItemStatus = (itemId: string, status: ManualWorkItemStatus) =>
+  request<WorkItem>(`/api/work-items/${itemId}/status`, { method: 'POST', body: JSON.stringify({ status }) })
+
+export const getWorkItemOverlapV2 = (itemId: string) =>
+  request<OverlapWarningV2[]>(`/api/work-items/${itemId}/overlap-v2`)
+
+export const getWorkItemConflicts = () => request<ConflictPair[]>('/api/work-items/conflicts')
+
+export const getBranchInfo = (branch?: string) =>
+  request<BranchInfo>(branch ? `/api/git/branch-info?branch=${encodeURIComponent(branch)}` : '/api/git/branch-info')
+
+export interface TimelineFilters {
+  workItemId?: string
+  eventType?: string
+  q?: string
+  since?: string
+  until?: string
+  includeCommits?: boolean
+  limit?: number
+}
+
+export const getTimeline = (filters: TimelineFilters = {}) => {
+  const qs = new URLSearchParams()
+  if (filters.workItemId) qs.set('work_item_id', filters.workItemId)
+  if (filters.eventType) qs.set('event_type', filters.eventType)
+  if (filters.q) qs.set('q', filters.q)
+  if (filters.since) qs.set('since', filters.since)
+  if (filters.until) qs.set('until', filters.until)
+  if (filters.includeCommits !== undefined) qs.set('include_commits', String(filters.includeCommits))
+  qs.set('limit', String(filters.limit ?? 50))
+  return request<TimelineEntry[]>(`/api/activity/timeline?${qs.toString()}`)
 }

@@ -688,17 +688,34 @@ export interface User {
   last_active_at: string | null
 }
 
-// --- Active Work Registry (Team Collaboration MVP) ---
+// --- Active Work Registry (Team Collaboration Platform) ---
 
-export type WorkItemStatus = 'open' | 'claimed' | 'completed'
+// `open`/`planned` are synonyms for "not yet claimed" (kept both for
+// backward compatibility). The rest are SIL Phase 2's lifecycle stages a
+// claimed item moves through en route to `completed` -- see
+// collaboration/__init__.py::STATUSES's docstring for the full rationale.
+export type WorkItemStatus =
+  | 'open' | 'planned' | 'claimed' | 'in_progress' | 'testing'
+  | 'ready_for_review' | 'merged' | 'completed'
+export type ManualWorkItemStatus = 'planned' | 'in_progress' | 'testing' | 'ready_for_review' | 'merged'
 export type WorkItemPriority = 'low' | 'medium' | 'high' | 'critical'
 export type RiskLevel = 'no_risk' | 'low' | 'medium' | 'high' | 'critical'
+export type OwnerType = 'human' | 'ai'
+
+//: Canonical pipeline order -- drives the lifecycle stepper visualization.
+// Advisory only (not enforced server-side either): a work item can move
+// backward (e.g. a review sends it from ready_for_review back to
+// in_progress).
+export const WORK_ITEM_LIFECYCLE: WorkItemStatus[] = [
+  'planned', 'claimed', 'in_progress', 'testing', 'ready_for_review', 'merged', 'completed',
+]
 
 export interface WorkItem {
   id: string
   title: string
   description: string | null
   owner_user_id: string | null
+  owner_type: OwnerType
   branch: string | null
   status: WorkItemStatus
   estimated_files: string[]
@@ -716,6 +733,27 @@ export interface OverlapWarning {
   reason: string
 }
 
+export interface OverlapWarningV2 {
+  work_item_id: string
+  title: string
+  owner_user_id: string | null
+  risk: RiskLevel
+  confidence: number
+  factors: Record<string, number>
+  reason: string
+}
+
+export interface ConflictPair {
+  item_a: string
+  item_a_title: string
+  item_b: string
+  item_b_title: string
+  risk: RiskLevel
+  confidence: number
+  factors: Record<string, number>
+  reason: string
+}
+
 export interface WorkItemCreated {
   work_item: WorkItem
   overlap_warnings: OverlapWarning[]
@@ -728,6 +766,34 @@ export interface WorkItemActivity {
   actor_user_id: string | null
   detail: string | null
   created_at: string
+}
+
+export interface TimelineEntry {
+  kind: 'work_item' | 'commit'
+  timestamp: string
+  title: string
+  detail: string | null
+  actor: string | null
+  work_item_id: string | null
+}
+
+export interface Commit {
+  hash: string
+  short_hash: string
+  subject: string
+  author: string
+  authored_at: string | null
+}
+
+export interface BranchInfo {
+  branch: string | null
+  is_detached: boolean
+  base_branch: string | null
+  branch_age_days: number | null
+  ahead: number | null
+  behind: number | null
+  last_commit: Commit | null
+  notes: string[]
 }
 
 export interface Infrastructure {
