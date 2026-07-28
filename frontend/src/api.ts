@@ -31,6 +31,7 @@ import type {
   OptimizerResultOut,
   Organization,
   OverfitVerdict,
+  OverlapWarning,
   PerformanceOut,
   PredictionResult,
   RegimePerformanceOut,
@@ -48,6 +49,10 @@ import type {
   TrialOut,
   User,
   UserRole,
+  WorkItem,
+  WorkItemActivity,
+  WorkItemCreated,
+  WorkItemPriority,
 } from './types'
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
@@ -530,3 +535,44 @@ export const updateUser = (userId: string, body: UserUpdateRequest) =>
 
 export const sendUserHeartbeat = (userId: string) =>
   request<User>(`/api/users/${userId}/heartbeat`, { method: 'POST' })
+
+// --- Active Work Registry (Team Collaboration MVP) ---
+
+export interface WorkItemCreateRequest {
+  title: string
+  description?: string
+  owner_user_id?: string
+  branch?: string
+  estimated_files?: string[]
+  priority?: WorkItemPriority
+}
+
+export const createWorkItem = (body: WorkItemCreateRequest) =>
+  request<WorkItemCreated>('/api/work-items', { method: 'POST', body: JSON.stringify(body) })
+
+export const getWorkItems = (status?: string) =>
+  request<WorkItem[]>(status ? `/api/work-items?status=${encodeURIComponent(status)}` : '/api/work-items')
+
+export const getWorkItem = (itemId: string) => request<WorkItem>(`/api/work-items/${itemId}`)
+
+export const getWorkItemOverlap = (itemId: string) =>
+  request<OverlapWarning[]>(`/api/work-items/${itemId}/overlap`)
+
+export const claimWorkItem = (itemId: string, userId: string) =>
+  request<WorkItem>(`/api/work-items/${itemId}/claim`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
+
+export const releaseWorkItem = (itemId: string) =>
+  request<WorkItem>(`/api/work-items/${itemId}/release`, { method: 'POST' })
+
+export const completeWorkItem = (itemId: string) =>
+  request<WorkItem>(`/api/work-items/${itemId}/complete`, { method: 'POST' })
+
+export const reassignWorkItem = (itemId: string, userId: string) =>
+  request<WorkItem>(`/api/work-items/${itemId}/reassign`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
+
+export const getWorkItemActivity = (workItemId?: string, limit = 100) => {
+  const qs = new URLSearchParams()
+  if (workItemId) qs.set('work_item_id', workItemId)
+  qs.set('limit', String(limit))
+  return request<WorkItemActivity[]>(`/api/work-items-activity?${qs.toString()}`)
+}

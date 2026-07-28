@@ -688,6 +688,48 @@ export interface User {
   last_active_at: string | null
 }
 
+// --- Active Work Registry (Team Collaboration MVP) ---
+
+export type WorkItemStatus = 'open' | 'claimed' | 'completed'
+export type WorkItemPriority = 'low' | 'medium' | 'high' | 'critical'
+export type RiskLevel = 'no_risk' | 'low' | 'medium' | 'high' | 'critical'
+
+export interface WorkItem {
+  id: string
+  title: string
+  description: string | null
+  owner_user_id: string | null
+  branch: string | null
+  status: WorkItemStatus
+  estimated_files: string[]
+  priority: WorkItemPriority
+  created_at: string
+  updated_at: string
+}
+
+export interface OverlapWarning {
+  work_item_id: string
+  title: string
+  owner_user_id: string | null
+  overlapping_files: string[]
+  risk: RiskLevel
+  reason: string
+}
+
+export interface WorkItemCreated {
+  work_item: WorkItem
+  overlap_warnings: OverlapWarning[]
+}
+
+export interface WorkItemActivity {
+  id: string
+  work_item_id: string
+  event: string
+  actor_user_id: string | null
+  detail: string | null
+  created_at: string
+}
+
 export interface Infrastructure {
   cpu_percent: number
   memory_used_mb: number

@@ -806,6 +806,68 @@ class UserUpdateRequest(BaseModel):
     role: Optional[RoleLiteral] = None
 
 
+PriorityLiteral = Literal["low", "medium", "high", "critical"]
+WorkItemStatusLiteral = Literal["open", "claimed", "completed"]
+RiskLevelLiteral = Literal["no_risk", "low", "medium", "high", "critical"]
+
+
+class WorkItemOut(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    branch: Optional[str] = None
+    status: WorkItemStatusLiteral
+    estimated_files: list[str]
+    priority: PriorityLiteral
+    created_at: str
+    updated_at: str
+
+
+class WorkItemCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    description: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    branch: Optional[str] = None
+    estimated_files: list[str] = Field(default_factory=list)
+    priority: PriorityLiteral = "medium"
+
+
+class ClaimWorkItemRequest(BaseModel):
+    user_id: str
+
+
+class ReassignWorkItemRequest(BaseModel):
+    user_id: str
+
+
+class OverlapWarningOut(BaseModel):
+    work_item_id: str
+    title: str
+    owner_user_id: Optional[str] = None
+    overlapping_files: list[str]
+    risk: RiskLevelLiteral
+    reason: str
+
+
+class WorkItemActivityOut(BaseModel):
+    id: str
+    work_item_id: str
+    event: str
+    actor_user_id: Optional[str] = None
+    detail: Optional[str] = None
+    created_at: str
+
+
+class WorkItemCreatedOut(BaseModel):
+    """`POST /api/work-items`'s response -- the created item plus whatever
+    overlap warnings it triggered against other active work, computed in
+    the same call so a client never has to make a second request just to
+    see them."""
+    work_item: WorkItemOut
+    overlap_warnings: list[OverlapWarningOut]
+
+
 class InfrastructureOut(BaseModel):
     """Mission Control's infrastructure panel -- real process/host metrics
     via `psutil`, plus the background job queue's actual depth (the

@@ -27,8 +27,8 @@ from ..journal import LOGGER_NAME
 from ..research_server.orchestrator import get_research_server
 from .connected_users import ConnectedUsersMiddleware
 from .routes import (
-    accounts, backtests, compare, experiments, imports, jobs, live, market_data, ml, optimizer, reports,
-    research_server, strategies, system, trades,
+    accounts, backtests, collaboration, compare, experiments, imports, jobs, live, market_data, ml, optimizer,
+    reports, research_server, strategies, system, trades,
 )
 from .services import ApiError
 
@@ -186,7 +186,7 @@ def create_app() -> FastAPI:
 
     for router_module in (
         system, strategies, backtests, trades, compare, optimizer, reports, ml, jobs, experiments, live,
-        market_data, research_server, imports, accounts,
+        market_data, research_server, imports, accounts, collaboration,
     ):
         app.include_router(router_module.router)
 

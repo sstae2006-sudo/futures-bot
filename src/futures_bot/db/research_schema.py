@@ -376,3 +376,35 @@ users = Table(
     Column("last_active_at", _TSTZ),
     Index("idx_users_org_id", "org_id"),
 )
+
+# --- Active Work Registry (Team Collaboration MVP) ---
+# See src/futures_bot/collaboration/store.py's module docstring. Same two
+# tables, same shape as that module's SQLite _SCHEMA.
+
+work_items = Table(
+    "work_items",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("title", String, nullable=False),
+    Column("description", String),
+    Column("owner_user_id", String),
+    Column("branch", String),
+    Column("status", String, nullable=False, server_default="open"),
+    Column("estimated_files", JSONB, nullable=False, server_default="[]"),
+    Column("priority", String, nullable=False, server_default="medium"),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    Column("updated_at", _TSTZ, nullable=False, server_default=func.now()),
+    Index("idx_work_items_status", "status"),
+)
+
+work_item_activity = Table(
+    "work_item_activity",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("work_item_id", String, nullable=False),
+    Column("event", String, nullable=False),
+    Column("actor_user_id", String),
+    Column("detail", String),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    Index("idx_work_item_activity_item", "work_item_id", "created_at"),
+)
