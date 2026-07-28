@@ -127,19 +127,24 @@ Engine" section for the full rationale.
   composite of `volatility_state`/`market_regime` — no new market-data
   analysis). 50 new tests. See "Phase 8" below for the full scope this
   landed alongside.
-- **Phase 4 — wire it in.** Decide how `TradingEngine.on_bar` actually
-  gets a `MarketContext` to a strategy — most likely a `Strategy.on_bar`
-  signature change. **Needs explicit approval per CLAUDE.md section 8**
-  (protected: the strategy interface). **Not started** — Phase 8 was
-  explicitly a completion/validation phase for the engine as an
-  independent subsystem, not an integration phase.
+- **Phase 4 — wire it in (done, 2026-07-27).** `TradingEngine` gained
+  `engine.ContextMode` (OFF/OBSERVE/ENABLED — OFF is the default for
+  every existing caller, a complete no-op). `Strategy.on_bar`'s call
+  signature is unchanged; context reaches a strategy only via a new,
+  optional `self.context` attribute, set only in `ENABLED` mode for a
+  strategy that opts in via a new `uses_context` class attribute
+  (defaults `False` for every bundled strategy). `Trade` gained an
+  optional `entry_context` field, attached in `TradingEngine._record_trade`
+  (the single shared closing path for every trade). Same execution
+  path for backtesting/paper/live — no duplicate pipeline. See Phase 9
+  below for the full scope this landed alongside.
 - **Phase 5 — persistence (maybe).** Whether `MarketContext` snapshots
   get stored for research/backtesting analysis. Would be a database
   schema change — needs explicit approval per CLAUDE.md section 8 —
   and isn't decided yet; don't assume it's wanted.
 - **Phase 8 — completion and validation (done, 2026-07-27).** An
   11-part phase making the engine production-ready as an independent
-  subsystem before any integration: Part 1 (trend/liquidity/risk, see
+  subsystem before integration: Part 1 (trend/liquidity/risk, see
   "Phase 3" above), Part 2 (configurable scoring —
   `scoring.ScoringConfig` centralizes all six weights, previously
   hardcoded constants; `ContextEngine.__init__` gained an optional
@@ -158,8 +163,55 @@ Engine" section for the full rationale.
   (`docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` — confirmed zero
   changes outside `context/`/tests/docs/tools across this entire
   multi-phase effort). 89 new tests this phase (1074 → 1163 total).
-  **Integration into `TradingEngine`/`Strategy` explicitly not started**
-  — see Phase 4 above, needs its own approval.
+- **Phase 9 — integration and A/B comparison (done, 2026-07-27).** See
+  Phase 4 above for the `ContextMode`/`Trade.entry_context`/
+  `Strategy.context` mechanics. Also added
+  `backtest/context_comparison.py`'s `compare_context_impact` — runs the
+  same strategy factory/settings/bars through `OBSERVE` (baseline) and
+  `ENABLED` (may differ) via the same `run_backtest`, diffs the trade
+  lists (`UNCHANGED`/`REMOVED_BY_CONTEXT`/`ADDED_BY_CONTEXT`/
+  `ENTERED_DIFFERENTLY`/`EXITED_DIFFERENTLY`), and attaches the
+  `MarketContext`/`EnvironmentScore` explaining each change (metrics
+  reused directly from `BacktestMetrics`, nothing recomputed). Two real
+  bugs found and fixed during manual verification: `TradingEngine.bars`
+  (a bounded `deque`) doesn't support the slice indexing
+  `liquidity.py`/`volatility.py` need (fixed: convert to `list` once
+  per bar); `dataclasses.replace`'s result (needed to attach
+  `entry_context` to a frozen `Trade`) was being discarded instead of
+  written back into `PaperBroker.trades` (fixed). Verified directly:
+  `OFF` byte-identical to a pre-integration-style backtest; `OBSERVE`
+  decision-identical to `OFF`; `ENABLED` decision-identical to
+  `OFF`/`OBSERVE` for any non-opted-in strategy. 27 new tests
+  (1163 → 1190 total).
+- **Platform Verification Phase 1 (done, 2026-07-27).** Independent,
+  read-only audit of the Phase 9 integration —
+  `docs/PLATFORM_VERIFICATION_PHASE1.md`. All `ContextMode`/execution-
+  flow/backward-compatibility/`MarketContext`-consistency checks PASS,
+  verified with reproductions and exact-equality regression tests, not
+  just re-asserted. Two findings, neither fixed (measure-only scope):
+  (1) `cProfile` shows ADX and volatility/ATR are each computed *twice*
+  per bar (`regime.py` and `trend.py` both call `adx()`; `context_engine.py`
+  and `regime.py` both call `analyze_volatility()`) — ~90% of all
+  context-generation CPU time, a high-value future optimization target;
+  (2) reusing one `Strategy` instance across two engine runs with
+  different `ContextMode`s can leave a stale `self.context` from the
+  first run — harmless today (no current caller reuses instances,
+  confirmed by inspection) but a real, reproduced gap worth closing
+  defensively before any future tooling does. 25 new tests
+  (1190 → 1215 total). Confidence level: High.
+- **Platform Verification Phase 2 (done, 2026-07-27).** Fixed both
+  findings from Phase 1's audit — `docs/PLATFORM_VERIFICATION_PHASE2.md`.
+  ADX/volatility dedup: `classify_regime`/`analyze_trend` gained
+  sentinel-defaulted `precomputed_*` parameters (every existing caller
+  unaffected); `ContextEngine.build_context` computes each once per bar
+  and passes them through. Verified byte-identical output directly (not
+  just via the passing suite) and `cProfile`-confirmed exactly-once call
+  counts (800/800, down from 1,585/1,600 for 800 bars). Stale-context
+  fix: `TradingEngine` now resets `Strategy.context` at construction and
+  unconditionally every bar. Per-run context-generation cost down
+  ~35-46% (converging toward ~45%, matching the ~90%-duplicate-halved
+  prediction). 6 new tests (1215 → 1221 total). No remaining blockers
+  before the first context-aware strategy is built.
 
 ## Completed
 
@@ -195,11 +247,29 @@ into git history):
   live database — see Medium/Low priorities above.
 - Repeatable one-command startup system (`scripts\start.ps1` +
   stop/restart/status, `start.cmd`) (2026-07-27).
-- Market Context Engine — **complete as an independent subsystem**
-  through Phase 8 (foundation + Session/Volatility/Regime/
-  Multi-Timeframe/Structure/Trend/Liquidity/Risk + configurable
-  Context Scoring + engine validation + look-ahead audit + performance
-  benchmark + context analytics + coverage report + architecture
-  review) (2026-07-27) — see "Market Context Engine (phased)" above;
-  only Phase 4 (wiring into `TradingEngine`/`Strategy`, needs approval)
-  and Phase 5 (persistence, maybe) remain.
+- Market Context Engine — **complete and integrated into
+  `TradingEngine`** through Phase 9 (foundation +
+  Session/Volatility/Regime/Multi-Timeframe/Structure/Trend/Liquidity/
+  Risk + configurable Context Scoring + engine validation + look-ahead
+  audit + performance benchmark + context analytics + coverage report +
+  architecture review + `ContextMode` integration + OFF-vs-ENABLED A/B
+  comparison) (2026-07-27) — see "Market Context Engine (phased)"
+  above; only Phase 5 (persistence, maybe, needs approval) and deciding
+  whether/how any *specific* bundled strategy should adopt
+  `uses_context = True` remain.
+- **Team deployment (Tailscale + centralized TimescaleDB) — complete and
+  verified against a live server** (2026-07-27). Both databases ported
+  (`PgMarketDataStore`/`PgTradeStore`, same method surface as the SQLite
+  originals, selected transparently via `FUTURES_BOT_DATABASE_URL`),
+  Alembic-managed schema (`alembic/`, both databases' 19 tables, `bars` a
+  real TimescaleDB hypertable), a verified data-migration script
+  (`tools/migrate_to_timescaledb.py`), a backup script
+  (`tools/backup_timescaledb.py`), `scripts/start-team.ps1`,
+  `GET /api/system/health`, and Mission Control's `StatusBar`/`HealthGrid`
+  wired to it. Three real bugs found and fixed during this session's own
+  live-server verification (KNOWN_ISSUES.md ISSUE-010/011/012). See
+  `PROJECT_STATE.md`'s "Team deployment" write-up and `TEAM_DEPLOYMENT.md`.
+  **Deliberately not done**: migrating the real production
+  `market_data.db`/`research.db` (927 MB/26 MB) into a live team
+  instance — an operator's own decision, whenever a second machine is
+  actually ready to join the tailnet, not an automated step.

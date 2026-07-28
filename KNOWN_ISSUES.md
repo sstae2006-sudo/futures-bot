@@ -215,3 +215,221 @@ verified fixed — instead mark it Resolved with a date and commit.
   correctly) or anyone running `npx vite` and browsing to whatever URL
   it prints — only matters for scripts/tools that hardcode
   `127.0.0.1`.
+
+---
+
+### ISSUE-008 — Context Engine computed ADX and volatility twice per bar (RESOLVED)
+
+- **Severity:** Medium (performance only — no incorrect output; every
+  duplicate call produced the identical, correct result)
+- **Description:** Found by Platform Verification Phase 1's `cProfile`
+  audit (2026-07-27): `context/regime.py`'s `classify_regime` and
+  `context/trend.py`'s `analyze_trend` each independently called
+  `strategy.indicators.adx(bars, period=14)` with identical arguments;
+  `context/context_engine.py`'s `_classify_volatility` and
+  `regime.classify_regime` (internally) each independently called
+  `context.volatility.analyze_volatility(...)`. Measured at ~90% of all
+  context-generation CPU time for an 800-bar `OBSERVE` backtest (1,585
+  `adx()` calls, 1,600 `analyze_volatility()` calls, both ≈2x the 800
+  `build_context` invocations that triggered them).
+- **Files involved:** `src/futures_bot/context/regime.py`,
+  `src/futures_bot/context/trend.py`,
+  `src/futures_bot/context/context_engine.py`.
+- **Possible cause:** Each classifier module was built independently
+  (Phase 8) and reused `adx()`/`analyze_volatility()` directly rather
+  than coordinating with sibling modules that needed the same value.
+- **Current status:** **Resolved 2026-07-27** (Platform Verification
+  Phase 2, `docs/PLATFORM_VERIFICATION_PHASE2.md`). `classify_regime`/
+  `analyze_trend` gained optional `precomputed_volatility`/
+  `precomputed_adx` parameters (sentinel-defaulted, so every existing
+  caller is unaffected); `ContextEngine.build_context` now computes
+  both once per bar and passes them through. Verified byte-identical
+  output (`tests/test_platform_verification_phase2.py`) and confirmed
+  by `cProfile`: 800/800 calls for 800 `build_context` invocations, down
+  from 1,585/1,600. Per-run context-generation cost reduced ~35-46%
+  (converging toward ~45% as bar count grows).
+
+---
+
+### ISSUE-009 — Stale `Strategy.context` could leak across a reused Strategy instance (RESOLVED)
+
+- **Severity:** Low (never affected any current caller — every existing
+  call site constructs a fresh `Strategy` instance per run — but a
+  real, reproducible latent risk for any future caller that reused one)
+- **Description:** Found by Platform Verification Phase 1 (2026-07-27):
+  `TradingEngine.on_bar` only ever set `self.strategy.context` inside
+  the `ContextMode.ENABLED` + `strategy.uses_context` branch, never
+  resetting it in any other mode. Reusing the same `Strategy` instance
+  across two separate engine runs — first `ENABLED` (sets `.context`),
+  then `OFF` or a non-opted-in `ENABLED` run — left the first run's
+  value visible during the second. Reproduced directly via
+  `tests/test_platform_verification_phase1.py`.
+- **Files involved:** `src/futures_bot/engine.py` (`TradingEngine.__init__`,
+  `TradingEngine.on_bar`).
+- **Possible cause:** The original integration only wrote to
+  `Strategy.context` when there was something real to write, without
+  considering that a reused instance needs the *absence* of context
+  written explicitly too.
+- **Current status:** **Resolved 2026-07-27** (Platform Verification
+  Phase 2). `TradingEngine.__init__` now resets `self.strategy.context =
+  None` at construction; `on_bar` now sets it unconditionally every bar
+  (the real value or `None`), closing the gap automatically with no
+  caller-side discipline required. Verified by the inverted
+  `TestStaleStrategyContextAcrossReusedInstancesIsResolved` and a new,
+  narrower construction-time-only test.
+
+---
+
+### ISSUE-010 — `bars.id` had no way to auto-generate a value on Postgres (RESOLVED)
+
+- **Severity:** High (would have raised `NOT NULL` violation on the very
+  first `PgMarketDataStore.upsert_bars` insert against a real server)
+- **Description:** Found 2026-07-27, the first time `db/schema.py`'s
+  `bars` table was actually created against a live TimescaleDB instance
+  (`alembic upgrade head`) rather than only compiled against SQLAlchemy's
+  dialect. `id` was declared `autoincrement=True` but is deliberately
+  *not* the table's primary key (the real uniqueness constraint is
+  `uq_bars_identity` on `(product_code, resolution, timestamp)` — see that
+  column's own comment). Postgres/SQLAlchemy only auto-generates a
+  sequence default for `autoincrement=True` on a single-column primary
+  key; without one, `id` had no default at all, and `pg_store.py::upsert_bars`
+  never supplies it explicitly (matching the SQLite store's own
+  `rowid`-equivalent behavior).
+- **Files involved:** `src/futures_bot/db/schema.py` (`bars` table).
+- **Possible cause:** The schema was written and dialect-verified before
+  any real server existed to catch this — a plausible-looking
+  `autoincrement=True` that only fails at actual insert time, not at
+  `CREATE TABLE` time.
+- **Current status:** **Resolved 2026-07-27.** Changed to
+  `Identity(always=False)`, which Postgres supports independently of
+  primary-key status (`GENERATED BY DEFAULT AS IDENTITY`). Verified
+  against the live `deploy/docker-compose.yml` `timescaledb` service:
+  `\d bars` shows the identity default; `tests/test_pg_market_data_store_live.py`
+  exercises real inserts end-to-end.
+
+---
+
+### ISSUE-011 — `PgMarketDataStore` returned native `datetime` where `MarketDataStore` always returned a string (RESOLVED)
+
+- **Severity:** High (a real `pydantic.ValidationError` 500 on
+  `GET /api/market-data/overview`, the very first time that route was hit
+  against a live server)
+- **Description:** Found 2026-07-27 via a real HTTP 500, not a unit test:
+  `fetch_sync_runs`/`fetch_gaps`/`contract_rolls` read Postgres's native
+  `TIMESTAMPTZ` columns, which psycopg returns as real `datetime` objects.
+  `MarketDataStore`'s identically-shaped SQLite methods return the raw
+  TEXT string unconverted (no `datetime.fromisoformat()` call) — every
+  caller up the stack (`market_data_service.py`, `api/schemas.py::SyncRunOut`/
+  `GapOut`/`MarketDataOverviewOut.last_sync_at`) already assumed a plain
+  string, because that's all SQLite had ever produced. `tests/test_market_data_store_parity.py`
+  (signature-only) and the first pass of `tests/test_pg_market_data_store_live.py`
+  (which asserted `PgMarketDataStore`'s own values in isolation, never
+  cross-checking against what the SQLite side actually returns for the
+  same method) both missed this — it only surfaced by exercising the real
+  HTTP route end to end.
+- **Files involved:** `src/futures_bot/market_data/pg_store.py`
+  (`contract_rolls`, `fetch_sync_runs`, `fetch_gaps`).
+- **Possible cause:** `coverage()`'s `Coverage.earliest`/`.latest` are
+  real `datetime` objects on *both* backends (SQLite explicitly parses
+  them; Postgres returns them natively) — that method's parity was never
+  in question. The three dict-returning methods above were the only ones
+  where SQLite's "TEXT, so always already a string" and Postgres's
+  "TIMESTAMPTZ, so always already a `datetime`" diverge.
+- **Current status:** **Resolved 2026-07-27.** Added
+  `pg_store.py::_isoformat_datetimes`, applied to all three methods'
+  return dicts, restoring the "identical dict shape on both backends"
+  guarantee `test_market_data_store_parity.py` already promises callers.
+  Regression tests added directly to `tests/test_pg_market_data_store_live.py`
+  (asserting `isinstance(value, str)` for every affected field) and a new
+  `tests/test_api_market_data_live.py` exercising the actual route against
+  a live server end to end.
+
+---
+
+### ISSUE-012 — `tools/migrate_to_timescaledb.py` always reported 0 rows newly inserted (RESOLVED)
+
+- **Severity:** Medium (cosmetic/reporting only — the migration itself
+  wrote every row correctly, confirmed by the script's own source-vs-
+  destination row-count verification; only the per-table "N newly
+  inserted" figure printed during the run was wrong)
+- **Description:** Found 2026-07-27 during this script's first real run
+  against a live server: every table reported "0 newly inserted, N
+  already present" even on the very first run against an empty
+  destination. `migrate_table()` trusted the driver-reported
+  `result.rowcount` from a multi-row `INSERT ... ON CONFLICT DO NOTHING`
+  — exactly the pitfall `pg_store.py::upsert_bars`'s own docstring already
+  documents and avoids elsewhere in this same codebase: `rowcount` is not
+  reliably "rows actually inserted" for that statement shape under every
+  driver.
+- **Files involved:** `tools/migrate_to_timescaledb.py` (`migrate_table`).
+- **Possible cause:** Written by analogy to a plain `INSERT` (where
+  `rowcount` is reliable) without re-deriving that `ON CONFLICT DO
+  NOTHING` changes the semantics — despite the correct pattern already
+  existing one file away.
+- **Current status:** **Resolved 2026-07-27.** Switched to
+  `.returning(*dest_columns)` + `len(result.fetchall())`, the same fix
+  already applied to `upsert_bars`. Verified directly: a first run against
+  an empty destination now reports the real per-table counts, and a
+  second (idempotent) run against the same data reports 0 — covered by
+  `tests/test_migrate_to_timescaledb.py`.
+
+---
+
+### ISSUE-013 — Full test suite is not hermetic w.r.t. `FUTURES_BOT_DATABASE_URL` (RESOLVED)
+
+- **Severity:** High (silently corrupts dozens of unrelated test results
+  for any developer who has `FUTURES_BOT_DATABASE_URL` set in their shell
+  for legitimate team-deployment work, then runs the general suite)
+- **Description:** Found 2026-07-27 while re-verifying the full suite
+  against a live server as part of this session's own team-deployment
+  work: with `FUTURES_BOT_DATABASE_URL` exported in the shell, 41 tests
+  failed that have no connection to Postgres at all —
+  `test_api_services.py`, `test_cli_market_data.py`,
+  `test_research_server_nightly_jobs.py`,
+  `test_research_server_paper_trader.py`, etc. Root cause: none of those
+  tests' fixtures guard against `FUTURES_BOT_DATABASE_URL` — they isolate
+  via `FUTURES_BOT_RESEARCH_DB`/`FUTURES_BOT_MARKET_DATA_DB` (per-test
+  tmp-file SQLite paths), a pattern that predates this variable mattering
+  at all. Once it's set, `get_store()`/`get_market_data_store()`
+  transparently route *every* one of those tests through the same live
+  shared Postgres instance instead of each getting its own isolated
+  SQLite file — cross-test state leakage (a `TestRollDetection` test
+  expecting "no active contract yet" instead saw one left over from an
+  earlier test/session), not a Postgres-specific bug. Confirmed
+  reproducible in a genuinely isolated single pytest process (no
+  concurrent second process — that was ruled out first, see the false
+  lead below).
+- **Files involved:** Every test file using `get_store()`/
+  `get_market_data_store()` indirectly (via `TradeStore`/`MarketDataStore`
+  API routes/CLI commands) without controlling `FUTURES_BOT_DATABASE_URL`
+  itself — i.e., nearly the whole suite. Fixed centrally in
+  `tests/conftest.py` rather than touching every affected file.
+- **Possible cause:** `FUTURES_BOT_DATABASE_URL` didn't exist as a
+  meaningful switch before this session's team-deployment work — no test
+  ever needed to guard against it, because no developer's shell would
+  plausibly have it set for an unrelated reason before now.
+- **False lead ruled out first:** an earlier full-suite run (with this
+  variable set) showed a similar-looking but different failure set while
+  a second, forgotten background `pytest` invocation was still running
+  concurrently against the same live database — that one really was just
+  two processes racing on shared state, confirmed by re-running in
+  genuine isolation (`ps aux` showing exactly one pytest process) and
+  still seeing 41 failures. Both are real; they're independent findings.
+- **Current status:** **Resolved 2026-07-27.** New `tests/conftest.py`:
+  a session-wide autouse fixture clears `FUTURES_BOT_DATABASE_URL` for
+  every test by default (with a guarded `dispose_engine()` call, since
+  `db.engine.get_engine()`'s cached singleton doesn't re-check the env
+  var once built — a stale cached Engine from an earlier live test could
+  otherwise leak into a later, supposedly-hermetic one even after the env
+  var itself is cleared). The handful of test modules that deliberately
+  need a live database (`test_pg_market_data_store_live.py`,
+  `test_pg_trade_store_live.py`, `test_db_health.py`,
+  `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) opt
+  back in explicitly via a `live_database_url` fixture, depended on by
+  each file's central `store`/`client`/cleanup fixture — pytest guarantees
+  the autouse clear runs before any fixture that explicitly requests
+  something it affects, so this ordering is deterministic, not a race.
+  Verified: full suite with `FUTURES_BOT_DATABASE_URL` unset still shows
+  the same 1250 passed/29 skipped baseline; with it set to the live
+  compose instance, all 1279 run for real with 0 failures (see
+  `PROJECT_STATE.md`/`CHANGELOG.md` for the exact confirmation run).

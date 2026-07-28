@@ -89,6 +89,7 @@ of guessing.
 | `ROADMAP.md` | Current priorities and forward plans; a Completed section for finished work. |
 | `docs/ARCHITECTURE.md` | System-layer diagram, dependency direction, both databases' roles. |
 | `BOOT_CHECKLIST.md` | The concrete commands for the verification steps below. |
+| `TEAM_DEPLOYMENT.md` | Team-mode deployment (Tailscale + shared TimescaleDB/Postgres): server setup, schema migration, data migration, backend startup, backups, onboarding, updating the server, troubleshooting. Single-developer setups (the default) never need this file. |
 
 **Before touching code:**
 
@@ -148,13 +149,15 @@ futures_bot.api`, `npm run dev`).
 | `src/futures_bot/market_data/` | Market-data sync/scheduler/store and the vendor contracts client. |
 | `src/futures_bot/brokers/` | Paper broker (used everywhere except live CLI trading) and the Tradovate live broker adapter. |
 | `src/futures_bot/risk/` | Risk manager — daily loss kill switch, trade caps, trading-hours filter, force-flat. |
-| `src/futures_bot/context/` | Market Context Engine — **complete as an independent subsystem as of Phase 8 (2026-07-27)**, every dimension real: `MarketContext` value object, `ContextEngine` (configurable via `scoring_config`), `session.py`, `volatility.py`, `regime.py`, `timeframe.py`, `structure.py`, `trend.py`, `liquidity.py`, `risk.py` (all classification dimensions), `scoring.py` (`EnvironmentScore`, configurable weights via `ScoringConfig`), `analytics.py` (dev/research distribution reports). Not wired into `TradingEngine`/`Strategy` yet — deliberately, pending explicit approval. See section 8, `docs/ARCHITECTURE.md`'s "Market Context Engine" section, and `docs/CONTEXT_ENGINE_COVERAGE.md`/`CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`/`CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`/`CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md`. |
-| `deploy/` | Dockerfiles, docker-compose, systemd units. |
+| `src/futures_bot/context/` | Market Context Engine — **complete and integrated into `TradingEngine` (2026-07-27)**, every dimension real: `MarketContext` value object, `ContextEngine` (configurable via `scoring_config`), `session.py`, `volatility.py`, `regime.py`, `timeframe.py`, `structure.py`, `trend.py`, `liquidity.py`, `risk.py` (all classification dimensions), `scoring.py` (`EnvironmentScore`, configurable weights via `ScoringConfig`), `analytics.py` (dev/research distribution reports). Wired into `engine.py` via `ContextMode` (OFF/OBSERVE/ENABLED — OFF is the default for every existing caller, a complete no-op). See section 8, `docs/ARCHITECTURE.md`'s "Market Context Engine" section, and `docs/CONTEXT_ENGINE_COVERAGE.md`/`CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`/`CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`/`CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md`. |
+| `src/futures_bot/db/` | Team-deployment mode's Postgres/TimescaleDB plumbing (2026-07-27): `engine.py` (pooled SQLAlchemy `Engine`, `FUTURES_BOT_DATABASE_URL`), `health.py` (`check_database_health()`), `schema.py`/`research_schema.py` (Core `Table`/`MetaData` for `market_data.db`'s 5 tables and `research.db`'s 14, the source Alembic autogenerates against). Imported lazily everywhere else — a SQLite-only setup never needs the `db` extra installed. See `TEAM_DEPLOYMENT.md`. |
+| `alembic/` | Schema migrations for the team-deployment Postgres/TimescaleDB path only (2026-07-27) — `alembic upgrade head`, never automatic on boot. SQLite (the default) has no migration history here; it still self-creates via each store's own `ensure_schema()`. |
+| `deploy/` | Dockerfiles, docker-compose (including the `timescaledb` service for team-deployment mode, 2026-07-27), systemd units. |
 | `docs/` | Architecture, research server, ML workstation, strategy authoring, trade importer, trading workflow, user manual. |
-| `tools/` | Data-maintenance/ops scripts (contract building, schema fixes, backup/merge/restore). Not part of the installable package. |
-| `scripts/` | `start.ps1`/`stop.ps1`/`restart.ps1`/`status.ps1` — the official one-command boot/shutdown/status system (2026-07-27). `start.cmd` at repo root double-click-launches `start.ps1`. See section 9 and `BOOT_CHECKLIST.md`. |
-| `market_data.db` | Historical OHLCV market-data cache. Gitignored, can reach ~1 GB+; regenerate via `tools/pull_massive_flatfiles.py` and related scripts, never commit it or a backup. |
-| `research.db` | Backtests/trades/experiments/ML-model research database. Gitignored. |
+| `tools/` | Data-maintenance/ops scripts (contract building, schema fixes, backup/merge/restore, and — 2026-07-27 — `migrate_to_timescaledb.py`/`backup_timescaledb.py` for team-deployment mode). Not part of the installable package. |
+| `scripts/` | `start.ps1`/`stop.ps1`/`restart.ps1`/`status.ps1` — the official one-command boot/shutdown/status system (2026-07-27) for the single-developer/local-SQLite path. `start.cmd` at repo root double-click-launches `start.ps1`. See section 9 and `BOOT_CHECKLIST.md`. `start-team.ps1` (2026-07-27) is the separate team-deployment entry point — see `TEAM_DEPLOYMENT.md`, not `BOOT_CHECKLIST.md`. |
+| `market_data.db` | Historical OHLCV market-data cache. Gitignored, can reach ~1 GB+; regenerate via `tools/pull_massive_flatfiles.py` and related scripts, never commit it or a backup. Team-deployment mode (`FUTURES_BOT_DATABASE_URL` set) replaces this file with a shared TimescaleDB instance instead — see `TEAM_DEPLOYMENT.md`. |
+| `research.db` | Backtests/trades/experiments/ML-model research database. Gitignored. Same team-deployment substitution as `market_data.db` above. |
 
 ## 8. Architecture
 
@@ -163,14 +166,21 @@ system-layer diagram (frontend → API → core engine → research layer →
 persistence) and dependency-direction rules — keep it current when
 architecture changes.
 
-**Target layering (Context Engine complete, integration not started):**
-Market Data → Context Engine → Strategy Engine → Risk Engine →
-Execution. `context/` is fully built and validated (every dimension
-real, no stubs remain) but deliberately **not wired in yet** — see
-`docs/ARCHITECTURE.md`'s "Market Context Engine" section for the exact
-integration point, the configuration system, and the known limitations
-before touching `engine.py`, `strategy/`, or `risk/` to wire it in
-(needs explicit approval per the protected list below).
+**Target layering (Context Engine complete and integrated):** Market
+Data → Context Engine → Strategy Engine → Risk Engine → Execution.
+`context/` is fully built, validated, and wired into `TradingEngine` via
+`engine.ContextMode` (OFF/OBSERVE/ENABLED) — see `docs/ARCHITECTURE.md`'s
+"Market Context Engine" section for the exact execution flow, the
+configuration system, and the known limitations before touching
+`engine.py`, `strategy/`, or `risk/` further. `Strategy.on_bar`'s call
+signature and every existing bundled strategy's behavior are unchanged
+(`context/` only reaches a strategy via the optional `self.context`
+attribute, set only in `ENABLED` mode for a strategy that explicitly
+opts in via `uses_context = True`); `OFF` (the default for every
+existing caller) is a complete no-op. Deciding whether/how a *specific*
+strategy should actually consult `self.context` to change its own
+decisions, and whether context snapshots get persisted for research,
+both still need explicit approval per the protected list below.
 
 **Never change without explicit approval:**
 

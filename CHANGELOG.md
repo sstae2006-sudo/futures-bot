@@ -4,6 +4,575 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-27 — Team deployment (Tailscale + TimescaleDB): completed and verified against a live server
+
+Continuation and completion of the entry directly below (`market_data.db`
+vertical slice, `[IN PROGRESS]`) — Docker/WSL2 is now installed, unblocking
+everything that entry's "Not started"/"Not yet verified" lists deferred.
+Approved plan: `C:\Users\sstae\.claude\plans\polymorphic-nibbling-lamport.md`.
+Full detail (bugs found, exact test counts, per-table verification) is in
+`PROJECT_STATE.md`'s "Team deployment — completed" write-up and
+`KNOWN_ISSUES.md` ISSUE-010/011/012 (all found and fixed this session,
+logged Resolved immediately); this entry is the summary.
+
+**Added**
+- `deploy/docker-compose.yml`'s `timescaledb` service (official
+  `timescale/timescaledb:latest-pg16` image, named volume, health check,
+  loopback-only port binding).
+- `alembic/` + `alembic.ini` — Alembic now manages both databases'
+  Postgres schema (`db/schema.py` + new `db/research_schema.py`, 5 + 14
+  tables), chained as two revisions. `alembic upgrade head` verified
+  against the live compose instance: every table created, `bars`
+  genuinely converted into a TimescaleDB hypertable
+  (`timescaledb_information.hypertables` confirmed).
+- `src/futures_bot/research/pg_trade_store.py::PgTradeStore` — full
+  Postgres port of `TradeStore`, all ~60 methods, verified against the
+  live server (`tests/test_pg_trade_store_live.py`, 12 tests covering
+  every subsystem including the client-import FIFO-lot pipeline).
+  `api/store.py::get_store()` now branches on `FUTURES_BOT_DATABASE_URL`
+  exactly like `market_data/store.py::get_market_data_store()` already
+  did; unset (the default) is byte-identical to before.
+- `tools/migrate_to_timescaledb.py` — real, verified data migration
+  (`--dry-run`/`--yes`, batched `ON CONFLICT DO NOTHING`, source-vs-
+  destination row-count verification). Verified end-to-end against
+  synthetic fixtures covering all 19 tables, including a same-data re-run
+  proving idempotency (`tests/test_migrate_to_timescaledb.py`, 5 tests) —
+  **not yet run against the real production `market_data.db`/`research.db`**,
+  deliberately (927 MB/26 MB of real data; the approved plan's own
+  Verification section calls that a separate, operator-run step against
+  real data later, not something to do automatically). See
+  "Recommended Next Task" in `PROJECT_STATE.md`.
+- `tools/backup_timescaledb.py` — `pg_dump`-based backup + JSON marker
+  (`db_backups/last_backup.json`) `/api/system/health` reads. Unit-tested
+  (`tests/test_backup_timescaledb.py`, 8 tests); the actual `pg_dump`
+  invocation itself needs an operator with Postgres client tools
+  installed to exercise for real (confirmed graceful, correct failure
+  when `pg_dump` isn't on PATH — this dev sandbox has none).
+- `scripts/start-team.ps1` — team-mode boot (builds the frontend once,
+  starts the backend bound to this machine's Tailscale address via
+  `--allow-network-exposure`, serving the built dashboard from the same
+  process). Syntax-verified and confirmed to fail safely (clear message,
+  exit 1, no side effects) before any network-exposing action when
+  `FUTURES_BOT_DATABASE_URL`/Tailscale aren't ready — a full run needs a
+  real Tailscale network to actually exercise end-to-end, not done this
+  session.
+- `GET /api/system/health` (`api/routes/system.py`, `api/schemas.py::SystemHealthOut`/
+  `DatabaseHealthOut`) — backend "ok", database configured/ok/latency/error
+  (`db/health.py`), process uptime, last-backup timestamp, and an honest
+  "connected users" estimate (`api/connected_users.py`'s process-local
+  sliding-window IP tracker, explicitly documented as approximate given
+  there's still no auth system). 23 new tests across
+  `tests/test_api_system_health.py`/`test_connected_users.py`/`test_db_health.py`.
+- `db/engine.py::prime_engine` + `api/app.py::_maybe_prime_db_engine` —
+  `config.py::DeploymentSettings.pool_size`/`max_overflow`/
+  `pool_recycle_seconds` were defined last session but never actually
+  reached `get_engine()` (every real call site used its bare defaults) —
+  closed that gap at API startup.
+- Mission Control's `StatusBar`/`HealthGrid` now consume real data from
+  `/api/system/health` (`frontend/src/api.ts::getSystemHealth`,
+  `frontend/src/types.ts::SystemHealth`) for exactly the fields the
+  team-deployment plan scoped for them — version/environment/uptime in
+  `StatusBar`, a conditionally-rendered "Team Database" card in
+  `HealthGrid` (only shown when `database.configured`). Every other
+  Mission Control section is unchanged, still mock, per that plan's own
+  scope.
+- `docs/ARCHITECTURE.md`'s PERSISTENCE section, `CLAUDE.md`'s doc table
+  and File Ownership table (`TEAM_DEPLOYMENT.md`, `src/futures_bot/db/`,
+  `alembic/`, `scripts/start-team.ps1`, `tools/migrate_to_timescaledb.py`/
+  `backup_timescaledb.py`), `TEAM_DEPLOYMENT.md` itself (server setup,
+  Tailscale setup, onboarding, updating the server, troubleshooting) all
+  updated/finalized to match what's actually built and verified, not what
+  was planned.
+
+**Fixed (found during this session's own live-server verification, not
+via a pre-existing test)** — see `KNOWN_ISSUES.md` for full detail on each:
+- **ISSUE-010**: `db/schema.py`'s `bars.id` had no way to auto-generate a
+  value on Postgres (`autoincrement=True` only applies to a single-column
+  primary key, and `id` deliberately isn't one) — would have raised `NOT
+  NULL` on the first real insert. Fixed with `Identity(always=False)`.
+- **ISSUE-011**: `PgMarketDataStore.fetch_sync_runs`/`fetch_gaps`/
+  `contract_rolls` returned native `datetime` objects (Postgres
+  `TIMESTAMPTZ`) where `MarketDataStore`'s SQLite equivalents always
+  returned a plain string — caused a real 500 (`pydantic.ValidationError`)
+  hitting `GET /api/market-data/overview` against the live server.
+  Fixed with `pg_store.py::_isoformat_datetimes`.
+- **ISSUE-012**: `tools/migrate_to_timescaledb.py` always reported "0
+  newly inserted" for every table, even on the first real run — trusted
+  `result.rowcount` for a multi-row `INSERT ... ON CONFLICT DO NOTHING`,
+  the exact pitfall `pg_store.py::upsert_bars`'s own docstring already
+  documents and avoids one file away. Data landed correctly either way;
+  only the reporting was wrong. Fixed with `.returning()` + `fetchall()`.
+- **ISSUE-013**: the general test suite was not hermetic w.r.t.
+  `FUTURES_BOT_DATABASE_URL` — with it exported (exactly what a developer
+  doing this session's own work would have in their shell), 41 tests with
+  no connection to Postgres failed, because none of their fixtures
+  guarded against that variable and `get_store()`/`get_market_data_store()`
+  silently routed them through the live shared instance instead of each
+  test's own isolated SQLite tmp file. New `tests/conftest.py`: an
+  autouse fixture clears it for every test by default; the handful of
+  test modules that genuinely need a live database opt back in
+  explicitly via a `live_database_url` fixture.
+
+**Also fixed:** a doc gap found during this session's boot-checklist
+reconciliation, not a code bug — the Mission Control frontend scaffold
+(`frontend/src/pages/MissionControl.tsx` + `components/mission-control/`)
+landed in the prior (paused) session but was never mentioned in that
+session's `PROJECT_STATE.md`/`CHANGELOG.md` write-up. Backfilled into both
+under today's date.
+
+**Verified**
+- Full test suite with `FUTURES_BOT_DATABASE_URL` unset: 1250 passed, 29
+  skipped (every live-server test, by design), 0 failed — confirms every
+  existing single-developer setup is still byte-identical. Re-confirmed
+  after the ISSUE-013 fix (`tests/conftest.py`) to prove that fix didn't
+  change this baseline.
+- Full test suite with `FUTURES_BOT_DATABASE_URL` set: first attempt
+  showed 41-46 failures across two separate causes — a forgotten
+  concurrent second `pytest` process racing on shared state (a testing-
+  process mistake, not a product bug), and ISSUE-013 itself (a real,
+  independent finding). After the ISSUE-013 fix, in genuine isolation:
+  see the exact re-confirmed count directly below this bullet once
+  available in `PROJECT_STATE.md`.
+- Concurrency (plan's own Verification item #4): 30 concurrent requests
+  (mixed `/api/system/health`, `/api/market-data/overview`,
+  `POST /api/backtest/run`, `/api/backtests`) against the shared
+  TimescaleDB instance via a thread pool — 0 errors, 0 pool exhaustion,
+  every backtest run got a distinct id (no cross-request corruption).
+- `market_data.db`'s tables (verified last session) confirmed untouched
+  by this session's `research.db` work (`bars` still 0 rows after this
+  session's test data was truncated).
+
+No commit hash yet — not committed this session.
+
+## 2026-07-27 — Team deployment (Tailscale + TimescaleDB): market_data.db vertical slice [IN PROGRESS]
+
+Approved plan: `C:\Users\sstae\.claude\plans\polymorphic-nibbling-lamport.md`.
+Paused mid-implementation, blocked on Docker/WSL2 not yet available in
+the dev environment — see `PROJECT_STATE.md`'s "Recommended Next Task"
+for the exact resume point. This entry covers what actually landed.
+
+**Added**
+- `src/futures_bot/db/` (new package): `engine.py` (pooled SQLAlchemy
+  `Engine`, `pool_pre_ping` reconnect, `FUTURES_BOT_DATABASE_URL`),
+  `health.py` (`check_database_health()`), `schema.py` (Postgres/
+  TimescaleDB `Table`/`MetaData` for `market_data.db`'s 5 tables +
+  hypertable conversion statements).
+- `src/futures_bot/market_data/pg_store.py::PgMarketDataStore` — full
+  Postgres port of `MarketDataStore`, all 23 methods, verified identical
+  public method surface via `tests/test_market_data_store_parity.py`
+  (5 new tests).
+- `market_data/store.py::get_market_data_store()` — the one seam every
+  caller now goes through instead of constructing `MarketDataStore(default_db_path())`
+  directly; branches on `FUTURES_BOT_DATABASE_URL`. `api/market_data_store.py`
+  re-exports it as a thin wrapper for `api/`-layer imports.
+- `config.py::DeploymentSettings` (`deployment.environment`, pool
+  tuning) on `Settings`, defaulting to today's behavior; documented
+  (commented out) in `config.example.yaml`.
+- `db` optional dependency group in `pyproject.toml` (`sqlalchemy`,
+  `psycopg[binary]`, `alembic`).
+- **Mission Control frontend scaffold** (plan item #7's frontend half):
+  `frontend/src/pages/MissionControl.tsx` + 7 components under
+  `frontend/src/components/mission-control/` (`StatusBar`, `HealthGrid`,
+  `AlertCenter`, `ActivityFeed`, `QuickActions`, `RoadmapPanel`,
+  `SummaryCards`), wired in as the app's new index route (`App.tsx`/
+  `Layout.tsx` gained a "Home" nav entry; the prior index `Dashboard`
+  route moved to `/dashboard`). Layout/component structure is real;
+  every value is placeholder data in `missionControlData.ts` (documented
+  in that file's own header) pending the real `/api/system/health` route
+  below. This bullet was missing from the original write-up of this
+  entry — added 2026-07-27 during the next session's boot-checklist
+  reconciliation (CLAUDE.md §6).
+
+**Changed**
+- `cli.py`, `backtest/data.py`, `market_data/scheduler.py`,
+  `research_server/paper_trader.py`, `api/market_data_service.py`,
+  `api/live_session.py`, `api/services.py::list_datasets` — all 16 real
+  call sites repointed at `get_market_data_store()`. `list_datasets`
+  additionally gained graceful-degradation handling for a configured-
+  but-unreachable Postgres database (catches and logs, returns what it
+  has, never 500s).
+- `MarketDataStore`/`PgMarketDataStore` both gained a `.location`
+  property (fixes a real bug this refactor would otherwise have shipped:
+  `api/market_data_service.py` read `.path`, which doesn't exist on the
+  connection-based Postgres store — `.location` is credential-safe on
+  both, via SQLAlchemy's own `render_as_string(hide_password=True)` for
+  Postgres).
+
+**Verified**
+- Full test suite: 1226 passed (1221 + 5 new), confirming the SQLite
+  path — every existing single-developer setup — is byte-identical to
+  before this session.
+- `db/health.py` tested against both "unconfigured" and "configured but
+  genuinely unreachable" (bogus host, confirmed graceful ~5s timeout
+  failure via `connect_timeout`, not a hang or crash).
+- Postgres DDL (`db/schema.py`) and the `ON CONFLICT` statements in
+  `pg_store.py` compile correctly against SQLAlchemy's real `postgresql`
+  dialect.
+- **Not yet verified against an actual running Postgres/TimescaleDB
+  server** — no Docker available in the dev sandbox this session; this
+  is the very next step once Docker/WSL2 finishes installing.
+
+**Not started:** `research.db`/`TradeStore`'s Postgres port (untouched,
+SQLite-only, unaffected by anything above), Alembic setup, the data
+migration script, `deploy/docker-compose.yml`'s new service, team-mode
+deployment scripts, `/api/system/health`, Mission Control's real-data
+wiring (the scaffold itself landed — see Added above), `TEAM_DEPLOYMENT.md`.
+
+No commit hash yet — not committed this session.
+
+## 2026-07-27 — Platform Verification Phase 2: Context Engine dedup + stale-context fix
+
+Resolves the two findings Platform Verification Phase 1's audit
+surfaced (measurement-only at the time, deliberately not fixed there).
+No new functionality, no classification/scoring/API changes — goal was
+"a cleaner and faster implementation with zero behavioral changes."
+Full report: `docs/PLATFORM_VERIFICATION_PHASE2.md`.
+
+**Changed**
+- `src/futures_bot/context/regime.py`: `classify_regime` gained optional
+  `precomputed_volatility`/`precomputed_adx` parameters, defaulted to a
+  private `_UNSET` sentinel (not `None`) so "not supplied" and "supplied
+  as `None`" are distinguishable. Every existing caller (nothing passes
+  these yet outside `context_engine.py`) is on the exact same
+  recompute-it-yourself code path as before.
+- `src/futures_bot/context/trend.py`: `analyze_trend` gained an optional
+  `precomputed_adx` parameter, same sentinel pattern (its own private
+  `_UNSET`, not shared with `regime.py`'s).
+- `src/futures_bot/context/context_engine.py`: `ContextEngine.build_context`
+  now computes `analyze_volatility()` and a new `_compute_adx()` exactly
+  once per bar and passes both into `_classify_regime`/`_classify_trend`,
+  which forward them to `regime.py`/`trend.py` as the new precomputed
+  parameters. `DEFAULT_ADX_PERIOD` imported from `regime.py` (single
+  source of truth, unchanged).
+- `src/futures_bot/engine.py`: `TradingEngine.__init__` now resets
+  `self.strategy.context = None` immediately at construction; `on_bar`
+  now sets `self.strategy.context` unconditionally every bar (the real
+  `MarketContext` when `ContextMode.ENABLED` + `strategy.uses_context`,
+  `None` otherwise) instead of only ever writing it in the `ENABLED`
+  branch and leaving every other mode's prior value untouched.
+
+**Added**
+- `tests/test_platform_verification_phase2.py` (6 tests): precomputed-vs-
+  fresh-computation equivalence for both `classify_regime` (including the
+  early-return-on-`UNKNOWN`-volatility edge case, where `None` must be
+  used as-is, not retried) and `analyze_trend`; `ContextEngine.build_context`
+  actually using the shared computation (`regime_context.adx` ==
+  `trend_context.adx` == a single direct `adx()` call); full
+  `MarketContext` equivalence against calling every dimension
+  independently the old way; a construction-time-only stale-context
+  reset test.
+- `docs/PLATFORM_VERIFICATION_PHASE2.md`: architecture summary, files
+  changed, before/after performance (wall-clock, marginal cost,
+  `cProfile` call counts, memory), risks eliminated, remaining risks,
+  final recommendation.
+- `KNOWN_ISSUES.md` ISSUE-008 (duplicate ADX/volatility computation) and
+  ISSUE-009 (stale `Strategy.context`), both logged and marked Resolved.
+
+**Changed (tests)**
+- `tests/test_platform_verification_phase1.py`:
+  `TestKnownLimitationStaleStrategyContextAcrossReusedInstances` renamed
+  to `TestStaleStrategyContextAcrossReusedInstancesIsResolved`; its
+  assertion inverted from "the stale value persists" (the bug) to "the
+  stale value is `None`" (the fix).
+
+**Performance (before vs. after, same 400/800/1,600-bar methodology as
+Phase 1's own benchmark)**
+- `cProfile` call counts (800-bar `OBSERVE` backtest, 800 `build_context`
+  calls): `adx()` 1,585 → **800**; `analyze_volatility()` 1,600 → **800**
+  — duplication completely eliminated, not merely reduced.
+- Marginal context-generation cost (`OBSERVE − OFF`, environment-noise-
+  normalized): 400 bars 528.3ms → 340.2ms (−35.6%); 800 bars 2,165.0ms →
+  1,210.3ms (−44.1%); 1,600 bars 10,705.0ms → 5,820.7ms (−45.6%) —
+  converging toward the ~45% Phase 1's own `cProfile` breakdown
+  predicted (ADX+volatility were ~90% of context-gen CPU, each halved).
+- Peak memory delta (`tracemalloc`, `OBSERVE` minus `OFF`): modest ~7-10%
+  reduction across all three bar counts (fewer intermediate allocations,
+  not the primary target).
+- Methodology note: a live `futures_bot.api` background process was
+  found consuming significant CPU mid-benchmark (confirmed via
+  `Get-CimInstance Win32_Process` — the user's own process, not a
+  leftover diagnostic; stopped by the user, not by this session).
+  Numbers above are from the subsequent clean-environment measurement.
+
+**Regression verification**
+- Full suite: **1,221 passed, 0 failed** (1,215 + 6 new).
+- No difference found in trades, metrics, P&L, or reports — the
+  existing 8-metric exact-equality backward-compatibility checks
+  (`tests/test_platform_verification_phase1.py::TestBackwardCompatibilityRegression`)
+  all still pass unchanged.
+
+**Confidence:** both verified Phase 1 findings are fixed and
+independently proven correct (not just "tests still pass"). Safe to
+proceed to the first context-aware strategy. Remaining, non-blocking
+item: the O(n²) full-replay cost is unchanged in kind (only reduced in
+constant factor) — a known, by-design characteristic per
+`docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`, not a defect.
+
+No commit hash yet — not committed this session.
+
+## 2026-07-27 — Platform Verification Phase 1: Market Context Integration Audit
+
+Independent, read-only audit of the immediately preceding session's
+work (Phase 9's `TradingEngine` integration) — no new features, no
+optimizations, one genuine finding surfaced and documented, not fixed,
+per this phase's explicit scope. Full report:
+`docs/PLATFORM_VERIFICATION_PHASE1.md`.
+
+**Added**
+- `tests/test_platform_verification_phase1.py` (25 tests): exact-equality
+  regression checks for all eight requested backward-compatibility
+  metrics (entry/exit timestamps, entry/exit prices, exit reasons, net
+  P&L, win rate, profit factor) across a pre-integration-style call,
+  explicit `OFF`, and explicit `OBSERVE`; `MarketContext` completeness
+  (all nine fields present on every trade) and internal-consistency
+  checks (bare enum fields always agree with their nested rich object);
+  a same-bar close-then-reenter "flip" stress test (28+ rapid trades,
+  zero cross-contamination between a closing trade's context and a new
+  entry's); an explicit no-duplicate-generation call-count check; a
+  check that `RiskManager.record_trade` never reads the new
+  `entry_context` field; and a reproduction test documenting the
+  stale-`Strategy.context`-across-reused-instances finding (see below).
+- `docs/PLATFORM_VERIFICATION_PHASE1.md`: the full audit report --
+  PASS/WARN/FAIL for every verification item, both findings with exact
+  reproductions, performance measurements, and a confidence level.
+
+**Findings (neither fixed, per this phase's "measure and report only"
+scope)**
+1. **Duplicate ADX/volatility computation.** `cProfile` against a real
+   800-bar `OBSERVE` backtest attributes ~71% of all context-generation
+   CPU time to `strategy.indicators.adx` and ~19% to
+   `volatility.analyze_volatility`/`atr_series` -- ~90% combined.
+   `context/regime.py`'s `classify_regime` and `context/trend.py`'s
+   `analyze_trend` both call `adx()` directly with identical
+   `bars`/`period`; `context/context_engine.py`'s `_classify_volatility`
+   and `regime.classify_regime` (internally) both call
+   `analyze_volatility()`. Both are correct, both are wasteful -- call
+   counts confirm exactly ~2x the necessary invocations (1,585 `adx()`
+   calls / 1,600 `analyze_volatility()` calls for 800 `build_context`
+   invocations). Recommended as a high-value future optimization
+   (thread one computed result through `build_context` instead of each
+   classifier re-deriving it); not implemented here.
+2. **Stale `Strategy.context` across a reused instance.** Reproduced
+   directly: if one `Strategy` instance is passed to two separate
+   `TradingEngine`/`run_backtest` calls -- first `ContextMode.ENABLED`
+   (sets `self.context`), then `ContextMode.OFF` or a non-opted-in path
+   -- the first run's context is still there, since neither `OFF` nor a
+   non-opted-in path ever resets it. Confirmed harmless for every
+   *current* caller (`cli.py`, `api/services.py`, `api/live_session.py`,
+   `research_server/paper_trader.py` all construct a fresh strategy
+   instance per run -- verified by direct inspection of all four call
+   sites). Recommended defensive fix (unconditionally reset
+   `Strategy.context = None` at the start of every bar, before the
+   `ENABLED`+`uses_context` re-population check) for before any future
+   tooling reuses instances across runs; not implemented here.
+
+**Verified, all PASS unless noted:**
+- `ContextMode.OFF` never calls `ContextEngine.build_context` (spy-
+  verified across a full backtest).
+- `ContextMode.OBSERVE` generates exactly one `MarketContext` per
+  processed bar (call count == bar count, no duplicate timestamps) and
+  cannot influence decisions -- structurally, not just empirically: it
+  never executes the line that sets `Strategy.context` at all.
+- `ContextMode.ENABLED` matches `OFF` even for a strategy that opts in
+  (`uses_context=True`) but never reads `self.context` -- the weakest,
+  most permissive case.
+- Execution flow traced statement-by-statement in `engine.py`'s
+  `on_bar`; `list(self.bars)` always includes the bar that just closed
+  (no off-by-one).
+- All 8 backward-compatibility metrics identical, exact equality, not
+  tolerance-based.
+- Every completed trade's `entry_context` carries all 9 required
+  fields; bare enum fields always agree with their nested object
+  (structural guarantee from `context_engine.py`'s construction,
+  verified directly).
+- No circular imports (subprocess-verified for every affected module);
+  no memory leaks (`ContextEngine` holds no accumulating state,
+  `_pending_entry_context` always cleared after use); no new thread-
+  safety concerns (same unsynchronized-instance-attribute pattern the
+  engine already used).
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. This phase changed no production code -- audit and tests only.
+
+**Verified:** full suite green (1215 passed, 0 failed -- 1190 + 25
+new). Initial wall-clock performance measurements showed severe
+variance (2.0s-28.5s for the identical 800-bar `OBSERVE` backtest
+across attempts) traced to a runaway diagnostic process from an
+over-ambitious first benchmark attempt (10,000 bars) contending for
+CPU in the background -- identified and killed; final numbers are from
+clean, uncontended runs cross-checked against `cProfile`'s CPU-
+attributed call graph (immune to wall-clock contention) for the
+relative breakdown.
+
+**Confidence level: High.** Zero correctness defects found. Two
+findings, both documented with exact reproductions and clear,
+un-implemented recommendations.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
+## 2026-07-27 — Market Context Engine Phase 9: Integration into TradingEngine + A/B Comparison
+
+Wires the (already complete, Phase 8) Context Engine into the actual
+trading path -- backtesting, paper trading, and live trading, all
+through the same `TradingEngine`/`run_backtest`/`build_engine` -- without
+changing any existing trading behavior.
+
+**Added**
+- `engine.ContextMode` (`OFF`/`OBSERVE`/`ENABLED`): a three-way switch so
+  "context is generated and recorded" and "context can influence a
+  decision" are two separately verifiable guarantees, not one on/off
+  flag. `OFF` is the default for `TradingEngine.__init__`,
+  `engine.build_engine`, and `backtest.runner.run_backtest` -- every
+  existing caller gets exactly the pre-integration engine, and
+  `ContextEngine.build_context` is never called at all in this mode.
+  `OBSERVE` generates exactly one `MarketContext` per processed bar
+  (built in a new `TradingEngine._build_market_context`, step 0 of
+  `on_bar`, before anything else touches the bar) and attaches it to
+  every completed trade -- but never sets `Strategy.context`, so no
+  strategy can read it; decisions are therefore provably identical to
+  `OFF`. `ENABLED` additionally sets `Strategy.context`, but only for a
+  strategy whose own `uses_context` is `True`.
+- `models.Trade.entry_context: Optional[MarketContext] = None` (new,
+  purely-additive field; `TYPE_CHECKING`-guarded forward reference to
+  `context.models.MarketContext` to avoid a real import cycle with
+  `models.py` -- the same pattern `context/models.py` already uses for
+  its own forward references). Attached by
+  `TradingEngine._record_trade` -- the single shared closing path for
+  every trade regardless of *why* it closed (a resting stop/target
+  resolving, a risk-forced flatten, a strategy exit) -- via
+  `dataclasses.replace`, since `Trade` is frozen. Neither
+  `PaperBroker` nor `TradovateBroker` ever sets it or references
+  `context/` at all.
+- `strategy.base.Strategy.context: Optional[MarketContext] = None` and
+  `Strategy.uses_context: bool = False` (new, optional attributes;
+  `TYPE_CHECKING`-guarded reference, never a real import --
+  `Strategy` is a protected interface, and this stays that way
+  regardless of whether a real import would technically work today).
+  `Strategy.on_bar`'s call signature is completely unchanged -- no
+  existing strategy needed a single line of modification.
+- `backtest/context_comparison.py`: `compare_context_impact(settings,
+  strategy_factory, bars, **run_backtest_kwargs)` runs the same
+  strategy/parameters/dataset/date-range twice through the *same*
+  `run_backtest` -- once `OBSERVE` (the baseline: decision-identical to
+  `OFF`, but every trade carries its `entry_context`, which the
+  comparison needs to explain differences), once `ENABLED` (may
+  differ) -- and diffs the two trade lists. Each changed trade is
+  classified `UNCHANGED`/`REMOVED_BY_CONTEXT`/`ADDED_BY_CONTEXT`/
+  `ENTERED_DIFFERENTLY`/`EXITED_DIFFERENTLY` and carries the
+  `MarketContext`/`EnvironmentScore` that explains it.
+  `MetricsSummary.from_metrics` reads Net Profit/Win Rate/Profit
+  Factor/Expectancy/Max Drawdown/Total-Winning-Losing Trades/Average
+  Trade/Average Winner/Average Loser/Largest Winner/Largest Loser
+  straight off the existing `BacktestMetrics` -- nothing recomputed.
+  Documented path-dependence caveat: only the *first* divergence
+  between the two runs is guaranteed to be directly explained by the
+  strategy's own context rule -- once one run skips a trade the other
+  took, the two runs' open-position timelines can drift apart, so later
+  changes may be downstream consequences rather than independently
+  explained.
+- `tests/test_engine_context_integration.py` (18 tests): one
+  `MarketContext` per processed bar (and zero calls in `OFF`), correct
+  (entry-time, not exit-time) context attached to every trade including
+  a risk-forced flatten, no circular imports (subprocess-verified),
+  no duplicate `ContextEngine` construction, and -- the most important
+  guarantee -- `OFF` byte-identical to a pre-integration-style backtest,
+  `OBSERVE` decision-identical to `OFF`, `ENABLED` decision-identical to
+  `OFF`/`OBSERVE` for a strategy that hasn't opted in, plus explicit
+  proof that `Strategy.context` stays `None` in every case that isn't
+  `ENABLED` + `uses_context=True`.
+- `tests/test_backtest_context_comparison.py` (8 tests): no duplicate
+  pipeline (both runs verified to go through `run_backtest`), metrics
+  match the underlying `BacktestMetrics` exactly, a non-context-aware
+  existing-style strategy reports zero changed trades, a test-only
+  context-aware strategy (skips entries below a fixed environment-score
+  threshold) reports real, correctly-classified changes each carrying
+  context/score, and a fresh strategy instance is used per run (no
+  state leaking between the baseline and enabled runs).
+
+**Changed**
+- `src/futures_bot/engine.py`: `TradingEngine.__init__` gained
+  `context_mode`/`context_engine` parameters (defaults `ContextMode.OFF`/
+  auto-constructed); `on_bar` gained step 0 (`_build_market_context`,
+  wrapped in a broad `except` so a `context/` defect can never crash a
+  live/paper/backtest run -- the same defensive posture `_safe_signal`
+  already takes toward strategy code); `_handle_signal` gained a
+  `market_context` parameter, capturing it into
+  `self._pending_entry_context` on a successful entry; `_record_trade`
+  attaches and clears it. `build_engine` gained matching
+  `context_mode`/`context_engine` parameters, passed straight through.
+- `src/futures_bot/backtest/runner.py`: `run_backtest` gained matching
+  `context_mode`/`context_engine` parameters, passed straight through
+  to `TradingEngine`.
+- `tests/test_context.py`/`tests/test_context_engine_validation.py`:
+  three tests whose premise -- "`context/` has zero reference from the
+  trading side" -- this integration deliberately supersedes were
+  rewritten to check the *actual* current invariant instead (risk/
+  brokers still have zero reference; `engine.py`'s reference is real,
+  by design, but gated by `ContextMode.OFF`'s default;
+  `strategy/base.py`'s reference is `TYPE_CHECKING`-only).
+- `docs/ARCHITECTURE.md`: "Market Context Engine" section heading and
+  several paragraphs updated from "not wired in yet" to describe the
+  actual integration; new "Integration into `TradingEngine`" subsection
+  covering the execution flow, the two bugs found and fixed, and the
+  A/B comparison framework.
+
+**Database changes**
+- None.
+
+**API changes**
+- None.
+
+**Frontend changes**
+- None.
+
+**Breaking changes**
+- None. `context_mode` defaults to `OFF` everywhere; `Trade.entry_context`
+  and `Strategy.context`/`uses_context` are purely additive with safe
+  defaults; every existing call site (`cli.py`, `research_server/`,
+  `api/services.py`, every existing test) is unaffected.
+
+**Risks discovered and fixed during this integration's own manual
+verification** (not just via the tests written alongside it):
+1. `TradingEngine.bars` is a bounded `collections.deque`
+  (`_MIN_BARS_RETAINED`), which does not support the slice indexing
+  `context/liquidity.py`/`volatility.py` rely on for their trailing
+  windows (`TypeError: sequence index must be integer, not 'slice'`).
+  Fixed by converting to `list(self.bars)` once per bar before calling
+  `ContextEngine.build_context` -- every classifier already only reads
+  a trailing slice of whatever it's given, so this changes nothing
+  about correctness, only compatibility with the container type.
+2. `dataclasses.replace` (needed to attach `entry_context` to a frozen
+  `Trade`) returns a *new* object. The first draft only used it inside
+  `_record_trade`'s local scope, discarding the enriched copy the
+  moment the method returned -- `PaperBroker.trades` (what
+  `run_backtest` actually reads via `list(broker.trades)` to build
+  `BacktestMetrics.trades`) still held the original, un-enriched trade.
+  Caught by inspecting `broker.trades` directly after a manual test
+  run, before trusting the formal test suite; fixed by writing the
+  enriched trade back into `self.broker.trades[-1]`.
+
+**Verified:** full suite green (1190 passed, 0 failed -- 1163 + 27
+new). `git status`/`git diff` confirm the only files outside
+`tests/`/`docs/` touched are `src/futures_bot/models.py`,
+`src/futures_bot/strategy/base.py`, `src/futures_bot/engine.py`,
+`src/futures_bot/backtest/runner.py`, and the new
+`src/futures_bot/backtest/context_comparison.py` -- no changes to
+`brokers/`, `risk/`, `research/`, `api/`, `research_server/`, or any
+bundled strategy file.
+
+**Commit hashes**
+- Not yet committed as of this entry.
+
 ## 2026-07-27 — Market Context Engine Phase 8: Completion and Validation
 
 An 11-part phase making the Market Context Engine production-ready as
@@ -133,7 +702,7 @@ failure, root-caused, and replaced with genuine subprocess isolation
 before being trusted.
 
 **Commit hashes**
-- Not yet committed as of this entry.
+- `280d52b`.
 
 ## 2026-07-27 — Market Context Engine: Context Scoring System (Phase 2f)
 

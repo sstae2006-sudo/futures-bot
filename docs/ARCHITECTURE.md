@@ -32,13 +32,23 @@ CORE ENGINE     Everything below "The pipeline" heading in this doc --
 RESEARCH LAYER  Reads finished results: optimizer, comparison, walk-forward,
   |             ML dataset, insights. (futures_bot.research.*)
   v
-PERSISTENCE     Two independent SQLite databases (research.db: trades/runs
-                /jobs/optimization_trials; market_data.db: synced bars/
-                contract rolls/gaps), plus state_file (JSON, the kill
-                switch) and logs/ (JSONL decision log). No shared
-                connection pool -- see research/trade_store.py and
-                market_data/store.py's module docstrings for why each
-                caller opens its own connection instead.
+PERSISTENCE     Two independent databases (research.db: trades/runs/jobs/
+                optimization_trials/ML models/client imports; market_data.db:
+                synced bars/contract rolls/gaps), plus state_file (JSON, the
+                kill switch) and logs/ (JSONL decision log). Two backends,
+                selected by one env var: unset FUTURES_BOT_DATABASE_URL (the
+                default, every single-developer setup) means each is a local
+                SQLite file, no shared connection pool, each caller opens its
+                own connection -- see research/trade_store.py and
+                market_data/store.py's module docstrings for why. Set it to a
+                Postgres DSN (team-deployment mode, see TEAM_DEPLOYMENT.md)
+                and get_market_data_store()/get_store() transparently swap in
+                PgMarketDataStore/PgTradeStore instead -- both backed by one
+                process-wide pooled SQLAlchemy Engine (db/engine.py), schema
+                managed by Alembic (alembic/), bars a TimescaleDB hypertable.
+                Every caller (routes, CLI, scheduler, research_server) goes
+                through those two factory functions already, so nothing else
+                needs to know which backend is actually behind it.
 ```
 
 **Dependency direction is one-way, top to bottom.** The core engine has no
@@ -101,7 +111,7 @@ Everything from the journal down is read-only with respect to what already
 happened: nothing past that point can change a trade that has already
 closed.
 
-## Market Context Engine (complete as an independent subsystem, 2026-07-27 — not wired in yet)
+## Market Context Engine (complete and integrated into TradingEngine, 2026-07-27)
 
 `futures_bot.context` (`models.py`'s `MarketContext`, `context_engine.py`'s
 `ContextEngine`, `session.py`'s `SessionContext`, `volatility.py`'s
@@ -142,7 +152,120 @@ independent subsystem — see:
   scaling numbers and the one real optimization this phase found and
   fixed (`liquidity.py`).
 - `docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` — the final "is this
-  still a pure, unintegrated information layer" check.
+  still a pure, unintegrated information layer" check (accurate as of
+  Phase 8; superseded by the integration described immediately below).
+
+**Integration into `TradingEngine` (2026-07-27):** the engine now
+actually generates and uses `MarketContext`, gated by
+`engine.ContextMode` — a three-way switch specifically so "context is
+generated and recorded" and "context can influence a decision" are two
+separate, independently verifiable guarantees, not one on/off flag:
+
+- **`ContextMode.OFF`** (the default for every existing caller —
+  `TradingEngine.__init__`, `engine.build_engine`, and
+  `backtest.runner.run_backtest` all default `context_mode` to this) is
+  a complete no-op: `ContextEngine.build_context` is never called at
+  all. Every existing backtest, paper session, and live session
+  continues to run exactly as it did before this integration existed —
+  verified directly by `tests/test_engine_context_integration.py`'s
+  `TestExistingBehaviorUnchanged` (byte-identical trades against a
+  pre-integration-style call).
+- **`ContextMode.OBSERVE`** generates exactly one `MarketContext` per
+  processed bar and attaches it to every completed trade's new
+  `Trade.entry_context` field — but never sets `Strategy.context`, so no
+  strategy can read it. Trading decisions are therefore *provably*
+  identical to `OFF`, not merely "should be unaffected" — the strategy
+  never sees the object, so it cannot possibly act on it.
+- **`ContextMode.ENABLED`** does everything `OBSERVE` does, **plus**
+  sets `Strategy.context` — but only for a strategy whose own
+  `uses_context` class attribute is `True`. Every bundled strategy
+  defaults to `False`, so running an existing, unmodified strategy in
+  `ENABLED` mode is still decision-identical to `OFF`/`OBSERVE`; only a
+  strategy that has explicitly opted in can ever see or act on
+  `self.context`.
+
+**Where this sits in `TradingEngine.on_bar`:** a new step 0, before the
+four steps the module docstring already describes — built once per bar,
+immediately after the bar is appended to `self.bars`, so every
+subsequent step (including a forced flatten that skips the strategy
+entirely) sees the same reading:
+
+```
+0. Build MarketContext (ContextMode.OFF: skipped entirely)
+1. Resolve resting protective orders
+2. Forced exits (risk.must_flatten)
+3. Ask the strategy (Strategy.context set here, ENABLED + opted-in only)
+4. Act, subject to risk
+```
+
+`self.bars` is a bounded `deque`, which does not support the slice
+indexing several `context/` modules rely on (`liquidity.py`/
+`volatility.py`'s trailing windows) — `_build_market_context` converts
+it to a `list` once per bar before calling `ContextEngine.build_context`;
+every classifier already only reads a trailing slice of whatever it's
+given, so this changes nothing about correctness, only compatibility
+with the container type. `_build_market_context` is also wrapped in a
+broad `except`, so a defect in `context/` can never crash a live/paper/
+backtest run — the same defensive posture `_safe_signal` already takes
+toward strategy code.
+
+**Attaching context to trades:** `Trade` gained a new, purely-additive
+`entry_context: Optional[MarketContext] = None` field (a
+`TYPE_CHECKING`-guarded forward reference in `models.py`, avoiding a real
+import cycle — the same pattern `context/models.py` already uses for its
+own forward references). Neither broker (`PaperBroker`/`TradovateBroker`)
+ever sets it — brokers stay entirely unaware of `context/`, per
+requirement #6 ("no broker logic changes"), verified directly by a test
+inspecting `brokers/paper.py`'s own imports. `TradingEngine` captures the
+entry-time `MarketContext` in `_handle_signal` (right after a successful
+`submit_bracket`) and attaches it in `_record_trade` — the single shared
+closing path for every trade, regardless of *why* it closed (a resting
+stop/target resolving, a risk-forced flatten, a strategy exit) — via
+`dataclasses.replace`, since `Trade` is frozen. That replacement is also
+written back into `PaperBroker.trades[-1]`: `dataclasses.replace` returns
+a *new* object, and without writing it back, the enriched copy would only
+have existed in `_record_trade`'s local scope — gone the moment it
+returns, while `backtest.runner.run_backtest` (which builds
+`BacktestMetrics.trades` from `list(broker.trades)`) would still have
+read the original, un-enriched trade. This was caught and fixed during
+this integration's own manual verification before being trusted.
+
+**Same execution path for backtesting, paper trading, and live
+trading — no duplicate pipeline:** `context_mode`/`context_engine` are
+threaded through exactly two call sites — `engine.build_engine` (used by
+`cli.py`'s live/paper path and `research_server/paper_trader.py`) and
+`backtest.runner.run_backtest` (used by every backtest caller, including
+`api/services.py`) — both of which construct the same `TradingEngine`
+every mode/caller shares. There is no second replay loop and no
+context-aware fork of the engine; `ContextMode` is a constructor
+argument, not a different code path.
+
+**A/B comparison (`backtest/context_comparison.py`):** given the same
+strategy factory/settings/bars, `compare_context_impact` runs
+`ContextMode.OBSERVE` (the baseline — decision-identical to `OFF`, but
+every trade carries its context, which the comparison needs) and
+`ContextMode.ENABLED` (may differ, if the strategy opted in) through the
+*same* `run_backtest`, then diffs the two trade lists. Each changed trade
+is classified `UNCHANGED`/`REMOVED_BY_CONTEXT`/`ADDED_BY_CONTEXT`/
+`ENTERED_DIFFERENTLY`/`EXITED_DIFFERENTLY` and carries the
+`MarketContext`/`EnvironmentScore` that explains it. See that module's
+own docstring for a documented caveat: only the *first* point where the
+two runs diverge is guaranteed to be directly explained by the
+strategy's own context rule — once one run skips a trade the other took,
+the two runs' open-position timelines can drift apart, so later changes
+may be downstream consequences of that first divergence rather than each
+independently explained.
+
+**Performance impact:** `ContextMode.OFF` adds zero measurable overhead
+(no call is made at all). `OBSERVE`/`ENABLED` add one
+`ContextEngine.build_context` call per bar, whose cost scales with
+`len(self.bars)` (bounded by the engine's existing bar-retention window,
+not backtest length) — see
+`docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md` for the underlying
+per-call numbers; a full-length backtest run in `OBSERVE`/`ENABLED`
+mode is measurably slower than `OFF`; a future caller that wants context
+in a very long replay should be aware of this rather than surprised by
+it.
 
 **Context Scoring System (`scoring.py`, Phase 7 2026-07-27, made
 configurable Phase 8 2026-07-27):** `score_environment` combines every
@@ -391,6 +514,21 @@ Only `structure.py` (swing/support-resistance) and `liquidity.py`
 (relative-volume classification) are genuinely new logic, and both say
 exactly why in their own module docstrings.
 
+**Shared-computation reuse (Platform Verification Phase 2, 2026-07-27):**
+"reused logic" above was always true at the *algorithm* level (`adx`/
+`analyze_volatility` each have exactly one implementation), but
+`ContextEngine.build_context` was independently *invoking* `adx()` from
+both `regime.py` and `trend.py`, and `analyze_volatility()` from both
+itself and (internally) `regime.py` — two calls per bar for each,
+confirmed by `cProfile` to be ~90% of context-generation CPU time (see
+`docs/PLATFORM_VERIFICATION_PHASE1.md`). `regime.classify_regime`/
+`trend.analyze_trend` now accept optional `precomputed_volatility`/
+`precomputed_adx` arguments (sentinel-defaulted so every caller that
+doesn't pass them — every existing test, every future standalone use —
+is unaffected); `build_context` computes both exactly once per bar and
+threads them through. See `docs/PLATFORM_VERIFICATION_PHASE2.md` for the
+full before/after measurement.
+
 **Configuration system (Phase 8):** `scoring.ScoringConfig` centralizes
 every scoring weight; see "Context Scoring System" above.
 `ContextEngine.__init__`'s `scoring_config` parameter (default `None` →
@@ -405,38 +543,49 @@ per-dimension config through `ContextEngine` for no requested benefit).
 **Validation guarantees (Phase 8, Part 3):** no circular imports (every
 `context/` submodule imports standalone), no duplicated ATR/ADX/SMA/
 trend-direction math, no duplicated CME calendar/session/regime/
-volatility-state definitions, no dependency in either direction between
-`context/` and `engine.py`/`strategy/`/`risk/manager.py`/`brokers/`,
-deterministic output for identical input (no wall-clock reads, no
-randomness anywhere in the package), missing data always handled
-safely, `UNKNOWN` states always carry zero confidence and no fabricated
-reason/value, and every confidence value across every dimension stays
-in `[0.0, 1.0]` — all encoded as executable tests in
-`tests/test_context_engine_validation.py`, not just claimed.
+volatility-state definitions, deterministic output for identical input
+(no wall-clock reads, no randomness anywhere in the package), missing
+data always handled safely, `UNKNOWN` states always carry zero
+confidence and no fabricated reason/value, and every confidence value
+across every dimension stays in `[0.0, 1.0]` — all encoded as executable
+tests in `tests/test_context_engine_validation.py`, not just claimed.
+The dependency direction between `context/` and the trading side is now
+**one-directional by design, not absent**: `engine.py` imports `context/`
+for real (the integration point); `context/` still has, and must always
+have, zero reference back to `engine.py`/`risk/manager.py`/`brokers/` —
+verified in both directions by
+`tests/test_context_engine_validation.py`'s
+`TestModulesRemainIndependentFromTheTradingSide` and
+`tests/test_engine_context_integration.py`'s `TestNoCircularImports`.
+`strategy/base.py`'s own reference is `TYPE_CHECKING`-only (never a real
+import), verified directly by `tests/test_context.py`.
 
 **Known limitations:** no database persistence (a schema change needs
 explicit approval per `CLAUDE.md` section 8, and isn't decided); four
 dimensions (`volatility`/`regime`/`trend`/`timeframe`) plus `structure`
-are O(n) in the number of bars passed per call, so a future integration
-should pass a bounded trailing window rather than accumulating full
-history (see `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`);
-`TrendState` and `MarketRegime` are two independent trend readings that
-can legitimately disagree (by design, not a bug — see `trend.py`'s
-docstring); `ScoringConfig`'s default weights are illustrative, not
-derived from any backtest of which dimensions actually predict
-performance.
+are O(n) in the number of bars passed per call — now a real, measured
+cost in `ContextMode.OBSERVE`/`ENABLED` (see "Performance impact"
+above and `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`), bounded by
+`TradingEngine`'s existing bar-retention window rather than backtest
+length, but non-zero; `TrendState` and `MarketRegime` are two
+independent trend readings that can legitimately disagree (by design,
+not a bug — see `trend.py`'s docstring); `ScoringConfig`'s default
+weights are illustrative, not derived from any backtest of which
+dimensions actually predict performance; `backtest/context_comparison.py`'s
+trade diff has a path-dependence caveat (see that module's own
+docstring) — only the first divergence between two runs is guaranteed
+to be directly explained by the strategy's own context rule.
 
-**Future integration plan (not started, needs explicit approval):**
-wire `MarketContext` into `TradingEngine.on_bar` at the integration
-point described above — most likely a `Strategy.on_bar` signature
-change — decide whether/how `EnvironmentScore` should influence
-position sizing or trade filtering (a strategy-level decision, not
-something `context/` itself should ever make), and decide whether
-`MarketContext`/`EnvironmentScore` snapshots get persisted for research
-(a database schema change). None of this is proposed or started here —
-see "The exact integration point" above and
-`docs/CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md` for the current, purely
-observational state this phase leaves the engine in.
+**Integration status:** complete for the mechanism (`ContextMode`,
+`Trade.entry_context`, `Strategy.context`/`uses_context`, the A/B
+comparison framework) — see "Integration into `TradingEngine`" above.
+**Not decided:** whether/how `EnvironmentScore` should influence
+position sizing or trade filtering for any *specific* bundled strategy
+(a strategy-level decision for each strategy to make individually, not
+something `context/` or the engine should ever decide on a strategy's
+behalf), and whether `MarketContext`/`EnvironmentScore` snapshots get
+persisted to a database for research (a schema change, needs its own
+explicit approval per `CLAUDE.md` section 8).
 
 ## Why strategies cannot execute trades directly
 
