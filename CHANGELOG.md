@@ -4,6 +4,80 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-28 — Team Collaboration Platform: lightweight accounts, live Mission Control data, and an Active Work Registry
+
+Continuation of the same day's earlier Stabilization Mode entry (below).
+A six-phase brief: (1) finish Team Mode end-to-end, (2) lightweight user
+accounts, (3) real Mission Control data, (4) a stability pass, (5) team
+collaboration groundwork, (6) code quality. Full detail in each area's own
+commit message; this is the summary.
+
+**Phase 1 — Team Mode, continued.** Bounded the firewall-rule elevation
+wait: `Start-Process -Verb RunAs` can block synchronously on the UAC
+decision regardless of `-Wait`, confirmed empirically across three
+attempted fixes (`Process.WaitForExit`, a plain polling loop, a
+`Start-Job`-wrapped launch) before landing on a marker-file-based design
+that correctly bounds the wait without relying on any process-handle
+relationship across the elevation boundary. Verified connection-failure
+handling (stopped the live TimescaleDB container, confirmed
+`/api/system/health` degrades gracefully rather than hanging/crashing)
+and 30-concurrent-request shared-DB access still clean with every fix
+from this session applied.
+
+**Phase 2 — Lightweight user accounts.** New `accounts/` package: `users`/
+`organizations` tables (SQLite + Postgres, Alembic-migrated), four fixed
+roles (owner/admin/member/viewer), full CRUD API. Deliberately not an
+authentication system — no password, no session, no login route — built
+so stronger auth can be added later without a redesign.
+
+**Phase 3 — Mission Control, real data.** New `GET /api/system/infrastructure`
+(CPU/memory/disk via a new `psutil` dependency, job-queue depth from the
+real `jobs` table). Two new panels replacing mock data: `InfrastructurePanel`,
+`TeamPanel` (real registered users + the connected-users estimate).
+Deliberately not wired: a "restart services" button — this API has no
+auth in front of it yet, so exposing a process-restart action to anyone
+who can reach the port needs auth first, not a UI button.
+
+**Phase 4 — Stability pass.** Found and fixed a genuine timestamp-parsing
+correctness issue while building `TeamPanel` (SQLite's space-separated,
+timezone-less format needs explicit ISO-8601 normalization before
+parsing); documented but deliberately deferred the same underlying issue
+in the widely-shared `format.ts::dateTime()` (touches every page that
+renders a local-mode timestamp — a focused fix of its own, not a drive-by
+edit).
+
+**Phase 5 — Active Work Registry.** New `collaboration/` package: claimable
+work items (title/description/owner/branch/status/estimated files/
+priority) with claim/release/complete/reassign, every transition logged
+to an append-only activity table. New `collaboration/overlap.py`: warn-only
+file-path overlap detection against every other active work item
+(no_risk/low/medium/high/critical, small documented heuristic, never
+blocks). New Mission Control panel (list/create/claim/release/complete,
+inline overlap warnings). New `POST /api/work-items/merge-summary` --
+"before merging, generate a summary showing overlap with active work" --
+reusing the same overlap detection against a real diff's changed files.
+
+**Phase 6 — Code quality.** Confirmed no unused imports across every new
+module; the existing per-store-class duplication (`accounts/store.py`
+next to `collaboration/store.py`, mirroring `TradeStore`/`MarketDataStore`'s
+own existing precedent of small, independent store classes rather than a
+shared base class) was left as-is rather than introducing a new
+abstraction layer for two call sites.
+
+**Testing:** ~95 new backend tests (accounts + collaboration: store unit
+tests, HTTP route tests, live-Postgres suites following the project's
+established skip-without-a-server convention) and 6 new frontend tests,
+on top of everything from the same day's earlier Stabilization Mode
+entry. Full frontend suite (72 tests, typecheck, lint) and every touched
+backend test area verified passing throughout, not just at the end.
+
+**Deliberately out of scope**, per each area's own docstring: real
+authentication (passwords/sessions/API keys), a dependency/architecture
+graph, semantic merge analysis, persistent AI worker processes, and a
+distributed compute cluster. Each is a substantially larger effort of its
+own to build on top of this session's foundation, not a missing piece of
+it — see `ROADMAP.md` for how they're tracked.
+
 ## 2026-07-28 — Real production data migration completed; Stabilization Mode pass (10 real bugs found and fixed)
 
 Two parts: finishing the real `market_data.db`/`research.db` → TimescaleDB

@@ -301,3 +301,36 @@ into git history):
   panel during a session's `starting` state. See KNOWN_ISSUES.md
   ISSUE-014 through ISSUE-020 and `CHANGELOG.md`'s 2026-07-28 entry for
   full detail.
+- **Team Collaboration Platform MVP** (2026-07-28): lightweight user
+  accounts (`accounts/` — `users`/`organizations`, four fixed roles, no
+  auth), an Active Work Registry (`collaboration/` — claimable work
+  items, claim/release/complete/reassign, an append-only activity log,
+  warn-only file-path overlap detection, a pre-merge summary endpoint),
+  and two new real (not mock) Mission Control panels. See
+  `PROJECT_STATE.md`'s "Last Completed Work" and `CHANGELOG.md`'s
+  2026-07-28 entry.
+
+### Future: Collaboration Platform, beyond the MVP
+
+Not started, deliberately — each is a substantially larger effort than
+the 2026-07-28 MVP above, meant to layer on top of it without a redesign
+once actually prioritized:
+
+- **Real authentication.** Accounts/work-items today have no login,
+  session, or API key — every route is reachable by anyone who can reach
+  the port. Needed before this is used by more than one trusted person on
+  a private tailnet.
+- **Architecture/dependency graph.** Today's overlap detection is exact
+  file-path intersection only; a real graph (which modules/services/DB
+  tables a file actually affects) would let it warn about *indirect*
+  conflicts, not just literal shared files.
+- **Semantic merge assistance.** Duplicate-implementation detection,
+  AI-assisted conflict resolution, a merge-readiness score beyond the
+  current file-overlap-only summary.
+- **Persistent AI worker processes.** Long-running agents that claim
+  work from the registry, work independently, report progress, and open
+  their own PRs — today's registry is claim/track only, not an execution
+  layer.
+- **Distributed worker network.** Trusted machines contributing compute
+  (backtesting, optimization, model training, inference) that Mission
+  Control monitors and assigns compatible jobs to.

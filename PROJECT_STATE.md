@@ -137,6 +137,15 @@ version is bumped by hand.
   creating the firewall rule (needs one UAC click) and a genuine
   second-machine Tailscale connection (a registered peer exists but was
   offline this session).
+- **Team Collaboration Platform MVP — lightweight accounts + Active Work
+  Registry (2026-07-28).** `src/futures_bot/accounts/` (`users`/
+  `organizations`, four fixed roles, full CRUD API) and
+  `src/futures_bot/collaboration/` (claimable work items with claim/
+  release/complete/reassign, an append-only activity log, warn-only
+  file-path overlap detection, a pre-merge summary endpoint) — both
+  SQLite + Postgres, Alembic-migrated, wired into two new real (not mock)
+  Mission Control panels. Deliberately not an authentication system yet.
+  See "Last Completed Work" below.
 
 ## Broken / Incomplete Features
 
@@ -150,6 +159,48 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-28: **Team Collaboration Platform: lightweight accounts, live
+Mission Control data, and an Active Work Registry.** Full detail in
+`CHANGELOG.md`'s matching dated entry (same day, appears above the
+Stabilization Mode entry below); this is the summary.
+
+- **Lightweight user accounts** (`src/futures_bot/accounts/`): `users`/
+  `organizations` tables (SQLite + Postgres, Alembic-migrated), four fixed
+  roles (owner/admin/member/viewer), full CRUD API
+  (`/api/organizations`, `/api/users`). Deliberately not an authentication
+  system — no password, no session, no login route.
+- **Mission Control now shows real data** for infrastructure and team:
+  `GET /api/system/infrastructure` (CPU/memory/disk via a new `psutil`
+  dependency, job-queue depth from the real `jobs` table),
+  `InfrastructurePanel`/`TeamPanel` replacing mock arrays. "Restart
+  services" deliberately not wired — this API has no auth in front of it
+  yet.
+- **Active Work Registry** (`src/futures_bot/collaboration/`): claimable
+  work items (title/owner/branch/status/estimated files/priority) with
+  claim/release/complete/reassign, an append-only activity log, warn-only
+  file-path overlap detection (`collaboration/overlap.py`,
+  no_risk→critical), a Mission Control panel, and
+  `POST /api/work-items/merge-summary` for a pre-merge overlap/conflict
+  summary. Deliberately out of scope: a dependency/architecture graph,
+  semantic merge analysis, persistent AI workers, distributed compute —
+  each a substantially larger follow-on effort, see ROADMAP.md.
+- **Team Mode's firewall-rule elevation wait is now bounded**, not
+  indefinite — `Start-Process -Verb RunAs` can block synchronously on the
+  UAC decision regardless of `-Wait`; fixed via a marker-file-based design
+  after two other approaches (`Process.WaitForExit`, a `Start-Job`-wrapped
+  launch) were tried and empirically shown to still block in this specific
+  testing environment.
+- **Found and documented (not fixed) a real timestamp-parsing bug**:
+  `frontend/src/format.ts::dateTime()` parses SQLite's (local-mode)
+  timezone-less timestamps as local time instead of UTC — affects every
+  page rendering a local-mode timestamp. See KNOWN_ISSUES.md ISSUE-021.
+  The new `TeamPanel.tsx` was written correctly from the start and isn't
+  affected.
+- **~95 new backend tests, 6 new frontend tests** — store unit tests,
+  HTTP route tests, live-Postgres suites (skip cleanly without a server),
+  and Mission Control panel tests. Full frontend suite (72 tests,
+  typecheck, lint) and every touched backend test area verified passing.
 
 2026-07-28: **Real production data migration completed, plus a
 Stabilization Mode pass (10 real bugs found and fixed).** Full detail in
@@ -973,9 +1024,11 @@ breakdown.
 
 ## Recommended Next Task
 
-**The real production data migration is done and Team Mode's core
-networking bug is fixed** (see "Last Completed Work" above). What's left
-is genuinely operator/human actions, not more building:
+**The real production data migration is done, Team Mode's core networking
+bug is fixed, and a Team Collaboration Platform MVP (accounts + Active
+Work Registry) now exists** (see "Last Completed Work" above). What's
+left is a mix of genuine operator/human actions and real follow-on
+feature work:
 
 1. **Create the Windows Firewall rule for real** (or click the UAC prompt
    next time `scripts\start-team.ps1` runs unelevated). One-time, from an
@@ -984,26 +1037,40 @@ is genuinely operator/human actions, not more building:
    Once it exists, every future `start-team.ps1` run detects it and skips
    straight past this step.
 2. **Get a second machine on the tailnet and actually connect it** — a
-   peer (`rafaelballer`) is already registered but was offline this
+   peer (`rafaelballer`) is already registered but was offline all
    session; this is the one thing that genuinely can't be verified from
    a single machine. Follow `TEAM_DEPLOYMENT.md`'s "Connecting a new
    developer" section, then confirm it can reach
    `http://100.91.121.119:8000` (or whatever this machine's Tailscale IP
    is) for both the API and the built dashboard.
 3. **Visually verify Mission Control in a browser** — Claude in Chrome
-   was unavailable again this session (connection failed/disabled);
-   typecheck/lint/vitest/build are all clean and the underlying
-   `/api/system/health` data was verified directly, but the actual
-   rendered page hasn't been looked at. Run `/chrome` to reconnect, or
-   look yourself at `http://127.0.0.1:5173` (local mode) /
-   `http://100.91.121.119:8000` (team mode).
-4. **Continue the Stabilization Mode sweep, if more time is available.**
-   This session covered: every simple `GET` route (no crashes), a
-   frontend spot-check, and a thread-safety audit of every module-level
-   singleton accessor. Not yet covered as thoroughly: the database layer
-   (migrations/indexes/transactions beyond what the fixes above already
-   touched), a systematic dead-code/duplicate-logic sweep, and POST/PUT
-   routes with real payloads (only GET routes were swept this session).
+   was unavailable all session (connection failed/disabled); typecheck/
+   lint/vitest/build are all clean and the underlying API data was
+   verified directly, but the actual rendered page (including the two new
+   panels) hasn't been looked at. Run `/chrome` to reconnect, or look
+   yourself at `http://127.0.0.1:5173` (local mode).
+4. **Decide whether/how real authentication gets built.** Accounts
+   (`accounts/`) and the Active Work Registry (`collaboration/`) are both
+   deliberately built with no login/session/password — every route is
+   reachable by anyone who can reach the port, same as the rest of this
+   API. A real auth layer (who is "the current user" for a given
+   request) is the natural next step before this is used by more than one
+   trusted person on a private tailnet.
+5. **Consider the larger Collaboration Platform follow-on phases**
+   (architecture/dependency graph for smarter overlap detection, semantic
+   merge assistance, persistent AI worker processes, a distributed
+   compute cluster) — each substantially larger than this session's MVP,
+   deliberately not started; the current `collaboration/` package is
+   built so they can layer on without a redesign.
+6. **Fix `frontend/src/format.ts::dateTime()`'s timestamp-parsing bug**
+   (KNOWN_ISSUES.md ISSUE-021) — affects every page rendering a
+   local-mode (SQLite) timestamp, deferred because it touches many call
+   sites and deserves its own focused verification pass.
+7. **Continue the Stabilization Mode sweep, if more time is available.**
+   Not yet covered as thoroughly: the database layer (migrations/indexes/
+   transactions beyond what recent fixes already touched), a systematic
+   dead-code/duplicate-logic sweep, and POST/PUT routes with real
+   payloads (only GET routes were swept in the sweep that found ISSUE-017).
 
 Otherwise: `KNOWN_ISSUES.md` ISSUE-004 (schema migration, needs explicit
 approval per CLAUDE.md section 8), ISSUE-005 (US80Z source-data
