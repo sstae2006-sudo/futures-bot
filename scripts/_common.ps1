@@ -315,8 +315,28 @@ function Confirm-TailscaleFirewallRule {
       declined UAC prompt is reported as a clear warning (with the exact
       manual command) rather than a hard failure, since local access
       still works either way.
+
+      The elevation wait is bounded ($ElevationTimeoutSeconds, default 45)
+      rather than an indefinite `Start-Process -Wait` -- confirmed the hard
+      way (2026-07-28) that an unattended run (nobody at the console to
+      click the UAC prompt) would otherwise hang this entire script
+      forever. A first attempt bounded it with `$proc.WaitForExit(ms)`
+      instead of `-Wait`, but that turned out to be just as unreliable:
+      `Start-Process -Verb RunAs -PassThru`'s returned Process object
+      doesn't reliably support `WaitForExit` across the UAC elevation
+      boundary (confirmed empirically -- it kept blocking past the
+      requested timeout with a live, unanswered `consent.exe` prompt still
+      open). Polls for a completion marker *file* instead, written by the
+      elevated child itself -- this only depends on the filesystem, not on
+      any cross-elevation process-handle relationship, so it can't get
+      stuck the same way. On timeout, the elevated helper (and any pending
+      UAC prompt) is left alone rather than force-closed, in case someone
+      answers it after this script moves on.
     #>
-    param([Parameter(Mandatory = $true)][int]$Port)
+    param(
+        [Parameter(Mandatory = $true)][int]$Port,
+        [int]$ElevationTimeoutSeconds = 45
+    )
 
     $ruleName = "futures-bot Team Mode ($Port/tcp, Tailscale)"
     $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
@@ -325,12 +345,12 @@ function Confirm-TailscaleFirewallRule {
         return $true
     }
 
-    $scriptBlock = "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow " +
-        "-Protocol TCP -LocalPort $Port -RemoteAddress $TailscaleCgnatRange -Profile Any | Out-Null"
+    $ruleArgs = "-DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol TCP " +
+        "-LocalPort $Port -RemoteAddress $TailscaleCgnatRange -Profile Any"
 
     if (Test-IsAdministrator) {
         try {
-            Invoke-Expression $scriptBlock
+            Invoke-Expression "New-NetFirewallRule $ruleArgs | Out-Null"
             Write-Ok "Created firewall rule '$ruleName' (already elevated)"
             return $true
         } catch {
@@ -339,23 +359,72 @@ function Confirm-TailscaleFirewallRule {
         }
     }
 
-    Write-WarnLine "No inbound firewall rule for port $Port yet -- requesting elevation (one UAC prompt) to create it"
-    try {
-        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($scriptBlock))
-        $proc = Start-Process -FilePath "powershell.exe" `
-            -ArgumentList "-NoProfile", "-EncodedCommand", $encoded `
-            -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-        if ($proc.ExitCode -ne 0) {
-            throw "elevated helper process exited with code $($proc.ExitCode)"
+    $manualCommandWarning = (
+        "Could not create the firewall rule automatically (UAC prompt declined, timed out, or " +
+        "elevation failed). Other devices on your tailnet will NOT be able to reach this backend " +
+        "until it exists. Run this once from an elevated PowerShell: New-NetFirewallRule $ruleArgs"
+    )
+
+    $marker = Join-Path $env:TEMP "futures-bot-firewall-rule-$([guid]::NewGuid().ToString('N')).marker"
+    # The elevated child writes "OK" or "ERROR: ..." to $marker as its very
+    # last act, inside try/finally so a mid-script failure still leaves a
+    # marker behind instead of the parent polling forever for one that will
+    # never come.
+    $scriptBlock = (
+        "try { New-NetFirewallRule $ruleArgs | Out-Null; 'OK' | Set-Content -Path '$marker' -Encoding utf8 } " +
+        "catch { `"ERROR: `$(`$_.Exception.Message)`" | Set-Content -Path '$marker' -Encoding utf8 }"
+    )
+
+    Write-WarnLine (
+        "No inbound firewall rule for port $Port yet -- requesting elevation (one UAC prompt, " +
+        "waiting up to ${ElevationTimeoutSeconds}s) to create it"
+    )
+
+    # The launch itself -- not just waiting for it afterward -- runs inside
+    # a background job. Confirmed empirically (2026-07-28) that
+    # `Start-Process -Verb RunAs` can block *synchronously* until the UAC
+    # prompt is answered, regardless of -Wait/-PassThru or anything done
+    # after it returns -- there is nothing to "wait with a timeout" on if
+    # the launch call itself never returns control. Wait-Job -Timeout,
+    # unlike Process.WaitForExit, monitors the job from an entirely
+    # separate process and reliably returns on schedule no matter what the
+    # job's own code is blocked on; Stop-Job then unblocks it.
+    $job = Start-Job -ScriptBlock {
+        param($EncodedCommand)
+        Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile", "-EncodedCommand", $EncodedCommand `
+            -Verb RunAs -WindowStyle Hidden
+    } -ArgumentList ([Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($scriptBlock)))
+
+    $deadline = (Get-Date).AddSeconds($ElevationTimeoutSeconds)
+    $result = $null
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path $marker) {
+            $result = (Get-Content $marker -Raw -ErrorAction SilentlyContinue)
+            break
         }
-    } catch {
+        Start-Sleep -Milliseconds 500
+    }
+    # Stop-Job unblocks the launcher job itself (it doesn't touch
+    # consent.exe/the elevated child directly -- a still-pending prompt is
+    # left alone, same intent as before, just now the harness that would
+    # otherwise wait on it forever is reliably freed).
+    Stop-Job -Job $job -ErrorAction SilentlyContinue
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    Remove-Item $marker -Force -ErrorAction SilentlyContinue
+
+    if ($null -eq $result) {
         Write-WarnLine (
-            "Could not create the firewall rule automatically (UAC prompt declined, or elevation " +
-            "failed: $($_.Exception.Message)). Other devices on your tailnet will NOT be able to " +
-            "reach this backend until it exists. Run this once from an elevated PowerShell: " +
-            "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow " +
-            "-Protocol TCP -LocalPort $Port -RemoteAddress $TailscaleCgnatRange -Profile Any"
+            "Elevation prompt was not answered within ${ElevationTimeoutSeconds}s -- continuing " +
+            "without the firewall rule (the pending prompt, if any, is left alone rather than " +
+            "force-closed, in case someone answers it after this script moves on)."
         )
+        Write-WarnLine $manualCommandWarning
+        return $false
+    }
+    if ($result.Trim() -ne "OK") {
+        Write-WarnLine "Elevated rule creation reported an error: $($result.Trim())"
+        Write-WarnLine $manualCommandWarning
         return $false
     }
 
