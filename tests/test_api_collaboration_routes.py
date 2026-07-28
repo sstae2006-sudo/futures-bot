@@ -399,3 +399,36 @@ class TestMergeReadinessRoute:
         }).json()
 
         assert conflicting["score"] < clean["score"]
+
+
+class TestTimelineRoute:
+    def test_returns_work_item_events(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Task"})
+
+        resp = client.get("/api/activity/timeline", params={"include_commits": False})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["kind"] == "work_item"
+        assert body[0]["title"] == "created"
+
+    def test_filters_by_event_type(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+        client.post(f"/api/work-items/{item['id']}/claim", json={"user_id": "u1"})
+
+        resp = client.get("/api/activity/timeline", params={"event_type": "claimed", "include_commits": False})
+
+        assert resp.status_code == 200
+        assert [e["title"] for e in resp.json()] == ["claimed"]
+
+    def test_respects_limit(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        for i in range(3):
+            client.post("/api/work-items", json={"title": f"Task {i}"})
+
+        resp = client.get("/api/activity/timeline", params={"include_commits": False, "limit": 2})
+
+        assert len(resp.json()) == 2

@@ -154,6 +154,14 @@ class PgCollaborationStore:
     # --- Activity log ---
 
     def fetch_activity(self, *, work_item_id: Optional[str] = None, limit: int = 100) -> list[dict]:
+        """No `rowid`-style tiebreaker needed here the way
+        `CollaborationStore.fetch_activity` needs one for SQLite:
+        `created_at`'s default here is `func.now()` evaluated per
+        `self._engine.begin()` transaction (each store method opens its
+        own), giving real microsecond-resolution, effectively-unique
+        timestamps for sequential calls -- unlike SQLite's
+        `datetime('now')`, which only has second resolution and ties
+        easily under rapid/automated activity."""
         stmt = select(work_item_activity).order_by(work_item_activity.c.created_at.desc()).limit(limit)
         if work_item_id is not None:
             stmt = stmt.where(work_item_activity.c.work_item_id == work_item_id)

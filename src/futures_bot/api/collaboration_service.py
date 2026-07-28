@@ -14,9 +14,10 @@ from ..collaboration.overlap import detect_overlap
 from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readiness
 from ..collaboration.overlap_v2 import OverlapWarningV2, compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
+from ..collaboration.timeline import build_timeline
 from .schemas import (
     BranchInfoOut, CommitOut, ConflictPairOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
-    OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, WorkItemActivityOut, WorkItemOut,
+    OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
 )
 from .services import ApiError
 
@@ -152,6 +153,17 @@ def update_work_item_status(item_id: str, new_status: str, actor_user_id: Option
 def list_activity(work_item_id: Optional[str] = None, limit: int = 100) -> list[WorkItemActivityOut]:
     store = get_collaboration_store()
     return [WorkItemActivityOut(**a) for a in store.fetch_activity(work_item_id=work_item_id, limit=limit)]
+
+
+def get_timeline(
+    work_item_id: Optional[str] = None, event_type: Optional[str] = None, q: Optional[str] = None,
+    since: Optional[str] = None, until: Optional[str] = None, include_commits: bool = True, limit: int = 100,
+) -> list[TimelineEntryOut]:
+    entries = build_timeline(
+        work_item_id=work_item_id, event_type=event_type, q=q, since=since, until=until,
+        include_commits=include_commits, limit=limit,
+    )
+    return [TimelineEntryOut(**e.__dict__) for e in entries]
 
 
 def merge_summary(changed_files: list[str], work_item_id: Optional[str] = None) -> MergeSummaryOut:

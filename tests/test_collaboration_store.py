@@ -139,6 +139,20 @@ class TestActivityLog:
 
         assert len(all_events) == 2
 
+    def test_activity_within_the_same_second_stays_in_insertion_order(self, store):
+        """`created_at` is only second-resolution -- three rapid-fire
+        transitions (entirely realistic for an automated/AI-driven
+        workflow) can tie on that column alone. The `rowid` tiebreaker in
+        `fetch_activity` is what keeps "most recent first" correct rather
+        than merely usually-correct when that happens."""
+        store.create_work_item(item_id="w1", title="Task")
+        store.claim_work_item("w1", "u1")
+        store.complete_work_item("w1", actor_user_id="u1")
+
+        events = [a["event"] for a in store.fetch_activity(work_item_id="w1")]
+
+        assert events == ["completed", "claimed", "created"]
+
 
 class TestOwnerType:
     def test_defaults_to_human(self, store):

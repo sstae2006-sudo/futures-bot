@@ -1005,6 +1005,18 @@ class MergeReadinessOut(BaseModel):
     overlap_warnings: list[OverlapWarningV2Out]
 
 
+class TimelineEntryOut(BaseModel):
+    """One entry in the merged project activity timeline
+    (`collaboration/timeline.py`) -- a work-item event or a real git
+    commit, normalized to the same shape so a client renders one feed."""
+    kind: Literal["work_item", "commit"]
+    timestamp: str
+    title: str
+    detail: Optional[str] = None
+    actor: Optional[str] = None
+    work_item_id: Optional[str] = None
+
+
 class InfrastructureOut(BaseModel):
     """Mission Control's infrastructure panel -- real process/host metrics
     via `psutil`, plus the background job queue's actual depth (the

@@ -243,15 +243,27 @@ class CollaborationStore:
     # --- Activity log ---
 
     def fetch_activity(self, *, work_item_id: Optional[str] = None, limit: int = 100) -> list[dict]:
+        """`ORDER BY created_at DESC, rowid DESC` -- `created_at` alone is
+        only second-resolution (SQLite's `datetime('now')`), so two
+        events logged within the same second (entirely realistic: an
+        automated/AI-driven claim-then-complete can land in the same
+        second) would otherwise tie and sort in an unspecified order.
+        `rowid` is SQLite's own implicit, monotonically-increasing
+        insert-order column (this table's declared `id` is a random UUID
+        TEXT primary key, so it doesn't alias rowid the way an `INTEGER
+        PRIMARY KEY` would -- the hidden rowid still exists and is free
+        to use as a tiebreaker). This is what makes `timeline.py`'s
+        "most-recent-first" merge actually correct instead of merely
+        usually-correct."""
         self._conn.row_factory = sqlite3.Row
         if work_item_id is not None:
             rows = self._conn.execute(
-                "SELECT * FROM work_item_activity WHERE work_item_id = ? ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM work_item_activity WHERE work_item_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (work_item_id, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM work_item_activity ORDER BY created_at DESC LIMIT ?", (limit,),
+                "SELECT * FROM work_item_activity ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,),
             ).fetchall()
         self._conn.row_factory = None
         return [dict(r) for r in rows]

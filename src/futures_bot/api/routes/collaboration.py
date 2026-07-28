@@ -14,7 +14,7 @@ from .. import collaboration_service as services
 from ..schemas import (
     BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut,
     MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest,
-    ReassignWorkItemRequest, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
+    ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
     WorkItemCreateRequest, WorkItemOut,
 )
 
@@ -113,6 +113,21 @@ def merge_readiness(req: MergeReadinessRequest) -> MergeReadinessOut:
     `"unknown"` (no CI integration exists yet -- see
     `collaboration/merge_readiness.py`'s module docstring)."""
     return services.merge_readiness(req.changed_files, branch=req.branch, work_item_id=req.work_item_id)
+
+
+@router.get("/api/activity/timeline", response_model=list[TimelineEntryOut])
+def get_timeline(
+    work_item_id: Optional[str] = None, event_type: Optional[str] = None, q: Optional[str] = None,
+    since: Optional[str] = None, until: Optional[str] = None, include_commits: bool = True, limit: int = 100,
+) -> list[TimelineEntryOut]:
+    """The merged project activity timeline -- work-item events plus real
+    git commits (`collaboration/timeline.py`). `include_commits=false`
+    when embedding this in a per-work-item view where commits (which
+    aren't tied to a specific item) would just be noise."""
+    return services.get_timeline(
+        work_item_id=work_item_id, event_type=event_type, q=q, since=since, until=until,
+        include_commits=include_commits, limit=limit,
+    )
 
 
 @router.get("/api/git/branch-info", response_model=BranchInfoOut)
