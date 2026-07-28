@@ -120,17 +120,23 @@ version is bumped by hand.
 - Tradovate live-broker adapter; trade-import/reconciliation pipeline.
 - Deploy: Dockerfiles (CLI + API), docker-compose, systemd units,
   bare-metal deployment doc.
-- **Team deployment (Tailscale + centralized TimescaleDB) — complete and
-  verified against a live server (2026-07-27).** `FUTURES_BOT_DATABASE_URL`
-  unset (default) is byte-identical to before; set, `PgMarketDataStore`/
-  `PgTradeStore` transparently replace the SQLite stores for every caller,
-  schema managed by Alembic, `bars` a real TimescaleDB hypertable,
+- **Team deployment (Tailscale + centralized TimescaleDB) — complete,
+  verified against a live server, and the real production data migration
+  is now done (2026-07-28).** `FUTURES_BOT_DATABASE_URL` unset (default)
+  is byte-identical to before; set, `PgMarketDataStore`/`PgTradeStore`
+  transparently replace the SQLite stores for every caller, schema
+  managed by Alembic, `bars` a real TimescaleDB hypertable,
   `GET /api/system/health` + Mission Control wired to it,
   `tools/migrate_to_timescaledb.py`/`tools/backup_timescaledb.py`/
-  `scripts/start-team.ps1` all built and verified. See "Last Completed
-  Work" below and `TEAM_DEPLOYMENT.md`. Not yet done: migrating real
-  production data (operator decision) and a genuine second-machine
-  Tailscale connection (needs real hardware).
+  `scripts/start-team.ps1` all built and verified. The real
+  `market_data.db`/`research.db` (3.5M `bars` rows, 14.8k `trades`) has
+  been migrated for real, and Team Mode's core networking bug (Windows
+  Firewall blocking inbound tailnet traffic) is root-caused and fixed —
+  `start-team.ps1` now auto-creates the needed rule. See "Last Completed
+  Work" below and `TEAM_DEPLOYMENT.md`. Not yet done: the user actually
+  creating the firewall rule (needs one UAC click) and a genuine
+  second-machine Tailscale connection (a registered peer exists but was
+  offline this session).
 
 ## Broken / Incomplete Features
 
@@ -144,6 +150,57 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-28: **Real production data migration completed, plus a
+Stabilization Mode pass (10 real bugs found and fixed).** Full detail in
+`CHANGELOG.md`'s matching dated entry and `KNOWN_ISSUES.md` ISSUE-014
+through ISSUE-020; this is the summary.
+
+- **Real `market_data.db`/`research.db` → TimescaleDB migration is done.**
+  Backed up and integrity-checked both `.db` files first; dry-run
+  confirmed real counts against the live `deploy/docker-compose.yml`
+  `timescaledb` instance; the real `--yes` run hit ISSUE-014 (below)
+  partway through `bars`, then completed and verified (destination row
+  count ≥ source for every table in both databases) once fixed. This was
+  the one item PROJECT_STATE.md's own "Recommended Next Task" flagged as
+  an operator decision, not automated tooling work — it's now done.
+- **Team Mode networking (Priority #1) root-caused and fixed.** Another
+  device on the tailnet couldn't reach the backend even though it worked
+  from this machine — confirmed directly: Windows Firewall's Private-
+  profile default is `BlockInbound` with zero rule for this app/port, and
+  a same-machine test succeeds because local delivery to an owned IP
+  never crosses the filtered network path. `scripts/start-team.ps1` now
+  calls a new `Confirm-TailscaleFirewallRule` (`scripts/_common.ps1`)
+  that auto-creates a rule scoped to Tailscale's own CGNAT range
+  (`100.64.0.0/10`, not "any remote address"), self-elevating via one UAC
+  prompt if the session isn't already elevated. Verified up through the
+  point requiring an actual human to click that prompt — the one step
+  that genuinely can't be automated further without weakening it into a
+  silent privilege escalation.
+- **Six more real bugs found and fixed** during a broad Stabilization
+  Mode sweep (API route sweep, frontend review, backend thread-safety
+  audit): `bars.created_at NOT NULL` rejecting 32.5% of real rows
+  (ISSUE-014), a flaky test caused by `time.monotonic()`'s clock
+  granularity (ISSUE-015), a reproducible check-then-set race present in
+  three separate `start()` methods across the research server/paper
+  trader/live session managers (ISSUE-016, proven with a regression test
+  that failed 3/3 pre-fix and passed 3/3 post-fix in all three cases),
+  `GET /api/logs` reading an entire 9.2 GB `decisions.jsonl` into memory
+  on every call (ISSUE-017, fixed to 0.022s via a bounded tail reader),
+  a blank UI panel during `Live.tsx`'s `starting` state (ISSUE-018),
+  unhandled exceptions never being logged anywhere (ISSUE-019), and a
+  missing lock on `api/jobs.py`'s executor singleton (ISSUE-020, for
+  consistency with every other singleton accessor in this codebase).
+- **Verified, not just implemented:** full local-mode boot (backend +
+  frontend, clean, via `scripts\start.ps1`); team-mode boot up through
+  the human-UAC-interaction point; every `test_api_*.py` file (16 files,
+  ~160 tests) individually; the full research-server test suite; the
+  full frontend suite (65 tests, typecheck, lint).
+- **Not done:** actually creating the Windows Firewall rule end-to-end
+  (needs the user to click the UAC prompt, or run the one-time elevated
+  `New-NetFirewallRule` command this session provided) and a genuine
+  second-machine Tailscale connection (a registered peer, `rafaelballer`,
+  exists but was offline this session).
 
 2026-07-27: **Team deployment (Tailscale + centralized TimescaleDB) —
 complete and verified against a live server.** Continuation of the entry
@@ -916,39 +973,43 @@ breakdown.
 
 ## Recommended Next Task
 
-**Team deployment is complete and verified against a live server** (see
-"Last Completed Work" above) — no platform-hardening work remains before
-an operator actually deploys it for a real team. What's left is either an
-operator decision or genuinely needs a second machine, not more building:
+**The real production data migration is done and Team Mode's core
+networking bug is fixed** (see "Last Completed Work" above). What's left
+is genuinely operator/human actions, not more building:
 
-1. **Migrate the real production data, when ready.** `tools/migrate_to_timescaledb.py`
-   is built and verified against synthetic fixtures, but has deliberately
-   never touched the real `market_data.db` (927 MB, ~3.5M `bars` rows)/
-   `research.db` (26 MB, ~14.8k `trades`) on this machine — that's a real,
-   one-way-feeling step against real data, explicitly called out as a
-   separate operator decision in the approved plan. When ready: back up
-   both `.db` files first (`docs/DATABASE_CORRUPTION_REPORT.md` is exactly
-   why that discipline exists), then
-   `python tools/migrate_to_timescaledb.py --dry-run` to see the real
-   counts it would move, then `--yes`.
-2. **Get a second machine on the tailnet and actually connect it** — the
-   one verification step the approved plan's own Verification section
-   flags as impossible from a single-machine dev sandbox. Follow
-   `TEAM_DEPLOYMENT.md`'s "Connecting a new developer" section.
-3. **Run `scripts/start-team.ps1` end-to-end for real** once there's an
-   actual Tailscale address to bind — verified this session only that it
-   parses correctly and fails safely before any network-exposing action;
-   the Tailscale-IP-detection/frontend-build/backend-bind steps
-   themselves haven't been exercised.
-4. **Visually verify Mission Control in a browser** — Claude in Chrome
-   was unavailable this session (connection failed/disabled); typecheck/
-   lint/vitest/build are all clean, but the actual rendered page
-   (`StatusBar`'s environment badge, `HealthGrid`'s new conditional "Team
-   Database" card) hasn't been looked at.
+1. **Create the Windows Firewall rule for real** (or click the UAC prompt
+   next time `scripts\start-team.ps1` runs unelevated). One-time, from an
+   elevated PowerShell:
+   `New-NetFirewallRule -DisplayName "futures-bot Team Mode (8000/tcp, Tailscale)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000 -RemoteAddress 100.64.0.0/10 -Profile Any`.
+   Once it exists, every future `start-team.ps1` run detects it and skips
+   straight past this step.
+2. **Get a second machine on the tailnet and actually connect it** — a
+   peer (`rafaelballer`) is already registered but was offline this
+   session; this is the one thing that genuinely can't be verified from
+   a single machine. Follow `TEAM_DEPLOYMENT.md`'s "Connecting a new
+   developer" section, then confirm it can reach
+   `http://100.91.121.119:8000` (or whatever this machine's Tailscale IP
+   is) for both the API and the built dashboard.
+3. **Visually verify Mission Control in a browser** — Claude in Chrome
+   was unavailable again this session (connection failed/disabled);
+   typecheck/lint/vitest/build are all clean and the underlying
+   `/api/system/health` data was verified directly, but the actual
+   rendered page hasn't been looked at. Run `/chrome` to reconnect, or
+   look yourself at `http://127.0.0.1:5173` (local mode) /
+   `http://100.91.121.119:8000` (team mode).
+4. **Continue the Stabilization Mode sweep, if more time is available.**
+   This session covered: every simple `GET` route (no crashes), a
+   frontend spot-check, and a thread-safety audit of every module-level
+   singleton accessor. Not yet covered as thoroughly: the database layer
+   (migrations/indexes/transactions beyond what the fixes above already
+   touched), a systematic dead-code/duplicate-logic sweep, and POST/PUT
+   routes with real payloads (only GET routes were swept this session).
 
 Otherwise: `KNOWN_ISSUES.md` ISSUE-004 (schema migration, needs explicit
-approval per CLAUDE.md section 8) and ISSUE-005 (US80Z source-data
-correction), a Python formatter/linter, CI setup, or the High-priority
+approval per CLAUDE.md section 8), ISSUE-005 (US80Z source-data
+correction), deciding a rotation/archival policy for `logs/decisions.jsonl`
+(ISSUE-017 made reading it cheap regardless of size, but it still grows
+forever), a Python formatter/linter, CI setup, or the High-priority
 roadmap items (walk-forward testing, Monte Carlo, parameter robustness).
 
 ---

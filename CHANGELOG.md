@@ -4,6 +4,79 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-28 — Real production data migration completed; Stabilization Mode pass (10 real bugs found and fixed)
+
+Two parts: finishing the real `market_data.db`/`research.db` → TimescaleDB
+migration PROJECT_STATE.md flagged as the operator's own next step, then a
+full Stabilization Mode pass (crash protection, thread safety, resource
+leaks) across the whole platform. Every fix below has its own KNOWN_ISSUES.md
+entry (ISSUE-014 through ISSUE-020) with full reproduction/verification
+detail; this is the summary.
+
+**Real production data migration — completed and verified.**
+Backed up both `.db` files first (integrity-checked). Dry-run confirmed
+real counts (3,519,756 `bars` rows, 14,807 `trades`, etc.) against the
+live `deploy/docker-compose.yml` `timescaledb` instance. The real
+`--yes` run hit a genuine blocker (ISSUE-014 below) partway through;
+after fixing it, the full migration completed and was verified
+source-count ≤ destination-count for every table in both databases.
+
+**Fixed, this session:**
+- **ISSUE-014 (High):** `bars.created_at NOT NULL` rejected 32.5% of
+  real `bars` rows (every source, not an edge case) that genuinely have
+  no `created_at` — a live consequence of ISSUE-004's schema drift, only
+  surfaced now that real data hit a NOT-NULL-enforcing destination.
+  Fixed by making the column nullable in Postgres (new Alembic revision)
+  to match the source's true state, rather than fabricating or dropping
+  real rows.
+- **Team Mode networking (Priority #1, High):** root-caused why another
+  device on the tailnet couldn't reach the backend even though it worked
+  locally — Windows Firewall's Private-profile default is BlockInbound
+  with zero rule for this app/port; same-machine tests succeed because
+  local delivery to an owned IP never crosses the filtered path. Fixed:
+  `scripts/start-team.ps1` now auto-creates a rule scoped to Tailscale's
+  own CGNAT range, self-elevating via one UAC prompt if needed.
+- **ISSUE-015 (Low):** a genuinely flaky test
+  (`test_stale_ip_outside_window_is_purged`, ~30-40% failure rate even in
+  isolation) traced to `time.monotonic()`'s ~31ms clock granularity
+  beating a 10ms sleep. Fixed by increasing the sleep to 50ms.
+- **ISSUE-016 (Medium):** a real, reproducible check-then-set race in
+  `ResearchServer.start()`, `AutonomousPaperTrader.start()`, and
+  `LiveSessionManager.start()` — all three checked a running-flag under
+  lock, released it, did slow setup work, then set the flag, so two
+  concurrent calls could both proceed. Confirmed with a new regression
+  test that failed 3/3 pre-fix, passed 3/3 post-fix, in all three cases.
+  Fixed by claiming the flag atomically with the check.
+- **ISSUE-017 (High):** `GET /api/logs` read the entire `decisions.jsonl`
+  into memory on every call — found at 9.2 GB / 34.2M lines on this
+  machine (unbounded, never-rotated, from long-running autonomous paper
+  trading). Fixed with a bounded backward-seeking tail reader: 2000 lines
+  in 0.022s against the real file, down from a multi-GB allocation.
+- **ISSUE-018 (Low):** `Live.tsx` showed a blank panel while a session
+  was `starting` — a gap made more visible by the ISSUE-016 fix above
+  lengthening that window. Added a loading indicator for that state.
+- **ISSUE-019 (Medium):** unhandled exceptions in any API route were
+  never logged anywhere this project's own logging system controls (a
+  real silent-failure gap, though the response itself was already safe).
+  Added a catch-all handler that logs via the `futures_bot` logger
+  without shadowing the existing `ApiError`/`KeyError`/`HTTPException`
+  handling.
+- **ISSUE-020 (Low):** `api/jobs.py`'s executor lazy-init had no lock,
+  unlike every other singleton accessor in this codebase. Added one for
+  consistency.
+
+**Verified:** full local-mode boot (backend + frontend, clean), team-mode
+boot up through the point requiring human UAC interaction (the one step
+that genuinely can't be automated further), every `test_api_*.py` file
+(16 files, ~160 tests) individually, the full research-server test suite,
+and the full frontend suite (65 tests, typecheck, lint) all green.
+
+**Not done:** creating the actual Windows Firewall rule end-to-end
+(needs a human to click the UAC prompt or run the one-time elevated
+command this session provided) and a genuine second-machine Tailscale
+connection (a registered peer exists, `rafaelballer`, but was offline
+this session).
+
 ## 2026-07-27 — Team deployment (Tailscale + TimescaleDB): completed and verified against a live server
 
 Continuation and completion of the entry directly below (`market_data.db`

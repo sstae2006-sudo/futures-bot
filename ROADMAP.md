@@ -273,7 +273,27 @@ into git history):
   wired to it. Three real bugs found and fixed during this session's own
   live-server verification (KNOWN_ISSUES.md ISSUE-010/011/012). See
   `PROJECT_STATE.md`'s "Team deployment" write-up and `TEAM_DEPLOYMENT.md`.
-  **Deliberately not done**: migrating the real production
-  `market_data.db`/`research.db` (927 MB/26 MB) into a live team
-  instance — an operator's own decision, whenever a second machine is
-  actually ready to join the tailnet, not an automated step.
+- **Real production data migration to TimescaleDB — completed** (2026-07-28).
+  The actual `market_data.db`/`research.db` (3.5M `bars` rows, 14.8k
+  `trades`, everything else) has been migrated for real, hitting and
+  fixing one genuine blocker along the way (KNOWN_ISSUES.md ISSUE-014 —
+  `bars.created_at NOT NULL` rejected 32.5% of real rows). See
+  `PROJECT_STATE.md`'s "Last Completed Work".
+- **Team Mode's core cross-machine networking bug — root-caused and
+  fixed** (2026-07-28). Windows Firewall's Private-profile default
+  (`BlockInbound`, zero rule for this app/port) silently dropped genuine
+  tailnet peer traffic while same-machine tests kept succeeding via local
+  delivery. `start-team.ps1` now auto-creates a rule scoped to Tailscale's
+  own CGNAT range, self-elevating via UAC if needed. See KNOWN_ISSUES.md
+  and `PROJECT_STATE.md`'s "Last Completed Work". **Still needed**: the
+  user actually clicking the UAC prompt (or running the one-time elevated
+  command) once, and a genuine second-machine Tailscale connection — a
+  registered peer exists but was offline this session.
+- **Stabilization Mode pass — 10 real bugs found and fixed** (2026-07-28):
+  a flaky test, a check-then-set race present in three separate `start()`
+  methods, a 9.2 GB unbounded log file being fully read into memory on
+  every dashboard request, unhandled exceptions never being logged
+  anywhere, a missing lock on a singleton accessor, and a blank frontend
+  panel during a session's `starting` state. See KNOWN_ISSUES.md
+  ISSUE-014 through ISSUE-020 and `CHANGELOG.md`'s 2026-07-28 entry for
+  full detail.
