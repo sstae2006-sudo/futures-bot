@@ -58,7 +58,7 @@ from ..models import Bar
 from ..research.regime import classify_trend
 from ..strategy.indicators import adx
 from .models import MarketRegime, VolatilityState
-from .volatility import EXTREME_RATIO_FLOOR, LOW_RATIO_CEILING, analyze_volatility
+from .volatility import EXTREME_RATIO_FLOOR, LOW_RATIO_CEILING, VolatilityContext, analyze_volatility
 
 #: Wilder's ADX smoothing period -- same default strategy.indicators.adx uses.
 DEFAULT_ADX_PERIOD = 14
@@ -73,6 +73,11 @@ ADX_TRENDING_THRESHOLD = 25.0
 #: requiring an implausibly extreme reading to ever reach 1.0. Chosen
 #: so the task's own worked example lines up exactly: ADX 39 -> 0.78.
 ADX_CONFIDENCE_SCALE = 50.0
+
+#: Sentinel distinguishing "caller did not supply a precomputed value"
+#: from "caller supplied None because the value genuinely couldn't be
+#: computed" -- see ``classify_regime``'s ``precomputed_*`` parameters.
+_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -166,6 +171,8 @@ def classify_regime(
     timeframe: str,
     bars: Sequence[Bar],
     adx_period: int = DEFAULT_ADX_PERIOD,
+    precomputed_volatility: Any = _UNSET,
+    precomputed_adx: Any = _UNSET,
 ) -> RegimeContext:
     """Builds a ``RegimeContext`` from ``bars``.
 
@@ -177,15 +184,32 @@ def classify_regime(
     influenced by bars that would come after it -- no look-ahead is
     possible by construction, inherited from those three functions'
     own guarantees.
+
+    ``precomputed_volatility``/``precomputed_adx`` let a caller that has
+    already computed ``analyze_volatility``/``adx`` for this same
+    ``bars`` (e.g. ``ContextEngine.build_context``, which needs both
+    values for more than one dimension) pass them in instead of paying
+    for the same calculation twice. Left unset (the default), this
+    function computes both itself, exactly as it always has -- every
+    existing caller is unaffected. Passing ``None`` explicitly (as
+    opposed to leaving the parameter unset) means "already computed,
+    and it genuinely came back empty" -- it is used as-is, not retried.
     """
-    volatility_ctx = analyze_volatility(timestamp, symbol, timeframe, bars)
+    volatility_ctx: VolatilityContext = (
+        analyze_volatility(timestamp, symbol, timeframe, bars)
+        if precomputed_volatility is _UNSET
+        else precomputed_volatility
+    )
     if volatility_ctx.state is VolatilityState.UNKNOWN:
         # Not even enough bars for the cheapest signal -- nothing else
         # here would be trustworthy either.
         return _unknown(timestamp, symbol, timeframe)
 
-    adx_value = adx(bars, period=adx_period)
-    adx_float = float(adx_value) if adx_value is not None else None
+    if precomputed_adx is _UNSET:
+        adx_value = adx(bars, period=adx_period)
+        adx_float = float(adx_value) if adx_value is not None else None
+    else:
+        adx_float = precomputed_adx
 
     closes = [b.close for b in bars]
     direction = classify_trend(closes)

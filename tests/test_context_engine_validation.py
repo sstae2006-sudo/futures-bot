@@ -180,16 +180,33 @@ class TestModulesRemainIndependentFromTheTradingSide:
                 assert "brokers" not in line, f"{module_name}: {line}"
                 assert ".engine" not in line and "futures_bot.engine" not in line, f"{module_name}: {line}"
 
-    def test_trading_side_does_not_import_context(self):
-        import futures_bot.engine as engine_module
-        import futures_bot.strategy.base as strategy_base
+    def test_risk_manager_and_brokers_still_have_zero_reference_to_context(self):
+        # Historical note: through Phase 8, this test also asserted
+        # engine.py/strategy/base.py had zero reference to context/ at
+        # all -- true before integration. engine.py now imports context/
+        # for real, by design (see engine.ContextMode and
+        # tests/test_engine_context_integration.py for that integration's
+        # own thorough tests); strategy/base.py's own reference is
+        # TYPE_CHECKING-only (verified separately in
+        # tests/test_context.py). risk/manager.py and every broker are
+        # untouched by this integration -- requirement #6 ("no risk or
+        # broker logic changes") -- and still have zero reference at all.
+        import futures_bot.brokers.paper as paper_broker_module
+        import futures_bot.brokers.tradovate as tradovate_broker_module
         import futures_bot.risk.manager as risk_manager_module
 
-        for module in (engine_module, strategy_base, risk_manager_module):
+        for module in (risk_manager_module, paper_broker_module, tradovate_broker_module):
             source = inspect.getsource(module)
             assert "futures_bot.context" not in source
             assert "from ..context" not in source
             assert "from .context" not in source
+
+    def test_engine_context_reference_is_gated_by_context_mode_off_default(self):
+        import futures_bot.engine as engine_module
+
+        assert hasattr(engine_module, "ContextEngine")  # real import, by design
+        sig = inspect.signature(engine_module.TradingEngine.__init__)
+        assert sig.parameters["context_mode"].default is engine_module.ContextMode.OFF
 
 
 class TestContextGenerationIsDeterministic:

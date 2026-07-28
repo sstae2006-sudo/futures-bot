@@ -44,6 +44,14 @@ _TREND_LABELS: Mapping[str, TrendState] = {
     "sideways": TrendState.NEUTRAL,
 }
 
+#: Sentinel distinguishing "caller did not supply a precomputed ADX
+#: value" from "caller supplied None because it genuinely couldn't be
+#: computed" -- see ``analyze_trend``'s ``precomputed_adx`` parameter.
+#: Private to this module -- identity is only ever compared within
+#: ``analyze_trend`` itself, so it needn't be shared with regime.py's
+#: own, separate sentinel.
+_UNSET = object()
+
 
 @dataclass(frozen=True)
 class TrendContext:
@@ -86,6 +94,7 @@ def analyze_trend(
     symbol: str,
     bars: Sequence[Bar],
     adx_period: int = DEFAULT_ADX_PERIOD,
+    precomputed_adx: Any = _UNSET,
 ) -> TrendContext:
     """Builds a ``TrendContext`` from ``bars``.
 
@@ -97,6 +106,13 @@ def analyze_trend(
     ``None`` with fewer bars, in which case confidence is honestly
     ``0.0`` rather than a guess -- direction is still reported, just
     with no confidence behind it yet.
+
+    ``precomputed_adx`` lets a caller that has already computed ``adx``
+    for this same ``bars`` (e.g. ``ContextEngine.build_context``, which
+    also needs it for ``regime.classify_regime``) pass it in instead of
+    paying for the same calculation twice. Left unset (the default),
+    this function computes it itself, exactly as it always has --
+    every existing caller is unaffected.
     """
     if len(bars) < 2:
         return TrendContext(timestamp=timestamp, symbol=symbol, trend=TrendState.UNKNOWN, confidence=0.0, adx=None)
@@ -104,8 +120,11 @@ def analyze_trend(
     closes = [b.close for b in bars]
     trend = _TREND_LABELS[classify_trend(closes)]
 
-    adx_value = adx(bars, period=adx_period)
-    adx_float = float(adx_value) if adx_value is not None else None
+    if precomputed_adx is _UNSET:
+        adx_value = adx(bars, period=adx_period)
+        adx_float = float(adx_value) if adx_value is not None else None
+    else:
+        adx_float = precomputed_adx
 
     if adx_float is None:
         confidence = 0.0

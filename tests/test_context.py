@@ -238,10 +238,18 @@ class TestSerialization:
 class TestExistingTradingSystemUnaffected:
     """✓ Existing trading system unaffected.
 
-    This module is standalone and imported by nothing in the existing
-    decision path -- these tests assert that boundary directly, on top
-    of the fact that the full existing test suite (engine/strategy/risk)
-    passes unchanged with this module present.
+    Historical note: through Phase 8, this class asserted that
+    `engine.py`/`strategy/base.py` had *no* reference to `context/` at
+    all -- true at the time, since integration hadn't happened yet. The
+    Market Context Engine is now wired into `TradingEngine` (see
+    `engine.ContextMode` and `tests/test_engine_context_integration.py`
+    for the integration's own, much more thorough tests), so those two
+    checks are updated below to verify the *actual* invariant that
+    matters: `Strategy.on_bar`'s call signature is still unchanged (no
+    strategy needs to change to keep working), `strategy/base.py`'s own
+    reference to `context/` is TYPE_CHECKING-only (never executed, purely
+    for IDE/type-checker benefit), and `ContextMode.OFF` -- the default
+    for every caller not explicitly opting in -- is a true no-op.
     """
 
     def test_strategy_on_bar_signature_is_unchanged(self):
@@ -250,17 +258,23 @@ class TestExistingTradingSystemUnaffected:
         params = list(inspect.signature(Strategy.on_bar).parameters)
         assert params == ["self", "bars", "position"]
 
-    def test_trading_engine_does_not_import_context(self):
+    def test_trading_engine_defaults_to_context_mode_off(self):
         import futures_bot.engine as engine_module
 
-        assert "context" not in engine_module.__dict__
-        assert not hasattr(engine_module.TradingEngine, "context_engine")
+        assert hasattr(engine_module, "ContextEngine")  # real import now, by design
+        assert hasattr(engine_module.TradingEngine, "__init__")
+        sig = inspect.signature(engine_module.TradingEngine.__init__)
+        assert sig.parameters["context_mode"].default is engine_module.ContextMode.OFF
 
-    def test_strategy_base_does_not_import_context(self):
+    def test_strategy_base_reference_to_context_is_type_checking_only(self):
+        # A TYPE_CHECKING-guarded import never actually executes, so the
+        # imported name is absent from the module's real runtime
+        # namespace -- the precise, unambiguous way to confirm
+        # strategy/base.py's `from ..context.models import MarketContext`
+        # is purely a type hint, never a real dependency.
         import futures_bot.strategy.base as strategy_base
 
-        source = inspect.getsource(strategy_base)
-        assert "context" not in source.lower()
+        assert "MarketContext" not in vars(strategy_base)
 
     def test_context_module_has_no_import_of_engine_risk_or_brokers(self):
         # The context engine must never gain a way to reach the broker or

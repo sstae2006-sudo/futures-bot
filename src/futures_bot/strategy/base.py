@@ -14,16 +14,37 @@ Two rules for implementers:
 2. **Always give a reason.** Every returned :class:`Signal` carries a
    human-readable explanation, including holds. The review step depends on
    being able to see why a trade was skipped.
+
+**Market Context (optional, added when the Context Engine was wired in --
+see ``engine.ContextMode``):** ``self.context`` is a ``MarketContext``
+snapshot for the bar currently being processed, set by ``TradingEngine``
+*before* calling ``on_bar`` -- but only when the engine is running in
+``ContextMode.ENABLED`` **and** this strategy's own ``uses_context`` is
+``True``; every other combination leaves it ``None``. This is a plain
+attribute, not an ``on_bar`` parameter, specifically so it never changes
+this method's call signature: an existing strategy that neither sets
+``uses_context`` nor reads ``self.context`` is completely unaffected,
+regardless of which ``ContextMode`` the engine runs in. See
+docs/ARCHITECTURE.md's "Market Context Engine" section for the full
+integration story.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..contracts import ContractSpec
 from ..models import Bar, Position, Signal, SignalAction
+
+if TYPE_CHECKING:
+    # Deferred: context/*.py doesn't import strategy/ at all, so a real
+    # import here wouldn't actually be circular today -- but this stays
+    # TYPE_CHECKING-only anyway, deliberately, since Strategy is a protected
+    # interface (CLAUDE.md section 8) and should never carry a real runtime
+    # dependency on context/ regardless of whether one would currently work.
+    from ..context.models import MarketContext
 
 
 class Strategy(ABC):
@@ -32,9 +53,20 @@ class Strategy(ABC):
     #: Bars of history required before :meth:`on_bar` is called at all.
     warmup_bars: int = 0
 
+    #: Per-strategy opt-in for Market Context (see the class docstring's
+    #: "Market Context" note). ``False`` for every existing strategy --
+    #: nothing enables this without an explicit, deliberate override in a
+    #: subclass. Checked by ``TradingEngine`` only; irrelevant unless the
+    #: engine is also running in ``ContextMode.ENABLED``.
+    uses_context: bool = False
+
     def __init__(self, contract: ContractSpec, **params) -> None:
         self.contract = contract
         self.params = params
+        #: Set by ``TradingEngine`` before each ``on_bar`` call when
+        #: applicable -- see the class docstring. Never set by anything a
+        #: strategy itself calls; reading it is always optional.
+        self.context: Optional["MarketContext"] = None
 
     @property
     def name(self) -> str:

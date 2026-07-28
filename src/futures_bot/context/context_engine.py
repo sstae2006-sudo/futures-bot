@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Mapping, Optional, Sequence
 
 from ..models import Bar
+from ..strategy.indicators import adx
 from .liquidity import LiquidityContext, analyze_liquidity
 from .models import (
     LiquidityState,
@@ -42,7 +43,7 @@ from .models import (
     TrendState,
     VolatilityState,
 )
-from .regime import RegimeContext, classify_regime
+from .regime import DEFAULT_ADX_PERIOD, RegimeContext, classify_regime
 from .risk import RiskContext, assess_risk
 from .scoring import DEFAULT_SCORING_CONFIG, ScoringConfig, with_environment_score
 from .session import SessionContext, classify_session
@@ -114,10 +115,11 @@ class ContextEngine:
         bars = bars or ()
         session_ctx = self._classify_session(timestamp)
         volatility_ctx = self._classify_volatility(timestamp, bars)
-        regime_ctx = self._classify_regime(timestamp, bars)
+        adx_value = self._compute_adx(bars)
+        regime_ctx = self._classify_regime(timestamp, bars, volatility_ctx, adx_value)
         timeframe_ctx = self._classify_timeframe_alignment(timestamp, bars_by_timeframe)
         structure_ctx = self._classify_structure(timestamp, bars)
-        trend_ctx = self._classify_trend(timestamp, bars)
+        trend_ctx = self._classify_trend(timestamp, bars, adx_value)
         liquidity_ctx = self._classify_liquidity(timestamp, bars)
         risk_ctx = self._classify_risk(timestamp, volatility_ctx.state, regime_ctx.regime)
 
@@ -179,14 +181,33 @@ class ContextEngine:
         re-implemented here."""
         return classify_session(timestamp, self.symbol)
 
-    def _classify_regime(self, timestamp: datetime, bars: Sequence[Bar]) -> RegimeContext:
+    def _classify_regime(
+        self,
+        timestamp: datetime,
+        bars: Sequence[Bar],
+        volatility_ctx: VolatilityContext,
+        adx_value: Optional[float],
+    ) -> RegimeContext:
         """Real, as of 2026-07-27 -- delegates entirely to
         ``regime.classify_regime``, which reuses ``strategy.indicators.adx``
         (trend strength), ``research.regime.classify_trend`` (trend
         direction), and this module's own ``volatility.analyze_volatility``
         (volatility signal). See that module for the exact priority order
-        between trend/range/volatility labels."""
-        return classify_regime(timestamp, self.symbol, self.timeframe, bars)
+        between trend/range/volatility labels.
+
+        ``volatility_ctx``/``adx_value`` are this same bar's already-
+        computed ``_classify_volatility``/``_compute_adx`` results,
+        passed through so ``classify_regime`` doesn't recompute either
+        (see ``_compute_adx``'s docstring -- Platform Verification
+        Phase 2, 2026-07-27)."""
+        return classify_regime(
+            timestamp,
+            self.symbol,
+            self.timeframe,
+            bars,
+            precomputed_volatility=volatility_ctx,
+            precomputed_adx=adx_value,
+        )
 
     def _classify_volatility(
         self, timestamp: datetime, bars: Sequence[Bar]
@@ -197,8 +218,32 @@ class ContextEngine:
         reading against a trailing historical average. See that module
         for why ``research.regime.classify_volatility``'s tercile
         approach isn't reused as-is (whole-series, not look-ahead-safe
-        for real-time use)."""
+        for real-time use).
+
+        Computed exactly once per ``build_context`` call and reused by
+        ``_classify_regime`` (see ``_compute_adx``'s docstring) rather
+        than each independently recomputing the same
+        ``analyze_volatility(timestamp, self.symbol, self.timeframe,
+        bars)`` call."""
         return analyze_volatility(timestamp, self.symbol, self.timeframe, bars)
+
+    def _compute_adx(self, bars: Sequence[Bar]) -> Optional[float]:
+        """Computes ADX exactly once per ``build_context`` call, reused
+        by both ``_classify_regime`` and ``_classify_trend``.
+
+        Platform Verification Phase 1 (2026-07-27) found that, before
+        this method existed, ``regime.classify_regime`` and
+        ``trend.analyze_trend`` each independently called
+        ``strategy.indicators.adx(bars, period=DEFAULT_ADX_PERIOD)`` --
+        identical arguments, identical (deterministic, pure-function)
+        result, computed twice. ``ContextEngine`` never overrides either
+        function's ``adx_period`` default, so a single shared
+        computation using ``DEFAULT_ADX_PERIOD`` is always exactly what
+        both would have computed on their own -- byte-identical output,
+        just not duplicated. See ``docs/PLATFORM_VERIFICATION_PHASE1.md``
+        and ``docs/PLATFORM_VERIFICATION_PHASE2.md``."""
+        adx_value = adx(bars, period=DEFAULT_ADX_PERIOD)
+        return float(adx_value) if adx_value is not None else None
 
     def _classify_timeframe_alignment(
         self,
@@ -221,15 +266,21 @@ class ContextEngine:
         look-ahead violation."""
         return analyze_structure(timestamp, self.symbol, bars)
 
-    def _classify_trend(self, timestamp: datetime, bars: Sequence[Bar]) -> TrendContext:
+    def _classify_trend(
+        self, timestamp: datetime, bars: Sequence[Bar], adx_value: Optional[float]
+    ) -> TrendContext:
         """Real, as of 2026-07-27 (Phase 8) -- delegates entirely to
         ``trend.analyze_trend``, which reuses
         ``research.regime.classify_trend`` for direction and
         ``strategy.indicators.adx`` (plus ``regime.py``'s own confidence
         constants) for confidence. Independent of ``regime_context``'s
         volatility-coupled composite -- see that module's docstring for
-        why a separate, simpler direction-only reading is kept."""
-        return analyze_trend(timestamp, self.symbol, bars)
+        why a separate, simpler direction-only reading is kept.
+
+        ``adx_value`` is this same bar's already-computed
+        ``_compute_adx`` result, passed through so ``analyze_trend``
+        doesn't recompute it (see ``_compute_adx``'s docstring)."""
+        return analyze_trend(timestamp, self.symbol, bars, precomputed_adx=adx_value)
 
     def _classify_liquidity(self, timestamp: datetime, bars: Sequence[Bar]) -> LiquidityContext:
         """Real, as of 2026-07-27 (Phase 8) -- delegates entirely to

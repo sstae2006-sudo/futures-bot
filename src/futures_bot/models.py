@@ -12,8 +12,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 import uuid
+
+if TYPE_CHECKING:
+    # Deferred: context/*.py imports Bar from this module, so a real
+    # (non-TYPE_CHECKING) import here would be circular. Safe only because
+    # `from __future__ import annotations` above means every annotation in
+    # this file is a string at runtime -- never actually evaluated. Same
+    # pattern context/models.py already uses for its own forward references.
+    from .context.models import MarketContext
 
 
 class Side(str, Enum):
@@ -201,6 +209,17 @@ class Trade:
     #: ``PaperBroker._slip``. Zero for a Trade with nothing simulated to report.
     entry_slippage: Decimal = Decimal("0")
     exit_slippage: Decimal = Decimal("0")
+    #: The ``MarketContext`` snapshot as of this trade's entry bar -- attached
+    #: by ``TradingEngine._record_trade`` (never by a broker, which stays
+    #: entirely unaware of ``context/``), so it is available for research and
+    #: analytics regardless of which journal a caller happens to use. ``None``
+    #: whenever ``TradingEngine`` wasn't running in ``ContextMode.OBSERVE``/
+    #: ``ENABLED`` (the default is ``OFF``), or for any ``Trade`` built
+    #: outside the engine entirely (e.g. an imported/reconciled fill --
+    #: see ``research.trade_import``) -- an honest "not available", never a
+    #: fabricated value. Purely additive: every existing ``Trade(...)`` call
+    #: site keeps working unchanged.
+    entry_context: Optional["MarketContext"] = None
 
     @property
     def net_pnl(self) -> Decimal:

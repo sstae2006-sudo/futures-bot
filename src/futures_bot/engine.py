@@ -15,19 +15,31 @@ would let a bot "cancel" a loss that has, in reality, already happened.
 Step 4 is the important boundary. The strategy never reaches the broker
 directly — every entry passes :meth:`RiskManager.can_enter` first, and a
 blocked signal is journalled rather than silently dropped.
+
+**Market Context Engine integration (``ContextMode``):** a 0'th step now
+sits before all four above -- see ``ContextMode`` and ``on_bar``'s own
+docstring. ``ContextMode.OFF`` (the default for every existing caller) is a
+complete no-op: no ``ContextEngine`` is even asked to build anything, so
+behavior, timing, and every trade this engine produces are bit-for-bit
+identical to before this integration existed. See docs/ARCHITECTURE.md's
+"Market Context Engine" section for the full integration story and
+performance notes.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections import deque
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Callable, Deque, Optional
 
 from .brokers.base import Broker, BrokerError
 from .brokers.paper import PaperBroker
 from .config import Settings
+from .context import ContextEngine, MarketContext
 from .contracts import session_date
 from .journal import DecisionJournal, LOGGER_NAME
 from .models import Bar, InvalidSignalError, Position, Side, Signal, SignalAction, Trade
@@ -36,6 +48,38 @@ from .state import StateStore
 from .strategy.base import Strategy
 
 log = logging.getLogger(LOGGER_NAME)
+
+
+class ContextMode(str, Enum):
+    """How much the Market Context Engine participates in one
+    ``TradingEngine`` run. See each member's own docstring; the three-way
+    split (rather than a plain on/off flag) exists specifically so
+    "context is generated and recorded" and "context can influence a
+    decision" are two separate, independently verifiable guarantees --
+    not the same switch.
+    """
+
+    #: Current behavior. No ``ContextEngine`` is ever asked to build
+    #: anything; ``Strategy.context`` is never set; ``Trade.entry_context``
+    #: is never populated. The default for every existing caller -- must
+    #: reproduce historical results exactly, and does, because nothing
+    #: about this integration executes at all in this mode.
+    OFF = "off"
+    #: A ``MarketContext`` is generated for every processed bar and
+    #: attached to every completed trade's ``entry_context`` -- but
+    #: ``Strategy.context`` is never set, so no strategy can read it, by
+    #: construction. Trading decisions are therefore provably identical
+    #: to ``OFF`` -- not merely "should be unaffected", but literally
+    #: unable to differ, since the strategy never sees the object at all.
+    OBSERVE = "observe"
+    #: Same generation/attachment as ``OBSERVE``, **plus**
+    #: ``Strategy.context`` is set -- but only for a strategy whose own
+    #: ``uses_context`` is ``True``. Every bundled strategy defaults to
+    #: ``False``, so running an existing, unmodified strategy in
+    #: ``ENABLED`` mode behaves identically to ``OFF``/``OBSERVE`` too;
+    #: only a strategy that has explicitly opted in can ever see or act
+    #: on ``self.context``.
+    ENABLED = "enabled"
 
 #: Floor for `TradingEngine.bars`' retention window (see `max_bars_retained`
 #: below) -- generous headroom over every bundled strategy's own
@@ -55,6 +99,8 @@ class TradingEngine:
         journal: DecisionJournal,
         max_bars_retained: Optional[int] = None,
         signal_filter: Optional[Callable[[Signal], Signal]] = None,
+        context_mode: ContextMode = ContextMode.OFF,
+        context_engine: Optional[ContextEngine] = None,
     ) -> None:
         self.settings = settings
         self.strategy = strategy
@@ -62,6 +108,42 @@ class TradingEngine:
         self.risk = risk
         self.journal = journal
         self.contract = settings.contract_spec
+        #: See ``ContextMode``. Defaults to ``OFF`` -- every existing caller
+        #: (nobody passes this yet) gets exactly the pre-integration engine,
+        #: with zero added overhead: `on_bar` skips the `ContextEngine` call
+        #: entirely when this is `OFF`, rather than building and discarding
+        #: a context nobody asked for.
+        self.context_mode = context_mode
+        #: Auto-constructed from `settings` when not given explicitly, using
+        #: `research_server.resolution` as the timeframe label (the closest
+        #: existing "what resolution does this bot run at" setting -- named
+        #: for that one subsystem historically, but descriptive of the whole
+        #: bot's bar resolution in practice; a purely cosmetic label on
+        #: `MarketContext.timeframe`, never used in any classification math).
+        #: Irrelevant when `context_mode` is `OFF` -- never called in that
+        #: mode, so its construction cost (trivial -- no I/O, no bars
+        #: touched) is the only cost paid regardless of mode.
+        self.context_engine = context_engine or ContextEngine(
+            symbol=self.contract.symbol, timeframe=settings.research_server.resolution,
+        )
+        #: The `MarketContext` captured at the most recent successful entry,
+        #: held here (not on `Position`, which the broker owns and knows
+        #: nothing about `context/`) until the position closes and
+        #: `_record_trade` attaches it to the resulting `Trade`. `None`
+        #: whenever `context_mode` is `OFF`, between trades, or before the
+        #: first entry.
+        self._pending_entry_context: Optional[MarketContext] = None
+        #: Defensive reset, not just at construction: if `strategy` is a
+        #: reused instance (e.g. an `ENABLED` run followed by an `OFF` run on
+        #: the same object), any `self.context` left over from a *previous*
+        #: engine's run must not leak into this one, even before the first
+        #: `on_bar` call. `on_bar` itself re-asserts this every bar (see its
+        #: step 0) -- the two together mean `self.strategy.context` is always
+        #: exactly what *this* engine, in *this* mode, set it to, never a
+        #: stale value from anywhere else. See
+        #: docs/PLATFORM_VERIFICATION_PHASE1.md's "stale Strategy.context"
+        #: finding and docs/PLATFORM_VERIFICATION_PHASE2.md.
+        self.strategy.context = None
         #: Phase 9: an optional post-strategy, pre-risk hook over entry
         #: signals only -- `None` (the default) is a no-op, so every caller
         #: that doesn't pass this is completely unaffected. Used by the
@@ -124,6 +206,24 @@ class TradingEngine:
         self.bars.append(bar)
         now = bar.timestamp
 
+        # 0. Market Context Engine (ContextMode.OFF is a complete no-op --
+        # see the class docstring and `_build_market_context`). Built before
+        # anything else touches this bar so every step below sees the exact
+        # same reading, and the strategy step can expose it via
+        # `Strategy.context` (ENABLED mode only) with no extra work.
+        #
+        # `self.strategy.context` is set unconditionally, every bar, to
+        # either the real context or `None` -- never left untouched -- so a
+        # reused `Strategy` instance can never show a value from a different
+        # engine/run/mode (see `__init__`'s matching reset and
+        # docs/PLATFORM_VERIFICATION_PHASE1.md's "stale Strategy.context"
+        # finding). No caller has to remember to clear anything.
+        market_context = self._build_market_context(now)
+        if self.context_mode is ContextMode.ENABLED and getattr(self.strategy, "uses_context", False):
+            self.strategy.context = market_context
+        else:
+            self.strategy.context = None
+
         # 1. Resolve resting protective orders before anything else.
         if isinstance(self.broker, PaperBroker):
             closed = self.broker.on_bar(bar, now)
@@ -156,7 +256,31 @@ class TradingEngine:
             signal = self.signal_filter(signal)
 
         # 4. Act, subject to risk.
-        self._handle_signal(now, signal, position, bar.close)
+        self._handle_signal(now, signal, position, bar.close, market_context)
+
+    def _build_market_context(self, now: datetime) -> Optional[MarketContext]:
+        """Exactly one ``MarketContext`` per processed bar, or ``None`` --
+        never more than one call to ``ContextEngine.build_context`` per
+        ``on_bar`` invocation, and never any call at all in ``ContextMode.OFF``.
+
+        ``self.bars`` is a bounded ``deque`` (see ``_MIN_BARS_RETAINED``),
+        which does not support the slice indexing several ``context/``
+        modules rely on (``liquidity.py``/``volatility.py``'s trailing
+        windows) -- converting to ``list`` here, once, is the fix; every
+        classifier already only reads a trailing slice of whatever it's
+        given, so this changes nothing about correctness, only compatibility
+        with the container type. Guarded by a broad ``except`` so a defect
+        in `context/` can never crash a live/paper/backtest run -- the exact
+        same defensive posture `_safe_signal` already takes toward strategy
+        code, applied here to context generation.
+        """
+        if self.context_mode is ContextMode.OFF:
+            return None
+        try:
+            return self.context_engine.build_context(now, bars=list(self.bars))
+        except Exception as exc:  # noqa: BLE001 - context generation must never take down the engine.
+            log.error("Context generation failed on bar %s: %s", now, exc, exc_info=True)
+            return None
 
     def _safe_signal(self, now: datetime, position: Optional[Position]) -> Signal:
         """Call the strategy and guarantee a valid Signal comes back.
@@ -198,6 +322,7 @@ class TradingEngine:
         signal: Signal,
         position: Optional[Position],
         price: Decimal,
+        market_context: Optional[MarketContext] = None,
     ) -> None:
         session_pnl = self.risk.session_pnl(now)
 
@@ -275,6 +400,12 @@ class TradingEngine:
             log.error("Entry rejected: %s", exc)
             return
 
+        # Remember this bar's context so `_record_trade` can attach it once
+        # this position eventually closes -- possibly many bars from now.
+        # `None` whenever `context_mode` is `OFF` (or context generation
+        # failed this bar), same as every other `Trade.entry_context` case.
+        self._pending_entry_context = market_context
+
         self.journal.decision(now, signal, acted=True, price=price, session_pnl=session_pnl)
         log.info(
             "ENTER %s @ ~%s | stop %s target %s | %s",
@@ -327,6 +458,31 @@ class TradingEngine:
                 self._record_trade(now, closed, already_logged=True)
 
     def _record_trade(self, now: datetime, trade: Trade, already_logged: bool = False) -> None:
+        # Attach the entry-time MarketContext (see `_handle_signal`) -- the
+        # broker itself never sets this (it knows nothing about `context/`),
+        # so this is the one place every closed trade, from every path
+        # (paper broker resolution, live reconciliation, a risk-forced or
+        # strategy-requested flatten), gets it. `None` in `ContextMode.OFF`,
+        # same as `trade.entry_context` already defaults to.
+        if self._pending_entry_context is not None:
+            trade = dataclasses.replace(trade, entry_context=self._pending_entry_context)
+            # `dataclasses.replace` returns a *new* object -- `trade` (frozen)
+            # cannot be mutated in place. Without this, the enriched copy
+            # would only ever exist in this method's local scope: gone the
+            # moment it returns, while `PaperBroker.trades` (what
+            # `backtest/runner.py` reads via `list(broker.trades)` to build
+            # `BacktestMetrics.trades`) would still hold the original,
+            # un-enriched object. `trade` here is always exactly
+            # `self.broker.trades[-1]` at this point (both call sites --
+            # `on_bar`'s step 1 and `_flatten` -- fetch it from there and
+            # pass it straight through with nothing in between that could
+            # add another trade), so overwriting that slot keeps the
+            # broker's own record consistent with what every other part of
+            # this method already treats as "the" trade.
+            if isinstance(self.broker, PaperBroker) and self.broker.trades:
+                self.broker.trades[-1] = trade
+        self._pending_entry_context = None
+
         self.risk.record_trade(now, trade)
         session_pnl = self.risk.session_pnl(now)
         self.journal.trade(trade, session_pnl)
@@ -350,6 +506,8 @@ def build_engine(
     broker: Optional[Broker] = None,
     journal: Optional[DecisionJournal] = None,
     signal_filter: Optional[Callable[[Signal], Signal]] = None,
+    context_mode: ContextMode = ContextMode.OFF,
+    context_engine: Optional[ContextEngine] = None,
 ) -> TradingEngine:
     """Assemble an engine from settings.
 
@@ -363,6 +521,10 @@ def build_engine(
     ``signal_filter`` defaults to ``None`` (no behavior change for any
     existing caller) -- `research_server/paper_trader.py` passes one built
     from a strategy's currently deployed model, when it has one.
+
+    ``context_mode``/``context_engine`` default to ``ContextMode.OFF``/
+    ``None`` -- see ``ContextMode`` and ``TradingEngine.__init__``; no
+    behavior change for any existing caller.
     """
     store = StateStore(settings.state_file)
     risk = RiskManager(settings, store)
@@ -398,4 +560,7 @@ def build_engine(
                 f"Implement futures_bot.brokers.base.Broker and pass it in."
             )
 
-    return TradingEngine(settings, strategy, broker, risk, journal, signal_filter=signal_filter)
+    return TradingEngine(
+        settings, strategy, broker, risk, journal,
+        signal_filter=signal_filter, context_mode=context_mode, context_engine=context_engine,
+    )
