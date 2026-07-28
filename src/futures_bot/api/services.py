@@ -1716,6 +1716,45 @@ def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
 
 # --- Logs ---
 
+#: How far back (in bytes) `_read_tail_lines` starts looking before growing
+#: its window -- generously larger than 2000 lines need at any realistic
+#: line length, so the common case never needs a second read.
+_TAIL_INITIAL_CHUNK_BYTES = 4 * 1024 * 1024
+_TAIL_MAX_CHUNK_GROWTHS = 4
+
+
+def _read_tail_lines(path: Path, max_lines: int) -> list[str]:
+    """Returns up to the last `max_lines` complete lines of `path` without
+    ever reading the whole file into memory. `decisions.jsonl` is
+    append-only with no rotation (see journal.py's `DecisionJournal`) and
+    can grow without bound over a long-running deployment -- confirmed the
+    hard way during a Stabilization Mode API sweep (2026-07-28): one real
+    `decisions.jsonl` had reached 9.2 GB / 34.2M lines, and the previous
+    `path.read_text().splitlines()` here read the entire file into memory
+    on every single `GET /api/logs` call just to discard all but the last
+    2000 lines -- a real crash-risk (multi-GB allocation) and multi-second-
+    to-multi-minute latency hit, not a hypothetical one. Seeks backward
+    from the end in a bounded, geometrically-growing window instead; only
+    pathologically long individual lines would ever need more than one
+    read."""
+    size = path.stat().st_size
+    chunk_size = min(_TAIL_INITIAL_CHUNK_BYTES, size) or 1
+    with path.open("rb") as fh:
+        for _ in range(_TAIL_MAX_CHUNK_GROWTHS):
+            read_size = min(chunk_size, size)
+            fh.seek(size - read_size)
+            data = fh.read(read_size)
+            lines = data.decode("utf-8", errors="replace").splitlines()
+            if read_size < size:
+                # The first line may be a partial line straddling our seek
+                # point -- drop it rather than risk a truncated JSON object.
+                lines = lines[1:]
+            if len(lines) >= max_lines or read_size >= size:
+                return lines[-max_lines:]
+            chunk_size *= 4
+    return lines[-max_lines:]
+
+
 def read_logs(directory: Path = Path("logs"), limit: int = 200, kind: Optional[str] = None) -> list[dict]:
     """Reads `decisions.jsonl` event entries (not every hold/decision --
     those are the trading journal's own bulk detail; this surfaces the
@@ -1728,10 +1767,10 @@ def read_logs(directory: Path = Path("logs"), limit: int = 200, kind: Optional[s
     path = directory / "decisions.jsonl"
     if path.exists():
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            lines = _read_tail_lines(path, 2000)
         except OSError:
             lines = []
-        for line in lines[-2000:]:
+        for line in lines:
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:

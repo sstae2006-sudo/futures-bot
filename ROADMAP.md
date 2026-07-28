@@ -26,6 +26,10 @@ here, ask before assuming it matters.
 - Exports
 - Fix `bars` schema drift (KNOWN_ISSUES.md ISSUE-004, needs explicit
   approval per CLAUDE.md section 8 — it's a schema change)
+- Decide a rotation/archival policy for `logs/decisions.jsonl` — currently
+  unbounded (observed at 9.2 GB / 34.2M lines on this machine, KNOWN_ISSUES.md
+  ISSUE-017). Reading it is now cheap regardless of size, but nothing stops
+  it growing until it threatens disk space on a long-running deployment.
 
 **Low**
 - New strategies

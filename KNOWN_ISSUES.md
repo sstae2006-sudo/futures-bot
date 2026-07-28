@@ -562,3 +562,42 @@ verified fixed — instead mark it Resolved with a date and commit.
   identical fix (status claimed atomically with the check; restored to its
   pre-call value in an `except` wrapping the rest of `start()`). Full
   `test_api_live_session.py` suite (19 tests) passes.
+
+---
+
+### ISSUE-017 — `GET /api/logs` read the entire (unbounded, 9.2 GB) `decisions.jsonl` into memory on every call (RESOLVED)
+
+- **Severity:** High (real crash/latency risk — a multi-GB memory
+  allocation and multi-second-to-multi-minute read on every single request
+  to this route, not a hypothetical edge case)
+- **Description:** Found 2026-07-28 during a Stabilization Mode sweep that
+  hit every simple `GET` route through a `TestClient` looking for broken
+  endpoints. `GET /api/logs` appeared to hang; instrumented directly and
+  found the real cause: `api/services.py::read_logs` called
+  `path.read_text(encoding="utf-8").splitlines()` on `logs/decisions.jsonl`
+  — an append-only, never-rotated file (see `journal.py::DecisionJournal`)
+  — just to keep the last 2000 lines. On this machine, that file had
+  reached **9.2 GB / 34,230,897 lines** from long-running autonomous paper
+  trading with `log_every_decision: true`. Every call read the whole thing
+  into memory before discarding all but the tail.
+- **Files involved:** `src/futures_bot/api/services.py` (`read_logs`).
+- **Possible cause:** Written when `decisions.jsonl` was small (a single
+  backtest/session's worth of decisions); never revisited once autonomous,
+  long-running paper trading made continuous unbounded growth the norm.
+- **Current status:** **Resolved 2026-07-28.** New `_read_tail_lines`
+  helper seeks backward from the end of the file in a bounded, 4 MB
+  initial window (geometrically growing only if a pathologically long line
+  requires it) instead of reading the whole file. Verified against the
+  real 9.2 GB file directly: 2000 lines in **0.022 seconds** (previously
+  unmeasured because it never got a chance to finish quickly enough to
+  matter). Six new tests (`tests/test_api_services.py::TestReadTailLines`)
+  cover small files, `max_lines` exceeding the file's total, empty files,
+  a multi-megabyte file forced through a chunk-growth retry (checked
+  against a naive full read for correctness), a byte-read-count assertion
+  proving it doesn't scale with file size, and an end-to-end check that
+  `read_logs()` actually goes through the new helper. Full
+  `test_api_services.py` suite (58 tests) passes. Not addressed here (a
+  separate, larger question): whether `decisions.jsonl` should ever be
+  rotated/archived — this fix makes reading it cheap regardless of size,
+  but the file will keep growing forever and could eventually threaten
+  disk space on a very long-running deployment.

@@ -606,3 +606,116 @@ class TestGenerateInsights:
         overfit = [i for i in insights if i.category == "overfitting"]
         for i in overfit:
             assert "overfit" in i.message.lower()
+
+
+class TestReadTailLines:
+    """Regression coverage (Stabilization Mode, 2026-07-28, KNOWN_ISSUES.md
+    ISSUE-017): `_read_tail_lines` replaced a `path.read_text().splitlines()`
+    call that read an entire, unbounded `decisions.jsonl` into memory just
+    to keep the last 2000 lines -- found via a real file that had reached
+    9.2 GB / 34.2M lines. These tests use moderately large (not multi-GB)
+    files, sized to force at least one chunk-growth retry, so they run fast
+    while still exercising the actual seek/grow logic.
+    """
+
+    def test_returns_exact_last_n_lines_of_a_small_file(self, tmp_path):
+        path = tmp_path / "small.jsonl"
+        lines = [f"line-{i}" for i in range(50)]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = services._read_tail_lines(path, 10)
+
+        assert result == lines[-10:]
+
+    def test_requesting_more_lines_than_the_file_has_returns_everything(self, tmp_path):
+        path = tmp_path / "small.jsonl"
+        lines = [f"line-{i}" for i in range(5)]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = services._read_tail_lines(path, 10_000)
+
+        assert result == lines
+
+    def test_empty_file_returns_no_lines(self, tmp_path):
+        path = tmp_path / "empty.jsonl"
+        path.write_text("", encoding="utf-8")
+
+        assert services._read_tail_lines(path, 2000) == []
+
+    def test_matches_full_file_read_on_a_multi_megabyte_file(self, tmp_path):
+        """The real-world case: a file much larger than one initial chunk
+        (forcing at least one geometric growth), where the correct tail
+        must still exactly match what a naive full read would produce."""
+        path = tmp_path / "big.jsonl"
+        # ~200 bytes/line * 60,000 lines =~ 12 MB -- comfortably past
+        # _TAIL_INITIAL_CHUNK_BYTES (4 MB), forcing a retry with a larger
+        # window, without actually needing a multi-GB test fixture.
+        lines = [f"line-{i:06d}-" + ("x" * 180) for i in range(60_000)]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        expected = lines[-2000:]
+
+        result = services._read_tail_lines(path, 2000)
+
+        assert result == expected
+
+    def test_never_reads_more_than_a_few_chunk_widths_regardless_of_file_size(self, tmp_path, monkeypatch):
+        """The whole point of this function: prove it doesn't scale with
+        file size. Patches Path.open's returned file object to count bytes
+        actually read, then asks for the tail of a file many times larger
+        than the chunk size."""
+        path = tmp_path / "huge.jsonl"
+        # Padded so the file is comfortably larger than the 4 MB initial
+        # chunk -- a short-line file this size (~2 MB) would legitimately
+        # fit in one chunk and this assertion wouldn't be proving anything.
+        lines = [f"line-{i:06d}-" + ("x" * 150) for i in range(200_000)]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        real_open = Path.open
+        bytes_read = {"total": 0}
+
+        def counting_open(self, *args, **kwargs):
+            fh = real_open(self, *args, **kwargs)
+            real_read = fh.read
+
+            def counting_read(size=-1):
+                data = real_read(size)
+                bytes_read["total"] += len(data)
+                return data
+
+            fh.read = counting_read
+            return fh
+
+        monkeypatch.setattr(Path, "open", counting_open)
+
+        result = services._read_tail_lines(path, 2000)
+
+        assert result == lines[-2000:]
+        # Generously bounded: initial chunk (4 MB) plus a few growths, but
+        # nowhere close to this file's true size (well over a few MB).
+        assert bytes_read["total"] < 64 * 1024 * 1024
+        assert path.stat().st_size > bytes_read["total"]
+
+    def test_read_logs_uses_the_tail_reader_not_a_full_read(self, workspace, monkeypatch):
+        """End-to-end: read_logs() must go through _read_tail_lines, not a
+        direct full-file read, for the actual decisions.jsonl path it uses."""
+        log_dir = workspace / "logs"
+        log_dir.mkdir(exist_ok=True)
+        decisions = log_dir / "decisions.jsonl"
+        decisions.write_text(
+            '{"type": "event", "kind": "halt", "message": "test", "timestamp": "2026-01-05T10:00:00"}\n',
+            encoding="utf-8",
+        )
+
+        calls = []
+        real_tail = services._read_tail_lines
+
+        def spy(path, max_lines):
+            calls.append((path, max_lines))
+            return real_tail(path, max_lines)
+
+        monkeypatch.setattr(services, "_read_tail_lines", spy)
+
+        entries = services.read_logs(directory=log_dir)
+
+        assert calls, "read_logs() did not go through _read_tail_lines"
+        assert any(e["kind"] == "halt" for e in entries)
