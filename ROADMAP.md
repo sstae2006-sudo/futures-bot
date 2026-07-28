@@ -327,17 +327,30 @@ into git history):
   Recent Activity, Merge Queue, Conflict Warnings, Ready For Review — all
   real data). See `docs/ARCHITECTURE.md`'s "Team Collaboration Platform"
   section and `CHANGELOG.md`'s 2026-07-28 entry.
+- **User Registration & Organization Management** (2026-07-28): an
+  auto-generated personal `api_key` (placeholder for future auth, not
+  enforced yet) plus profile fields on `users`; `accounts/permissions.py`
+  — a flat, advisory-only role→capability table; `work_items.org_id` so
+  Active Work/AI Workers/Collaboration data are genuinely org-scoped, not
+  globally visible; a frontend-only `session.tsx` "current user" concept
+  (a `localStorage` id, explicitly not a security boundary); a full
+  onboarding UI (Welcome, Register, Profile, Organization Settings, Team
+  Members). See `PROJECT_STATE.md`'s "Last Completed Work" and
+  `CHANGELOG.md`'s 2026-07-28 entry.
 
-### Future: Collaboration Platform, beyond SIL Phase 2
+### Future: Collaboration Platform, beyond what's built so far
 
 Not started, deliberately — each is a substantially larger effort than
 what's built so far, meant to layer on top of it without a redesign once
 actually prioritized:
 
-- **Real authentication.** Accounts/work-items today have no login,
-  session, or API key — every route is reachable by anyone who can reach
-  the port. Needed before this is used by more than one trusted person on
-  a private tailnet.
+- **Real authentication.** A personal `api_key` now exists on every user
+  (2026-07-28) but isn't checked against anything — every route is still
+  reachable by anyone who can reach the port, and the frontend's "current
+  user" is just whatever id sits in `localStorage`. Validating `api_key`
+  as a bearer token is the smallest next step, given it already exists;
+  full session/login semantics would be the larger version. Needed before
+  this is used by more than one trusted person on a private tailnet.
 - **A true architecture/dependency graph.** Overlap V2 (2026-07-28) added
   real but shallow signals — shared imports, API routes, DB tables,
   frontend components — computed fresh per request, not a persisted graph

@@ -587,16 +587,55 @@ behalf), and whether `MarketContext`/`EnvironmentScore` snapshots get
 persisted to a database for research (a schema change, needs its own
 explicit approval per `CLAUDE.md` section 8).
 
-## Team Collaboration Platform (Active Work Registry, MVP 2026-07-28 + SIL Phase 2 "Workflow Integration" 2026-07-28)
+## Team Collaboration Platform (Active Work Registry MVP + SIL Phase 2 "Workflow Integration" + User Registration & Organization Management, all 2026-07-28)
 
 A layer alongside (not inside) the trading pipeline above -- it coordinates
 *people and AI sessions working on this codebase*, not market data or
-trades. Lives in `accounts/` (users/organizations/roles, no auth yet) and
-`collaboration/` (everything below), surfaced through `api/routes/
-accounts.py`/`collaboration.py` and Mission Control's `CollaborationWorkspace`
-panel.
+trades. Lives in `accounts/` (users/organizations/roles/permissions, no
+backend auth yet), `collaboration/` (everything below), and
+`frontend/src/session.tsx` (a frontend-only "current user" concept),
+surfaced through `api/routes/accounts.py`/`collaboration.py` and Mission
+Control's `CollaborationWorkspace` panel plus the Welcome/Register/
+Profile/Organization Settings/Team Members pages.
 
 ```
+accounts/store.py, pg_store.py        users / organizations tables. Four
+  |                                    fixed roles (owner/admin/member/
+  |                                    viewer). Every user gets an
+  |                                    auto-generated api_key at creation
+  |                                    (fbot_-prefixed) -- a placeholder
+  |                                    for future auth, not checked
+  |                                    against anything today. Profile
+  |                                    fields (timezone, preferred AI
+  |                                    model, default branch prefix,
+  |                                    notification preferences) stored
+  |                                    even where nothing consumes them
+  |                                    yet.
+  v
+accounts/permissions.py               A flat role->capability table
+                                       (manage_organization/manage_members/
+                                       manage_work/view). Not enforced
+                                       server-side -- there's no request-
+                                       level identity to check it against
+                                       yet -- consulted by the frontend
+                                       only, to decide what to show/hide.
+                                       Mirrored by hand in
+                                       frontend/src/types.ts's ROLE_
+                                       CAPABILITIES rather than fetched
+                                       over the network.
+
+frontend/src/session.tsx              A frontend-only "current user"
+                                       concept: a user id in localStorage,
+                                       resolved into a real user/org via
+                                       GET /api/users/{id}/me. Explicitly
+                                       a UX convenience (don't make me
+                                       re-pick myself every visit), never
+                                       a security boundary -- anyone with
+                                       devtools access can change the
+                                       stored id. RequireSession gates
+                                       every in-app route behind having
+                                       registered/picked an account once.
+
 collaboration/store.py, pg_store.py   work_items / work_item_activity tables.
   |                                   Lifecycle: planned -> claimed ->
   |                                   in_progress -> testing ->
@@ -604,7 +643,15 @@ collaboration/store.py, pg_store.py   work_items / work_item_activity tables.
   |                                   (advisory, not enforced -- a review can
   |                                   send work backward). owner_type
   |                                   (human/ai) distinguishes an AI
-  |                                   session's own claimed work.
+  |                                   session's own claimed work. org_id
+  |                                   (nullable) scopes a work item to one
+  |                                   organization -- None means "no
+  |                                   filter" everywhere (a session-less
+  |                                   caller like the CLI still sees
+  |                                   everything), a real org_id keeps two
+  |                                   unrelated orgs sharing one instance
+  |                                   from warning each other about
+  |                                   coincidental file-path matches.
   v
 collaboration/overlap.py (V1)         Exact file-path overlap between a
 collaboration/overlap_v2.py (V2)      proposed task and every other active
@@ -659,8 +706,12 @@ as a real status would be worse than admitting the gap; see
 `merge_readiness.py`'s own docstring.
 
 **What's still out of scope**, in increasing order of effort: real
-authentication for `accounts/`/`collaboration/` (every route today is
-reachable by anyone who can reach the port); a true architecture/dependency
+authentication for `accounts/`/`collaboration/` (every user now has an
+`api_key`, but nothing checks it against anything -- every route is still
+reachable by anyone who can reach the port, and the frontend's "current
+user" is just a `localStorage` value; validating `api_key` as a bearer
+token is the smallest next step given it already exists, full session/
+login semantics the larger version); a true architecture/dependency
 graph (Overlap V2's import/route/table signals are real but shallow --
 still not a graph that understands *indirect* impact); AI-assisted semantic
 merge conflict resolution; a persistent AI-worker execution layer (this

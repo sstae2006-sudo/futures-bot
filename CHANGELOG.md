@@ -4,6 +4,65 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-28 — User Registration & Organization Management
+
+Continuation of the same day's SIL Phase 2 entry (below) — expands the
+lightweight accounts MVP into a full onboarding experience while staying
+explicitly no-auth (no passwords, no OAuth -- still an internal
+development platform). Full detail in each milestone's own commit
+message (three commits); this is the summary.
+
+**Backend**: `users` gains an auto-generated personal `api_key`
+(`fbot_`-prefixed, unique -- placeholder for future auth, not enforced
+anywhere yet) and profile fields (`timezone`, `preferred_ai_model`,
+`default_branch_prefix`, `notification_preferences` JSON) via a new
+Alembic revision (`1be0295e6dbe`). New `UserMeOut` (includes `api_key`)
+vs. the existing `UserOut` (never does) -- registration and
+`GET /api/users/{id}/me` return the former, every roster listing the
+latter, so one member's key never leaks into another's view of the team.
+New `accounts/permissions.py`: a flat, explainable role->capability table
+(`manage_organization`/`manage_members`/`manage_work`/`view`) -- not
+enforced server-side (no request-level identity exists to check it
+against), consulted by the frontend only. New `PATCH /api/organizations/{id}`
+(rename) and `POST /api/users/{id}/regenerate-api-key`.
+
+**Multi-org data isolation**: `work_items` gains a nullable `org_id`
+(Alembic `9f68d758839f`) so "each organization contains Active Work, AI
+Workers, Collaboration data" is actually true -- threaded through every
+overlap/conflict/merge-readiness/pre-work-check call so two unrelated
+organizations sharing one instance never warn each other about
+coincidental file-path matches. `org_id=None` means "no filter,"
+preserving every existing session-less caller's behavior (e.g. the CLI).
+
+**Frontend**: a new `session.tsx` -- a frontend-only "current user"
+concept (a user id in `localStorage`, resolved via `GET /api/users/{id}/me`)
+since there's still no backend session to derive "who is making this
+request" from. Explicitly documented as a UX convenience, never a
+security boundary. `RequireSession` gates every in-app route behind
+having registered/picked an account at least once. New pages: Welcome,
+Register (create-or-join an org; role is never a form field -- the org
+creator becomes `owner`, a joiner becomes `member` automatically, a
+human owner/admin promotes people afterward), Profile (preferences,
+API key display/regenerate), Organization Settings (rename, gated behind
+`manage_organization`), Team Members (roster, online status derived from
+`last_active_at`, role changes gated behind `manage_members`). Wired the
+real session into what already existed -- `StatusBar` shows who's signed
+in, `WorkItemTable`'s claim prompt defaults to the signed-in user,
+`CollaborationWorkspace`/`WorkRegistryPanel` scope work items to the
+session's organization.
+
+**Bug found via testing, fixed**: `Profile.tsx`'s `useApi` fetcher called
+`getUserMe(currentUser!.id)` unconditionally on mount, which would crash
+if `currentUser` was ever `null` when that effect first ran (a
+stale/cleared session while the page is already mounted, e.g. via
+"Switch user" in another tab) -- fixed to skip the fetch entirely without
+a current user; regression test added.
+
+**Testing**: ~20 new backend tests, 22 new frontend tests (107 total, up
+from 85) -- `tsc -b` and `oxlint` both clean. Full backend suite (1467
+passed, 50 skipped -- live-Postgres only) and full frontend suite
+verified passing.
+
 ## 2026-07-28 — SIL Phase 2 "Workflow Integration": the Collaboration Platform becomes the actual workflow
 
 Continuation of the same day's Team Collaboration Platform MVP entry

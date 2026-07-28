@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1480 tests as of 2026-07-28** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1433 passed, 47 skipped, 0 failed). The 47
+- Test suite: **1517 tests as of 2026-07-28** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1467 passed, 50 skipped, 0 failed). The 50
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1480 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1517 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -156,6 +156,14 @@ version is bumped by hand.
   `tools/work_item_cli.py`, and Mission Control's 7-tab
   `CollaborationWorkspace`. See "Last Completed Work" below and
   `docs/ARCHITECTURE.md`'s "Team Collaboration Platform" section.
+- **User Registration & Organization Management (2026-07-28).** An
+  auto-generated personal `api_key` + profile fields on `users`, a
+  role→capability table (`accounts/permissions.py`, advisory only),
+  org-scoped work items (`work_items.org_id`), a frontend-only
+  `session.tsx` "current user" concept (still no backend auth), and a
+  full onboarding UI: Welcome, Register (create-or-join an org, role
+  computed automatically), Profile, Organization Settings, Team Members.
+  See "Last Completed Work" below.
 
 ## Broken / Incomplete Features
 
@@ -169,6 +177,41 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-28: **User Registration & Organization Management.** Expands the
+lightweight accounts MVP into a full onboarding experience, staying
+explicitly no-auth. Full detail in `CHANGELOG.md`'s matching dated entry
+(same day, appears above SIL Phase 2's entry below); this is the summary.
+
+- **Auto-generated personal API key** (`fbot_`-prefixed, unique) plus
+  profile fields (timezone, preferred AI model, default branch prefix,
+  notification preferences) on `users` — new Alembic revision
+  `1be0295e6dbe`. `UserMeOut` (includes the key) vs. `UserOut` (never
+  does) keeps one member's key from leaking into another's roster view.
+- **`accounts/permissions.py`**: a flat role→capability table
+  (manage_organization/manage_members/manage_work/view) — advisory only,
+  consulted by the frontend, not enforced server-side (there's still no
+  request-level identity to check it against).
+- **`work_items.org_id`** (nullable, new Alembic revision `9f68d758839f`)
+  — "each organization contains Active Work/AI Workers/Collaboration
+  data" is now actually true; overlap/conflict/merge-readiness/
+  pre-work-check are all org-scoped when an `org_id` is supplied,
+  `None` still means "no filter" for every session-less caller.
+- **`session.tsx`** — a frontend-only "current user" concept (a user id
+  in `localStorage`, resolved via `GET /api/users/{id}/me`); explicitly a
+  UX convenience, never a security boundary, since there's still no
+  backend session. `RequireSession` gates the whole app behind having
+  registered/picked an account once.
+- **New pages**: Welcome, Register (create-or-join an org; role is
+  computed automatically, never a form field), Profile (preferences +
+  API key display/regenerate), Organization Settings (rename, gated),
+  Team Members (roster, online status, role changes, gated).
+- **Found and fixed a real bug**: `Profile.tsx` crashed if `currentUser`
+  was `null` when its `useApi` fetcher first ran (a stale/cleared session
+  while already mounted) — fixed, regression test added.
+- **~20 new backend tests, 22 new frontend tests** (107 total, up from
+  85) — `tsc -b`/`oxlint` clean, full backend suite (1467 passed, 50
+  skipped) verified passing.
 
 2026-07-28: **SIL Phase 2 "Workflow Integration" — the Collaboration
 Platform becomes the actual workflow, not just infrastructure.** Built
@@ -1096,13 +1139,16 @@ breakdown.
 ## Recommended Next Task
 
 **The real production data migration is done, Team Mode's core networking
-bug is fixed, and the Team Collaboration Platform now covers both the MVP
-(accounts + Active Work Registry) and SIL Phase 2 "Workflow Integration"**
+bug is fixed, and the Team Collaboration Platform now covers the MVP
+(accounts + Active Work Registry), SIL Phase 2 "Workflow Integration"**
 (lifecycle, Overlap Engine V2, live git branch info, merge readiness,
 activity timeline, the work-item CLI, and Mission Control's
-`CollaborationWorkspace`) — see "Last Completed Work" above. What's left
-is a mix of genuine operator/human actions and real follow-on feature
-work:
+`CollaborationWorkspace`), **and User Registration & Organization
+Management** (api_key, profile fields, permissions table, org-scoped
+work items, the Welcome/Register/Profile/Organization Settings/Team
+Members pages, and a frontend-only session concept) — see "Last
+Completed Work" above. What's left is a mix of genuine operator/human
+actions and real follow-on feature work:
 
 1. **Create the Windows Firewall rule for real** (or click the UAC prompt
    next time `scripts\start-team.ps1` runs unelevated). One-time, from an
@@ -1117,20 +1163,24 @@ work:
    developer" section, then confirm it can reach
    `http://100.91.121.119:8000` (or whatever this machine's Tailscale IP
    is) for both the API and the built dashboard.
-3. **Visually verify Mission Control in a browser** — Claude in Chrome
-   was unavailable all session (connection failed/disabled); typecheck/
-   lint/vitest are all clean (85 frontend tests passing) and the
-   underlying API data was verified directly, but the actual rendered
-   page (including `CollaborationWorkspace`'s 7 tabs) hasn't been looked
-   at. Run `/chrome` to reconnect, or look yourself at
-   `http://127.0.0.1:5173` (local mode).
+3. **Visually verify Mission Control and the new onboarding flow in a
+   browser** — Claude in Chrome was unavailable all session (connection
+   failed/disabled); typecheck/lint/vitest are all clean (107 frontend
+   tests passing) and the underlying API data was verified directly, but
+   the actual rendered pages (Welcome, Register's 3 steps,
+   `CollaborationWorkspace`'s 7 tabs, Profile, Organization Settings,
+   Team Members) haven't been looked at. Run `/chrome` to reconnect, or
+   look yourself at `http://127.0.0.1:5173` (local mode) — a fresh
+   browser profile (no `localStorage`) will land on `/welcome` first.
 4. **Decide whether/how real authentication gets built.** Accounts
-   (`accounts/`) and the Active Work Registry (`collaboration/`) are both
-   deliberately built with no login/session/password — every route is
-   reachable by anyone who can reach the port, same as the rest of this
-   API. A real auth layer (who is "the current user" for a given
-   request) is the natural next step before this is used by more than one
-   trusted person on a private tailnet.
+   (`accounts/`), the Active Work Registry (`collaboration/`), and the
+   frontend's `session.tsx` are all deliberately built with no login/
+   password/token — every route is reachable by anyone who can reach the
+   port, and "the current user" is just whatever id a browser has in
+   `localStorage`. A real auth layer (validating the auto-generated
+   `api_key` as a bearer token would be the smallest next step, given it
+   already exists) is the natural next move before this is used by more
+   than one trusted person on a private tailnet.
 5. **Consider the remaining Collaboration Platform follow-on work** — a
    true architecture/dependency graph (Overlap V2's import/route/table
    signals are real but shallow, not a persisted graph of indirect
