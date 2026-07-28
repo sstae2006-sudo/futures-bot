@@ -34,6 +34,7 @@ function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: 'u1', display_name: 'Seth', username: 'seth', email: null, avatar_url: null,
     org_id: 'org1', role: 'owner', created_at: '2026-07-28T00:00:00+00:00', last_active_at: null,
+    timezone: null, preferred_ai_model: null, default_branch_prefix: null, notification_preferences: {},
     ...overrides,
   }
 }

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import CollaborationWorkspace from '../components/mission-control/CollaborationWorkspace'
+import { SessionProvider } from '../session'
 import * as api from '../api'
-import type { ConflictPair, TimelineEntry, WorkItem } from '../types'
+import type { ConflictPair, Organization, TimelineEntry, UserMe, WorkItem } from '../types'
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -15,16 +16,32 @@ vi.mock('../api', async () => {
     releaseWorkItem: vi.fn(),
     completeWorkItem: vi.fn(),
     updateWorkItemStatus: vi.fn(),
+    getUserMe: vi.fn(),
+    getOrganization: vi.fn(),
   }
 })
+
+// Mirrors session.tsx's own (module-private) localStorage key -- there's
+// no exported constant to import, so it's duplicated here deliberately
+// rather than exporting an internal implementation detail just for tests.
+const SESSION_USER_ID_KEY = 'futures-bot:session:user-id'
 
 function makeItem(overrides: Partial<WorkItem> = {}): WorkItem {
   return {
     id: 'w1', title: 'Fix login bug', description: null, owner_user_id: null, owner_type: 'human', branch: null,
-    status: 'open', estimated_files: ['src/auth.py'], priority: 'medium',
+    status: 'open', estimated_files: ['src/auth.py'], priority: 'medium', org_id: null,
     created_at: '2026-07-28T00:00:00+00:00', updated_at: '2026-07-28T00:00:00+00:00',
     ...overrides,
   }
+}
+
+// CollaborationWorkspace reads useSession() -- every render needs a
+// SessionProvider ancestor. No localStorage user id is set by default,
+// so the session resolves to "no current user, no organization" without
+// any network call; tests that need "signed in as alice" set the id in
+// localStorage first and mock getUserMe/getOrganization accordingly.
+function renderWorkspace() {
+  return render(<SessionProvider><CollaborationWorkspace /></SessionProvider>)
 }
 
 beforeEach(() => {
@@ -40,7 +57,7 @@ describe('CollaborationWorkspace', () => {
       makeItem({ id: 'w2', title: 'Done task', status: 'completed' }),
     ])
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
 
     await waitFor(() => expect(screen.getByText('Team task')).toBeInTheDocument())
     expect(screen.queryByText('Done task')).not.toBeInTheDocument()
@@ -52,7 +69,7 @@ describe('CollaborationWorkspace', () => {
       makeItem({ id: 'w2', title: 'AI task', owner_type: 'ai' }),
     ])
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
     await waitFor(() => expect(screen.getByText('Human task')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')
@@ -62,18 +79,27 @@ describe('CollaborationWorkspace', () => {
     expect(screen.queryByText('Human task')).not.toBeInTheDocument()
   })
 
-  it('My Active Work filters by the locally-stored user id', async () => {
+  it('My Active Work filters by the signed-in user', async () => {
+    const org: Organization = { id: 'org1', name: 'Acme', created_at: '2026-07-28T00:00:00+00:00' }
+    const me: UserMe = {
+      id: 'alice', display_name: 'Alice', username: 'alice', email: null, avatar_url: null,
+      org_id: 'org1', role: 'member', created_at: '2026-07-28T00:00:00+00:00', last_active_at: null,
+      timezone: null, preferred_ai_model: null, default_branch_prefix: null, notification_preferences: {},
+      api_key: 'fbot_test',
+    }
+    window.localStorage.setItem(SESSION_USER_ID_KEY, 'alice')
+    vi.mocked(api.getUserMe).mockResolvedValue(me)
+    vi.mocked(api.getOrganization).mockResolvedValue(org)
     vi.mocked(api.getWorkItems).mockResolvedValue([
       makeItem({ id: 'w1', title: 'Mine', owner_user_id: 'alice', status: 'claimed' }),
       makeItem({ id: 'w2', title: 'Not mine', owner_user_id: 'bob', status: 'claimed' }),
     ])
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
     await waitFor(() => expect(screen.getByText('Mine')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')
     fireEvent.click(screen.getByText(/My Active Work/))
-    fireEvent.change(screen.getByLabelText('My user ID'), { target: { value: 'alice' } })
 
     await waitFor(() => expect(screen.getByText('Mine')).toBeInTheDocument())
     expect(screen.queryByText('Not mine')).not.toBeInTheDocument()
@@ -85,7 +111,7 @@ describe('CollaborationWorkspace', () => {
       makeItem({ id: 'w2', title: 'In progress item', status: 'in_progress', owner_user_id: 'alice' }),
     ])
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
     await waitFor(() => expect(screen.getByText('Testing item')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')
@@ -102,7 +128,7 @@ describe('CollaborationWorkspace', () => {
     ]
     vi.mocked(api.getTimeline).mockResolvedValue(entries)
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
     await waitFor(() => expect(screen.getByText('No active work items.')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')
@@ -119,7 +145,7 @@ describe('CollaborationWorkspace', () => {
     }]
     vi.mocked(api.getWorkItemConflicts).mockResolvedValue(conflicts)
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
     await waitFor(() => expect(screen.getByText('No active work items.')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')
@@ -135,7 +161,7 @@ describe('CollaborationWorkspace', () => {
       makeItem({ id: 'w2', title: 'Merged item', status: 'merged', owner_user_id: 'alice' }),
     ])
 
-    render(<CollaborationWorkspace />)
+    renderWorkspace()
     await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')

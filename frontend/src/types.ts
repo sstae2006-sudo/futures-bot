@@ -664,16 +664,42 @@ export interface ImportHistoryOut {
   created_at: string
 }
 
-// --- Lightweight user/organization accounts (Team Collaboration MVP) ---
+// --- Lightweight user/organization accounts (Team Collaboration Platform) ---
 // See src/futures_bot/accounts/store.py's docstring: a data model plus
-// basic CRUD, deliberately not an authentication system.
+// basic CRUD, deliberately not an authentication system. Registration &
+// Organization Management (2026-07-28) added profile fields and an
+// auto-generated api_key (accounts/store.py's docstring covers why it
+// isn't an enforced credential yet) plus session.tsx's frontend-only
+// "current user" concept -- a UX convenience (remembers which registered
+// user you are, in localStorage), never a security boundary.
 
 export type UserRole = 'owner' | 'admin' | 'member' | 'viewer'
+
+//: Mirrors accounts/permissions.py's CAPABILITIES table by hand (four
+//: short strings, not worth a network round-trip to fetch). Advisory
+//: only here too -- see that module's docstring for why "the button is
+//: hidden" must never be treated as "the action is authorized."
+export type Capability = 'manage_organization' | 'manage_members' | 'manage_work' | 'view'
+
+export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
+  owner: ['manage_organization', 'manage_members', 'manage_work', 'view'],
+  admin: ['manage_organization', 'manage_members', 'manage_work', 'view'],
+  member: ['manage_work', 'view'],
+  viewer: ['view'],
+}
+
+export function can(role: UserRole, capability: Capability): boolean {
+  return ROLE_CAPABILITIES[role]?.includes(capability) ?? false
+}
 
 export interface Organization {
   id: string
   name: string
   created_at: string
+}
+
+export interface NotificationPreferences {
+  [key: string]: boolean | string | undefined
 }
 
 export interface User {
@@ -686,6 +712,17 @@ export interface User {
   role: UserRole
   created_at: string
   last_active_at: string | null
+  timezone: string | null
+  preferred_ai_model: string | null
+  default_branch_prefix: string | null
+  notification_preferences: NotificationPreferences
+}
+
+//: `GET /api/users/{id}/me` and registration's response only -- the one
+//: place a user's own api_key is exposed. Never returned by a roster
+//: listing (`GET /api/users` stays plain `User`, no key).
+export interface UserMe extends User {
+  api_key: string | null
 }
 
 // --- Active Work Registry (Team Collaboration Platform) ---
@@ -720,6 +757,7 @@ export interface WorkItem {
   status: WorkItemStatus
   estimated_files: string[]
   priority: WorkItemPriority
+  org_id: string | null
   created_at: string
   updated_at: string
 }

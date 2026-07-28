@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createWorkItem, getWorkItems } from '../../api'
 import { useApi } from '../../useApi'
+import { useSession } from '../../session'
 import { Badge } from '../UI'
 import WorkItemTable from './WorkItemTable'
 import type { OverlapWarning, OwnerType, WorkItemPriority } from '../../types'
@@ -22,7 +23,9 @@ const RISK_TONE: Record<string, 'good' | 'warn' | 'bad' | 'neutral'> = {
 }
 
 export default function WorkRegistryPanel() {
-  const { data: items, refetch } = useApi(() => getWorkItems(), [])
+  const { organization } = useSession()
+  const orgId = organization?.id
+  const { data: items, refetch } = useApi(() => getWorkItems(undefined, orgId), [orgId])
   const [title, setTitle] = useState('')
   const [files, setFiles] = useState('')
   const [priority, setPriority] = useState<WorkItemPriority>('medium')
@@ -40,6 +43,7 @@ export default function WorkRegistryPanel() {
         estimated_files: files.split(',').map((f) => f.trim()).filter(Boolean),
         priority,
         owner_type: ownerType,
+        org_id: orgId,
       })
       setWarnings(result.overlap_warnings)
       setTitle('')

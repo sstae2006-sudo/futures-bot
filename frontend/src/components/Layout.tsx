@@ -31,6 +31,14 @@ const NAV_SECTIONS: { label: string; links: { to: string; label: string }[] }[] 
       { to: '/logs', label: 'System Logs' },
     ],
   },
+  {
+    label: 'Account',
+    links: [
+      { to: '/profile', label: 'Profile' },
+      { to: '/organization', label: 'Organization' },
+      { to: '/team', label: 'Team Members' },
+    ],
+  },
 ]
 
 export default function Layout() {

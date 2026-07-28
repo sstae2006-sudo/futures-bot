@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { getSystemHealth } from '../../api'
 import { useApi } from '../../useApi'
+import { useSession } from '../../session'
 
 // Global chrome, rendered once in Layout.tsx above <Outlet/> -- "always
 // visible" per the Mission Control spec. Version/environment/uptime come
@@ -34,6 +36,7 @@ function formatUptime(seconds: number): string {
 }
 
 export default function StatusBar() {
+  const { currentUser, organization, logout } = useSession()
   const now = useClock()
   const timeLabel = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const { data: health, refetch } = useApi(getSystemHealth, [])
@@ -83,6 +86,24 @@ export default function StatusBar() {
         <div className="status-bar-item">
           <span className="sb-value">{timeLabel}</span>
         </div>
+        {currentUser && organization && (
+          <>
+            <span className="status-bar-sep">|</span>
+            <div className="status-bar-item">
+              <Link to="/profile" className="sb-value">
+                {currentUser.display_name} ({currentUser.role}) · {organization.name}
+              </Link>
+              <button
+                type="button"
+                onClick={logout}
+                title="Switch user"
+                style={{ marginLeft: 6, fontSize: 11, opacity: 0.7, background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}
+              >
+                Switch
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

@@ -53,7 +53,9 @@ import type {
   TradeAnalyticsSummary,
   TradeOut,
   TrialOut,
+  NotificationPreferences,
   User,
+  UserMe,
   UserRole,
   WorkItem,
   WorkItemActivity,
@@ -503,7 +505,7 @@ export interface AiBacktestComparisonRequest {
 export const submitAiBacktestComparison = (body: AiBacktestComparisonRequest) =>
   request<JobOut>('/api/jobs/ai-backtest-compare', { method: 'POST', body: JSON.stringify(body) })
 
-// --- Lightweight user/organization accounts (Team Collaboration MVP) ---
+// --- Lightweight user/organization accounts (Team Collaboration Platform) ---
 
 export const createOrganization = (name: string) =>
   request<Organization>('/api/organizations', { method: 'POST', body: JSON.stringify({ name }) })
@@ -511,6 +513,9 @@ export const createOrganization = (name: string) =>
 export const getOrganizations = () => request<Organization[]>('/api/organizations')
 
 export const getOrganization = (orgId: string) => request<Organization>(`/api/organizations/${orgId}`)
+
+export const updateOrganization = (orgId: string, name: string) =>
+  request<Organization>(`/api/organizations/${orgId}`, { method: 'PATCH', body: JSON.stringify({ name }) })
 
 export interface UserCreateRequest {
   display_name: string
@@ -522,22 +527,31 @@ export interface UserCreateRequest {
 }
 
 export const createUser = (body: UserCreateRequest) =>
-  request<User>('/api/users', { method: 'POST', body: JSON.stringify(body) })
+  request<UserMe>('/api/users', { method: 'POST', body: JSON.stringify(body) })
 
 export const getUsers = (orgId?: string) =>
   request<User[]>(orgId ? `/api/users?org_id=${encodeURIComponent(orgId)}` : '/api/users')
 
 export const getUser = (userId: string) => request<User>(`/api/users/${userId}`)
 
+export const getUserMe = (userId: string) => request<UserMe>(`/api/users/${userId}/me`)
+
 export interface UserUpdateRequest {
   display_name?: string
   email?: string
   avatar_url?: string
   role?: UserRole
+  timezone?: string
+  preferred_ai_model?: string
+  default_branch_prefix?: string
+  notification_preferences?: NotificationPreferences
 }
 
 export const updateUser = (userId: string, body: UserUpdateRequest) =>
   request<User>(`/api/users/${userId}`, { method: 'PATCH', body: JSON.stringify(body) })
+
+export const regenerateApiKey = (userId: string) =>
+  request<UserMe>(`/api/users/${userId}/regenerate-api-key`, { method: 'POST' })
 
 export const sendUserHeartbeat = (userId: string) =>
   request<User>(`/api/users/${userId}/heartbeat`, { method: 'POST' })
@@ -552,13 +566,19 @@ export interface WorkItemCreateRequest {
   branch?: string
   estimated_files?: string[]
   priority?: WorkItemPriority
+  org_id?: string
 }
 
 export const createWorkItem = (body: WorkItemCreateRequest) =>
   request<WorkItemCreated>('/api/work-items', { method: 'POST', body: JSON.stringify(body) })
 
-export const getWorkItems = (status?: string) =>
-  request<WorkItem[]>(status ? `/api/work-items?status=${encodeURIComponent(status)}` : '/api/work-items')
+export const getWorkItems = (status?: string, orgId?: string) => {
+  const qs = new URLSearchParams()
+  if (status) qs.set('status', status)
+  if (orgId) qs.set('org_id', orgId)
+  const query = qs.toString()
+  return request<WorkItem[]>(`/api/work-items${query ? `?${query}` : ''}`)
+}
 
 export const getWorkItem = (itemId: string) => request<WorkItem>(`/api/work-items/${itemId}`)
 
@@ -590,7 +610,8 @@ export const updateWorkItemStatus = (itemId: string, status: ManualWorkItemStatu
 export const getWorkItemOverlapV2 = (itemId: string) =>
   request<OverlapWarningV2[]>(`/api/work-items/${itemId}/overlap-v2`)
 
-export const getWorkItemConflicts = () => request<ConflictPair[]>('/api/work-items/conflicts')
+export const getWorkItemConflicts = (orgId?: string) =>
+  request<ConflictPair[]>(orgId ? `/api/work-items/conflicts?org_id=${encodeURIComponent(orgId)}` : '/api/work-items/conflicts')
 
 export const getBranchInfo = (branch?: string) =>
   request<BranchInfo>(branch ? `/api/git/branch-info?branch=${encodeURIComponent(branch)}` : '/api/git/branch-info')

@@ -1,4 +1,5 @@
 import { claimWorkItem, completeWorkItem, releaseWorkItem, updateWorkItemStatus } from '../../api'
+import { useSession } from '../../session'
 import { Badge } from '../UI'
 import type { ManualWorkItemStatus, WorkItem, WorkItemStatus } from '../../types'
 import { WORK_ITEM_LIFECYCLE } from '../../types'
@@ -53,8 +54,14 @@ export default function WorkItemTable({
   emptyMessage?: string
   showLifecycle?: boolean
 }) {
+  const { currentUser } = useSession()
+
   async function handleClaim(id: string) {
-    const userId = window.prompt('Your user ID (or name) to claim this task:')
+    // Defaults to the signed-in user (session.tsx) so claiming your own
+    // work is a single click in the common case; still overridable (e.g.
+    // claiming on behalf of a teammate who isn't at their keyboard) since
+    // there's no auth boundary stopping that anyway.
+    const userId = window.prompt('Claim as user ID:', currentUser?.id ?? '')
     if (!userId) return
     await claimWorkItem(id, userId)
     onRefetch()

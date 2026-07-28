@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getTimeline, getWorkItemConflicts, getWorkItems } from '../../api'
 import { useApi } from '../../useApi'
+import { useSession } from '../../session'
 import { Badge } from '../UI'
 import WorkItemTable from './WorkItemTable'
 import type { ConflictPair, TimelineEntry, WorkItem } from '../../types'
@@ -9,7 +10,10 @@ import type { ConflictPair, TimelineEntry, WorkItem } from '../../types'
 // platform's operating surface, not just a list. Every tab reads real
 // data (getWorkItems/getTimeline/getWorkItemConflicts), no mocks, and
 // polls every 15s the same way InfrastructurePanel does, so this feels
-// as "live" as the rest of Mission Control.
+// as "live" as the rest of Mission Control. Scoped to the signed-in
+// user's own organization (session.tsx) -- "My Active Work" uses their
+// real user id, not a manually-typed one, now that a real (if still
+// no-auth) session concept exists.
 const TABS = [
   'My Active Work', 'Team Active Work', 'AI Workers', 'Recent Activity',
   'Merge Queue', 'Conflict Warnings', 'Ready For Review',
@@ -19,8 +23,6 @@ type Tab = (typeof TABS)[number]
 const RISK_TONE: Record<string, 'good' | 'warn' | 'bad' | 'neutral'> = {
   no_risk: 'good', low: 'good', medium: 'warn', high: 'bad', critical: 'bad',
 }
-
-const MY_USER_ID_KEY = 'futures-bot:mission-control:my-user-id'
 
 function TimelineList({ entries }: { entries: TimelineEntry[] }) {
   if (entries.length === 0) return <p style={{ fontSize: 13, opacity: 0.7 }}>No recent activity.</p>
@@ -68,11 +70,12 @@ function TabButton({ tab, active, count, onClick }: { tab: Tab; active: boolean;
 
 export default function CollaborationWorkspace() {
   const [tab, setTab] = useState<Tab>('Team Active Work')
-  const [myUserId, setMyUserId] = useState(() => window.localStorage.getItem(MY_USER_ID_KEY) ?? '')
+  const { currentUser, organization } = useSession()
+  const orgId = organization?.id
 
-  const { data: items, refetch: refetchItems } = useApi(() => getWorkItems(), [])
+  const { data: items, refetch: refetchItems } = useApi(() => getWorkItems(undefined, orgId), [orgId])
   const { data: timeline, refetch: refetchTimeline } = useApi(() => getTimeline({ limit: 30 }), [])
-  const { data: conflicts, refetch: refetchConflicts } = useApi(() => getWorkItemConflicts(), [])
+  const { data: conflicts, refetch: refetchConflicts } = useApi(() => getWorkItemConflicts(orgId), [orgId])
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -83,13 +86,8 @@ export default function CollaborationWorkspace() {
     return () => clearInterval(id)
   }, [refetchItems, refetchTimeline, refetchConflicts])
 
-  function handleMyUserIdChange(value: string) {
-    setMyUserId(value)
-    window.localStorage.setItem(MY_USER_ID_KEY, value)
-  }
-
   const activeItems = (items ?? []).filter((i: WorkItem) => i.status !== 'completed')
-  const myItems = activeItems.filter((i) => myUserId && i.owner_user_id === myUserId)
+  const myItems = activeItems.filter((i) => currentUser && i.owner_user_id === currentUser.id)
   const aiItems = activeItems.filter((i) => i.owner_type === 'ai')
   const mergeQueueItems = activeItems.filter((i) => i.status === 'testing' || i.status === 'ready_for_review')
   const readyForReviewItems = activeItems.filter((i) => i.status === 'ready_for_review')
@@ -115,20 +113,7 @@ export default function CollaborationWorkspace() {
       </div>
 
       {tab === 'My Active Work' && (
-        <>
-          <div className="field-row" style={{ marginBottom: 8 }}>
-            <input
-              placeholder="Your user ID (to filter 'My Active Work')"
-              value={myUserId}
-              onChange={(e) => handleMyUserIdChange(e.target.value)}
-              aria-label="My user ID"
-              style={{ fontSize: 12 }}
-            />
-          </div>
-          {myUserId
-            ? <WorkItemTable items={myItems} onRefetch={refetchItems} emptyMessage="No active work items assigned to you." />
-            : <p style={{ fontSize: 13, opacity: 0.7 }}>Enter your user ID above to see your active work.</p>}
-        </>
+        <WorkItemTable items={myItems} onRefetch={refetchItems} emptyMessage="No active work items assigned to you." />
       )}
 
       {tab === 'Team Active Work' && (
