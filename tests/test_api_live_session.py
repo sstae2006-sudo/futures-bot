@@ -224,6 +224,53 @@ class TestLifecycle:
         with pytest.raises(ApiError, match="already"):
             manager.start("MESH6", "5min", poll_seconds=1, config_path=config)
 
+    def test_concurrent_start_calls_never_both_win(self, tmp_path, monkeypatch):
+        """Regression test (Stabilization Mode, 2026-07-28, KNOWN_ISSUES.md
+        ISSUE-016): start() used to check self._snapshot.status and only
+        change it *after* all the slow setup work (settings load, a DB
+        insert, strategy/engine construction) -- two concurrent calls could
+        both pass the check before either claimed the slot. The status is
+        now claimed atomically with the check, so at most one concurrent
+        caller can ever get past it -- verified here by widening the race
+        window with an artificial delay in strategy construction (the first
+        slow-ish step) and running two real threads against it."""
+        import threading
+
+        from futures_bot.api import live_session, services
+
+        def slow_build_strategy(settings):
+            time.sleep(0.2)
+            return services._build_strategy(settings)
+
+        monkeypatch.setattr(live_session, "_build_strategy", slow_build_strategy)
+
+        config = write_config(tmp_path)
+        manager = live_session.get_live_session_manager()
+        results: list[object] = []
+
+        def call_start():
+            try:
+                results.append(manager.start("MESH6", "5min", poll_seconds=1, config_path=config))
+            except Exception as exc:  # noqa: BLE001 -- capturing whichever error type, asserted below
+                results.append(exc)
+
+        threads = [threading.Thread(target=call_start) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        try:
+            successes = [r for r in results if isinstance(r, dict)]
+            failures = [r for r in results if isinstance(r, Exception)]
+            assert len(successes) == 1, f"expected exactly one caller to win, got {len(successes)}: {results}"
+            assert len(failures) == 1
+            assert "already" in str(failures[0])
+            assert len(FakeMassiveBarFeed.instances) == 1
+        finally:
+            if manager.status()["status"] in ("starting", "running"):
+                manager.stop(timeout=5)
+
     def test_stop_without_a_running_session_is_rejected(self, tmp_path):
         from futures_bot.api import live_session
         from futures_bot.api.services import ApiError

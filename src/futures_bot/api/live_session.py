@@ -134,7 +134,31 @@ class LiveSessionManager:
                 raise ApiError(
                     f"A live session is already {self._snapshot.status}. Stop it before starting another."
                 )
+            # Claimed atomically with the check above -- everything below is
+            # slow (settings load, a DB insert, strategy/engine construction,
+            # a blocking websocket handshake) and used to run before the
+            # status actually changed from its pre-call value, so two
+            # concurrent start() calls could both pass the check before
+            # either claimed the slot (the same shape found and fixed in
+            # research_server/paper_trader.py and orchestrator.py -- see
+            # KNOWN_ISSUES.md ISSUE-016). Restored to whatever it was before
+            # this call in the except block below if anything fails.
+            previous_status = self._snapshot.status
+            self._snapshot.status = "starting"
 
+        try:
+            return self._start_locked(live_symbol, resolution, poll_seconds, config_path)
+        except Exception:
+            with self._lock:
+                self._snapshot.status = previous_status
+            raise
+
+    def _start_locked(
+        self, live_symbol: str, resolution: str, poll_seconds: int, config_path: Path,
+    ) -> dict:
+        """The rest of `start()`'s body -- split out only so `start()` itself
+        can wrap it in one `try/except` that restores the pre-call status on
+        any failure, without re-indenting this whole block."""
         settings = load_settings(config_path)
 
         # The one check that actually matters -- see module docstring.

@@ -551,3 +551,14 @@ verified fixed — instead mark it Resolved with a date and commit.
   regression test plus the full existing `test_research_server_paper_trader.py`/
   `test_research_server_orchestrator.py`/`test_research_server_nightly_jobs.py`/
   `test_api_research_server.py` suites (31 tests) all pass.
+- **Update 2026-07-28, same sweep:** the identical shape existed in a third
+  place, `api/live_session.py::LiveSessionManager.start()` (checks
+  `self._snapshot.status` under lock, releases it, then does settings load/
+  a DB insert/strategy+engine construction before finally changing the
+  status) — found by inspection once the pattern was known, then confirmed
+  the same way: a new `test_concurrent_start_calls_never_both_win` (widening
+  the window via a monkeypatched, artificially slowed `_build_strategy`)
+  failed 3/3 against the pre-fix code and passed 3/3 after applying the
+  identical fix (status claimed atomically with the check; restored to its
+  pre-call value in an `except` wrapping the rest of `start()`). Full
+  `test_api_live_session.py` suite (19 tests) passes.
