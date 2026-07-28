@@ -11,8 +11,12 @@ from typing import Optional
 from ..collaboration import git_info
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.overlap import detect_overlap
+from ..collaboration.overlap_v2 import OverlapWarningV2, compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
-from .schemas import BranchInfoOut, CommitOut, MergeSummaryOut, OverlapWarningOut, WorkItemActivityOut, WorkItemOut
+from .schemas import (
+    BranchInfoOut, CommitOut, ConflictPairOut, MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out,
+    PreWorkCheckOut, WorkItemActivityOut, WorkItemOut,
+)
 from .services import ApiError
 
 _RISK_SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "no_risk": 0}
@@ -171,3 +175,76 @@ def merge_summary(changed_files: list[str], work_item_id: Optional[str] = None) 
     highest_risk = max((w.risk for w in warnings), key=lambda r: _RISK_SEVERITY[r], default="no_risk")
 
     return MergeSummaryOut(related_work_item=related_item, overlap_warnings=warnings, highest_risk=highest_risk)
+
+
+def check_overlap_v2(item_id: str) -> list[OverlapWarningV2Out]:
+    """Overlap Engine V2's richer, explainable check for one existing
+    work item -- see `overlap_v2.py`'s module docstring for what it adds
+    on top of `check_overlap`'s file-path-only V1 result."""
+    store = get_collaboration_store()
+    item = store.fetch_work_item(item_id)
+    if item is None:
+        raise ApiError(f"No such work item: {item_id!r}")
+    active = store.fetch_active_work_items(exclude_id=item_id)
+    warnings = compute_overlap_v2(
+        item["estimated_files"], active, proposed_title=item.get("title"), proposed_description=item.get("description"),
+    )
+    return [OverlapWarningV2Out(**w.__dict__) for w in warnings]
+
+
+def list_conflicts() -> list[ConflictPairOut]:
+    """Every pairwise Overlap V2 conflict across the whole currently-active
+    set, in one call -- backs Mission Control's "Conflict Warnings" view."""
+    store = get_collaboration_store()
+    active = store.fetch_active_work_items()
+    pairs = compute_all_conflicts(active)
+    return [
+        ConflictPairOut(
+            item_a=p.item_a["id"], item_a_title=p.item_a["title"], item_b=p.item_b["id"], item_b_title=p.item_b["title"],
+            risk=p.warning.risk, confidence=p.warning.confidence, factors=p.warning.factors, reason=p.warning.reason,
+        )
+        for p in pairs
+    ]
+
+
+def pre_work_check(proposed_files: list[str], title: Optional[str] = None, description: Optional[str] = None) -> PreWorkCheckOut:
+    """"Before any AI task begins... inspect active work... if overlap
+    exists, explain it, recommend coordination, suggest an alternate
+    task" -- callable before a work item even exists, so an AI session
+    (or a human) can check *before* committing to a task, not just after
+    creating one. Never blocks; `suggested_action` is advice, the caller
+    decides."""
+    store = get_collaboration_store()
+    active = store.fetch_active_work_items()
+    warnings = compute_overlap_v2(proposed_files, active, proposed_title=title, proposed_description=description)
+    warning_outs = [OverlapWarningV2Out(**w.__dict__) for w in warnings]
+
+    if not warnings:
+        suggested_action: str = "proceed"
+        recommendation = "No overlap detected with any currently active work item -- clear to proceed."
+    else:
+        top = warnings[0]
+        owner = top.owner_user_id or "an unclaimed item"
+        if top.risk == "critical":
+            suggested_action = "choose_different_task"
+            recommendation = (
+                f"This heavily overlaps with '{top.title}' (owner: {owner}, confidence {top.confidence}/100). "
+                f"{top.reason} Recommend picking a different task, or coordinating directly with {owner} first."
+            )
+        elif top.risk in ("high", "medium"):
+            suggested_action = "coordinate"
+            recommendation = (
+                f"This overlaps with '{top.title}' (owner: {owner}, confidence {top.confidence}/100). "
+                f"{top.reason} Recommend coordinating with {owner} before starting."
+            )
+        else:
+            suggested_action = "proceed"
+            recommendation = (
+                f"Minor overlap with '{top.title}' (confidence {top.confidence}/100) -- "
+                "safe to proceed, but worth a heads-up to its owner."
+            )
+
+    return PreWorkCheckOut(
+        overlap_warnings=warning_outs, suggested_action=suggested_action,  # type: ignore[arg-type]
+        recommendation=recommendation, branch_info=get_branch_info(),
+    )

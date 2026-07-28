@@ -929,6 +929,54 @@ class BranchInfoOut(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class OverlapWarningV2Out(BaseModel):
+    """Overlap Engine V2's richer, explainable relatedness score --
+    `collaboration/overlap_v2.py`'s own docstring covers the heuristic and
+    what each factor means. Additive alongside (never a replacement for)
+    the original file-path-only `OverlapWarningOut`."""
+    work_item_id: str
+    title: str
+    owner_user_id: Optional[str] = None
+    risk: RiskLevelLiteral
+    confidence: int = Field(ge=0, le=100)
+    factors: dict[str, int]
+    reason: str
+
+
+class ConflictPairOut(BaseModel):
+    """One entry in `GET /api/work-items/conflicts`'s bulk pairwise scan
+    -- `item_a`/`item_b` are work-item ids, ordered so the same pair never
+    appears twice."""
+    item_a: str
+    item_a_title: str
+    item_b: str
+    item_b_title: str
+    risk: RiskLevelLiteral
+    confidence: int = Field(ge=0, le=100)
+    factors: dict[str, int]
+    reason: str
+
+
+class PreWorkCheckRequest(BaseModel):
+    """"Before any AI task begins... inspect active work... if overlap
+    exists, explain it, recommend coordination, suggest an alternate task"
+    (SIL Phase 2's own wording) -- this is that inspection, callable before
+    a work item even exists yet."""
+    proposed_files: list[str] = Field(default_factory=list)
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+SuggestedActionLiteral = Literal["proceed", "coordinate", "choose_different_task"]
+
+
+class PreWorkCheckOut(BaseModel):
+    overlap_warnings: list[OverlapWarningV2Out]
+    suggested_action: SuggestedActionLiteral
+    recommendation: str
+    branch_info: BranchInfoOut
+
+
 class InfrastructureOut(BaseModel):
     """Mission Control's infrastructure panel -- real process/host metrics
     via `psutil`, plus the background job queue's actual depth (the

@@ -37,6 +37,14 @@ def _repo_root() -> Optional[Path]:
     return None
 
 
+def repo_root() -> Optional[Path]:
+    """Public entry point for other collaboration modules (`overlap_v2.py`,
+    `timeline.py`) that need the repo root to read file contents or run
+    their own git commands -- avoids each duplicating `_repo_root`'s
+    upward-walk logic."""
+    return _repo_root()
+
+
 def _git(args: list[str], cwd: Optional[Path] = None) -> Optional[str]:
     try:
         result = subprocess.run(

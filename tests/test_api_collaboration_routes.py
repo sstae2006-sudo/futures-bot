@@ -287,3 +287,82 @@ class TestBranchInfoRoutes:
         resp = client.get("/api/work-items/does-not-exist/branch-info")
 
         assert resp.status_code == 400
+
+
+class TestOverlapV2Route:
+    def test_overlap_v2_for_an_isolated_item_is_empty(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Solo task"}).json()["work_item"]
+
+        resp = client.get(f"/api/work-items/{item['id']}/overlap-v2")
+
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_overlap_v2_detects_keyword_overlap(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Refactor authentication middleware"})
+
+        item = client.post("/api/work-items", json={"title": "Fix authentication bug"}).json()["work_item"]
+        resp = client.get(f"/api/work-items/{item['id']}/overlap-v2")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert "confidence" in body[0]
+        assert "factors" in body[0]
+
+    def test_overlap_v2_unknown_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/work-items/does-not-exist/overlap-v2")
+
+        assert resp.status_code == 400
+
+
+class TestConflictsRoute:
+    def test_no_active_items_means_no_conflicts(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/work-items/conflicts")
+
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_finds_a_conflict_between_two_items(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "First", "estimated_files": ["src/shared.py"]})
+        client.post("/api/work-items", json={"title": "Second", "estimated_files": ["src/shared.py"]})
+
+        resp = client.get("/api/work-items/conflicts")
+
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+
+
+class TestPreWorkCheckRoute:
+    def test_no_overlap_recommends_proceed(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/pre-work-check", json={"proposed_files": ["src/brand_new.py"]})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["suggested_action"] == "proceed"
+        assert "branch_info" in body
+
+    def test_heavy_overlap_recommends_a_different_task(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={
+            "title": "Existing task touching many things",
+            "estimated_files": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+
+        resp = client.post("/api/work-items/pre-work-check", json={
+            "proposed_files": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["suggested_action"] == "choose_different_task"
+        assert len(body["overlap_warnings"]) == 1

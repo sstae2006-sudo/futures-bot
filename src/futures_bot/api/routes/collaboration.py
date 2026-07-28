@@ -12,9 +12,9 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    BranchInfoOut, ClaimWorkItemRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut,
-    ReassignWorkItemRequest, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
-    WorkItemCreateRequest, WorkItemOut,
+    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut,
+    OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest, UpdateWorkItemStatusRequest,
+    WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -35,6 +35,22 @@ def list_work_items(status: Optional[str] = None) -> list[WorkItemOut]:
     return services.list_work_items(status=status)
 
 
+@router.post("/api/work-items/pre-work-check", response_model=PreWorkCheckOut)
+def pre_work_check(req: PreWorkCheckRequest) -> PreWorkCheckOut:
+    """AI-awareness check, callable *before* a work item is created --
+    "before any AI task begins, inspect active work... if overlap exists,
+    explain it, recommend coordination, suggest an alternate task."""
+    return services.pre_work_check(req.proposed_files, title=req.title, description=req.description)
+
+
+@router.get("/api/work-items/conflicts", response_model=list[ConflictPairOut])
+def list_conflicts() -> list[ConflictPairOut]:
+    """Every pairwise Overlap V2 conflict across the whole currently-active
+    set -- registered ahead of `GET /api/work-items/{item_id}` so
+    "conflicts" is never swallowed as a (nonexistent) work item id."""
+    return services.list_conflicts()
+
+
 @router.get("/api/work-items/{item_id}", response_model=WorkItemOut)
 def get_work_item(item_id: str) -> WorkItemOut:
     return services.get_work_item(item_id)
@@ -43,6 +59,11 @@ def get_work_item(item_id: str) -> WorkItemOut:
 @router.get("/api/work-items/{item_id}/overlap", response_model=list[OverlapWarningOut])
 def check_overlap(item_id: str) -> list[OverlapWarningOut]:
     return services.check_overlap(item_id)
+
+
+@router.get("/api/work-items/{item_id}/overlap-v2", response_model=list[OverlapWarningV2Out])
+def check_overlap_v2(item_id: str) -> list[OverlapWarningV2Out]:
+    return services.check_overlap_v2(item_id)
 
 
 @router.post("/api/work-items/{item_id}/claim", response_model=WorkItemOut)
