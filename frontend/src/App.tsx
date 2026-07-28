@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
+import MissionControl from './pages/MissionControl'
 import Dashboard from './pages/Dashboard'
 import BacktestLauncher from './pages/BacktestLauncher'
 import TradeExplorer from './pages/TradeExplorer'
@@ -21,7 +22,8 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<Dashboard />} />
+          <Route index element={<MissionControl />} />
+          <Route path="dashboard" element={<Dashboard />} />
           <Route path="backtest" element={<BacktestLauncher />} />
           <Route path="backtest/:runId" element={<BacktestLauncher />} />
           <Route path="trades" element={<TradeExplorer />} />

@@ -39,6 +39,7 @@ import type {
   SchedulerStatus,
   StrategyInfo,
   SyncRunOut,
+  SystemHealth,
   SystemOverview,
   TradeAnalyticsSummary,
   TradeOut,
@@ -80,6 +81,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // --- System ---
 export const getSystemOverview = () => request<SystemOverview>('/api/system/overview')
+export const getSystemHealth = () => request<SystemHealth>('/api/system/health')
 export const getLogs = (params: { limit?: number; kind?: string } = {}) => {
   const qs = new URLSearchParams()
   if (params.limit) qs.set('limit', String(params.limit))

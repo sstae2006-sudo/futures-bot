@@ -1,10 +1,15 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import StatusBar from './mission-control/StatusBar'
 
 const NAV_SECTIONS: { label: string; links: { to: string; label: string }[] }[] = [
   {
+    label: 'Home',
+    links: [{ to: '/', label: 'Mission Control' }],
+  },
+  {
     label: 'Research',
     links: [
-      { to: '/', label: 'Dashboard' },
+      { to: '/dashboard', label: 'Dashboard' },
       { to: '/backtest', label: 'Backtest Launcher' },
       { to: '/trades', label: 'Trade Explorer' },
       { to: '/import', label: 'Import Trades' },
@@ -30,31 +35,34 @@ const NAV_SECTIONS: { label: string; links: { to: string; label: string }[] }[] 
 
 export default function Layout() {
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <strong>futures-bot</strong>
-          <span>Research Workstation</span>
-        </div>
-        {NAV_SECTIONS.map((section) => (
-          <div className="nav-section" key={section.label}>
-            <div className="nav-label">{section.label}</div>
-            {section.links.map((link) => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                end={link.to === '/'}
-                className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
-              >
-                {link.label}
-              </NavLink>
-            ))}
+    <div className="app-root">
+      <StatusBar />
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="sidebar-brand">
+            <strong>futures-bot</strong>
+            <span>Research Workstation</span>
           </div>
-        ))}
-      </aside>
-      <main className="main">
-        <Outlet />
-      </main>
+          {NAV_SECTIONS.map((section) => (
+            <div className="nav-section" key={section.label}>
+              <div className="nav-label">{section.label}</div>
+              {section.links.map((link) => (
+                <NavLink
+                  key={link.to}
+                  to={link.to}
+                  end={link.to === '/'}
+                  className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+                >
+                  {link.label}
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </aside>
+        <main className="main">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

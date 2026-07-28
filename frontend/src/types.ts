@@ -183,6 +183,27 @@ export interface SystemOverview {
   database_status: string
 }
 
+export interface DatabaseHealth {
+  configured: boolean
+  ok: boolean
+  latency_ms: number | null
+  error: string | null
+}
+
+/** `/api/system/health` -- see api/schemas.py::SystemHealthOut. Only
+ * StatusBar/HealthGrid's health-related fields consume this (per the
+ * team-deployment plan's scope); everything else on Mission Control stays
+ * mock data from missionControlData.ts. */
+export interface SystemHealth {
+  status: 'ok'
+  version: string
+  environment: 'development' | 'team' | 'production'
+  uptime_seconds: number
+  database: DatabaseHealth
+  last_backup_at: string | null
+  connected_users: number
+}
+
 export interface LogEntry {
   timestamp: string
   level: string
