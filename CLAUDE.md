@@ -107,6 +107,15 @@ of guessing.
 5. Produce an implementation plan.
 6. Wait for approval if the change is major (schema, API routes,
    strategy interface, backtest engine — section 8's protected list).
+7. For non-trivial work (more than a single-file/doc-only fix), check
+   the Active Work Registry before starting — `python
+   tools/work_item_cli.py check --files <files you plan to touch>` (or
+   `POST /api/work-items/pre-work-check`) — and register a work item
+   (`... create --title "..." --files ... --owner-type ai` for an
+   AI-assisted session) so Mission Control and any other
+   human/AI collaborator can see it. Never blocks; a `critical`/`high`
+   overlap warning means coordinate or pick something else, not "stop."
+   See `src/futures_bot/collaboration/`'s module docstring.
 
 **Making the change:**
 
@@ -152,7 +161,7 @@ futures_bot.api`, `npm run dev`).
 | `src/futures_bot/context/` | Market Context Engine — **complete and integrated into `TradingEngine` (2026-07-27)**, every dimension real: `MarketContext` value object, `ContextEngine` (configurable via `scoring_config`), `session.py`, `volatility.py`, `regime.py`, `timeframe.py`, `structure.py`, `trend.py`, `liquidity.py`, `risk.py` (all classification dimensions), `scoring.py` (`EnvironmentScore`, configurable weights via `ScoringConfig`), `analytics.py` (dev/research distribution reports). Wired into `engine.py` via `ContextMode` (OFF/OBSERVE/ENABLED — OFF is the default for every existing caller, a complete no-op). See section 8, `docs/ARCHITECTURE.md`'s "Market Context Engine" section, and `docs/CONTEXT_ENGINE_COVERAGE.md`/`CONTEXT_ENGINE_LOOKAHEAD_AUDIT.md`/`CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md`/`CONTEXT_ENGINE_ARCHITECTURE_REVIEW.md`. |
 | `src/futures_bot/db/` | Team-deployment mode's Postgres/TimescaleDB plumbing (2026-07-27): `engine.py` (pooled SQLAlchemy `Engine`, `FUTURES_BOT_DATABASE_URL`), `health.py` (`check_database_health()`), `schema.py`/`research_schema.py` (Core `Table`/`MetaData` for `market_data.db`'s 5 tables and `research.db`'s 16 as of 2026-07-28, the source Alembic autogenerates against). Imported lazily everywhere else — a SQLite-only setup never needs the `db` extra installed. See `TEAM_DEPLOYMENT.md`. |
 | `src/futures_bot/accounts/` | Lightweight user/organization accounts (Team Collaboration MVP, 2026-07-28): `store.py`/`pg_store.py` (`users`/`organizations` tables, SQLite + Postgres, `get_account_store()` factory), four fixed roles (owner/admin/member/viewer). Deliberately not an authentication system — no password, no session, no login route; see that module's own docstring for how it's meant to support stronger auth later without a redesign. |
-| `src/futures_bot/collaboration/` | Active Work Registry (Team Collaboration MVP, 2026-07-28): `store.py`/`pg_store.py` (`work_items`/`work_item_activity` tables, claim/release/complete/reassign, an append-only activity log), `overlap.py` (warn-only file-path overlap detection against other active work, `no_risk`→`critical`). See that package's own docstring for what's deliberately out of scope (a dependency/architecture graph, semantic merge analysis — larger follow-on efforts this is built to support later). |
+| `src/futures_bot/collaboration/` | Active Work Registry, MVP (2026-07-28) + SIL Phase 2 "Workflow Integration" (2026-07-28): `store.py`/`pg_store.py` (`work_items`/`work_item_activity` tables — the full `planned→claimed→in_progress→testing→ready_for_review→merged→completed` lifecycle, `owner_type` human/ai, claim/release/complete/reassign/`update_status`, an append-only activity log), `overlap.py` (V1: warn-only file-path overlap), `overlap_v2.py` (V2: shared imports/API routes/DB tables/frontend components/config files/title keywords, one explainable 0-100 confidence score — additive, V1 untouched), `git_info.py` (live, read-only branch/ahead-behind/last-commit via `git` subprocess calls, nothing persisted), `merge_readiness.py` (explainable 0-100 score; `test_status` always `"unknown"` — no CI integration exists), `timeline.py` (searchable feed merging work-item activity with real git commits). `tools/work_item_cli.py` is the terminal front end for all of this. See that package's own docstring for what's still deliberately out of scope (a real dependency/architecture graph, semantic merge analysis, a persistent AI-worker execution layer). |
 | `alembic/` | Schema migrations for the team-deployment Postgres/TimescaleDB path only (2026-07-27) — `alembic upgrade head`, never automatic on boot. SQLite (the default) has no migration history here; it still self-creates via each store's own `ensure_schema()`. |
 | `deploy/` | Dockerfiles, docker-compose (including the `timescaledb` service for team-deployment mode, 2026-07-27), systemd units. |
 | `docs/` | Architecture, research server, ML workstation, strategy authoring, trade importer, trading workflow, user manual. |
