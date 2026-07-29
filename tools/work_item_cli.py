@@ -81,6 +81,23 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_drafts(args: argparse.Namespace) -> int:
+    """SIL Phase 4's git-watcher output -- work items awaiting review."""
+    _print_json(services.list_draft_work_items())
+    return 0
+
+
+def cmd_approve_draft(args: argparse.Namespace) -> int:
+    _print_json(services.approve_draft_work_item(args.item_id))
+    return 0
+
+
+def cmd_discard_draft(args: argparse.Namespace) -> int:
+    services.discard_draft_work_item(args.item_id)
+    print(f"Discarded draft {args.item_id}.")
+    return 0
+
+
 def cmd_context(args: argparse.Namespace) -> int:
     """SIL Phase 4's "Automatic AI Context" bundle -- everything a session
     would otherwise gather by hand before starting work, in one call."""
@@ -132,6 +149,17 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("item_id")
     status.add_argument("new_status")
     status.set_defaults(func=cmd_status)
+
+    drafts = sub.add_parser("drafts", help="List draft work items (SIL Phase 4 git-watcher output, awaiting review).")
+    drafts.set_defaults(func=cmd_drafts)
+
+    approve_draft = sub.add_parser("approve-draft", help="Promote a draft to a real work item.")
+    approve_draft.add_argument("item_id")
+    approve_draft.set_defaults(func=cmd_approve_draft)
+
+    discard_draft = sub.add_parser("discard-draft", help="Delete a draft work item.")
+    discard_draft.add_argument("item_id")
+    discard_draft.set_defaults(func=cmd_discard_draft)
 
     context = sub.add_parser("context", help="AI context bundle: active work, similar past work, recent commits, overlap, relevant docs.")
     context.add_argument("--files", nargs="*", default=[], help="Files you plan to touch.")

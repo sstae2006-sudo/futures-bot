@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
+from ..collaboration.git_watcher import get_git_watcher
 from ..config import load_settings
 from ..journal import LOGGER_NAME
 from ..research_server.orchestrator import get_research_server
@@ -81,6 +82,30 @@ def _maybe_start_research_server() -> None:
         log.error("Failed to auto-start the research server: %s", exc, exc_info=True)
 
 
+def _maybe_start_automation() -> None:
+    """SIL Phase 4: opt-in via `automation.enabled` in config.yaml
+    (default `False` -- see `config.py::AutomationSettings`'s docstring).
+    Same "never fail API startup over this" posture as
+    `_maybe_start_research_server` above: a missing/unparseable config
+    file is treated as "not enabled," never as a reason the whole API
+    should fail to boot."""
+    config_path = _config_path()
+    if not config_path.exists():
+        return
+    try:
+        settings = load_settings(config_path)
+    except Exception as exc:  # noqa: BLE001 -- a bad config must not crash the API's own startup.
+        log.error("Could not load %s for automation auto-start: %s", config_path, exc)
+        return
+    if not settings.automation.enabled:
+        return
+    try:
+        get_git_watcher().start(interval_seconds=settings.automation.git_watcher_interval_seconds)
+        log.info("SIL Phase 4 git-watcher started on boot (interval=%ss).", settings.automation.git_watcher_interval_seconds)
+    except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
+        log.error("Failed to auto-start the git-watcher: %s", exc, exc_info=True)
+
+
 def _maybe_prime_db_engine() -> None:
     """Team-deployment mode only: if `FUTURES_BOT_DATABASE_URL` is set,
     build the shared pooled `Engine` now, tuned from `config.yaml`'s
@@ -113,11 +138,18 @@ def _maybe_prime_db_engine() -> None:
 async def _lifespan(app: FastAPI):
     _maybe_prime_db_engine()
     _maybe_start_research_server()
+    _maybe_start_automation()
     yield
     try:
         get_research_server().stop()
     except Exception:  # noqa: BLE001 -- shutdown must not raise past this point.
         log.error("Failed to stop the research server during API shutdown.", exc_info=True)
+    try:
+        watcher = get_git_watcher()
+        if watcher.status()["running"]:
+            watcher.stop()
+    except Exception:  # noqa: BLE001 -- shutdown must not raise past this point.
+        log.error("Failed to stop the git-watcher during API shutdown.", exc_info=True)
 
 
 def create_app() -> FastAPI:

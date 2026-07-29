@@ -170,6 +170,52 @@ def get_branch_info(branch: Optional[str] = None, base_branch: str = "main") -> 
     )
 
 
+def changed_files(repo_root_path: Optional[Path] = None) -> list[str]:
+    """Every file with uncommitted changes -- staged, unstaged, or
+    untracked (`git status --porcelain`'s three categories, all included:
+    the SIL Phase 4 git-watcher cares about "does this need a work item",
+    not about staging state). Repo-root-relative forward-slash paths --
+    `git`'s own porcelain output already normalizes separators this way
+    even on Windows, so no platform-specific handling is needed here.
+    Empty list, never an exception, if this isn't a git repo or `git`
+    itself isn't on PATH (same best-effort contract as every other
+    function in this module).
+
+    Deliberately does NOT go through `_git()`: porcelain's status code is
+    two columns wide and its first column can legitimately be a space
+    (e.g. `" M"` for "modified, not staged") -- `_git()`'s `.strip()`
+    would eat that leading space off the *first* line only (a
+    whole-string strip, not per-line), silently truncating the first
+    changed file's path by one character. Confirmed empirically: without
+    this, `" M src/foo.py"` came back as `"rc/foo.py"`."""
+    root = repo_root_path or _repo_root()
+    if root is None:
+        return []
+    try:
+        result = subprocess.run(
+            # --untracked-files=all: without it, a brand-new *directory*
+            # collapses to one porcelain line for the directory itself
+            # (e.g. "sub/") rather than one per file inside it -- wrong
+            # granularity for this function's purpose (matching individual
+            # file paths against a work item's estimated_files list).
+            ["git", "status", "--porcelain", "--untracked-files=all"], cwd=root, capture_output=True, text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    files: list[str] = []
+    for line in result.stdout.split("\n"):
+        if len(line) < 4:
+            continue
+        path = line[3:]
+        if " -> " in path:  # rename/copy: "old -> new" -- the new path is what exists now
+            path = path.split(" -> ", 1)[1]
+        files.append(path.strip('"'))  # git quotes paths containing spaces/special chars
+    return files
+
+
 def recent_commits(limit: int = 20, branch: Optional[str] = None) -> list[Commit]:
     """Most recent commits on `branch` (default: whatever's checked out),
     newest first -- feeds the activity timeline (`timeline.py`). Empty

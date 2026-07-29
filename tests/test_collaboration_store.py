@@ -300,3 +300,87 @@ class TestUpdateStatus:
         store.update_status("w1", "ready_for_review")
         moved_back = store.update_status("w1", "in_progress")
         assert moved_back["status"] == "in_progress"
+
+
+class TestDrafts:
+    """SIL Phase 4's git-watcher output -- a draft is a normal work item
+    (visible in fetch_work_items/fetch_active_work_items, subject to
+    overlap detection) except that it must be explicitly approved or
+    discarded rather than acted on directly."""
+
+    def test_create_draft_defaults_is_draft_false(self, store):
+        """The default is a real item -- is_draft=True must be explicit,
+        never accidental."""
+        item = store.create_work_item(item_id="w1", title="Task")
+        assert item["is_draft"] is False
+
+    def test_create_with_is_draft_true(self, store):
+        item = store.create_work_item(item_id="w1", title="Auto-detected", is_draft=True)
+        assert item["is_draft"] is True
+
+    def test_fetch_draft_work_items_only_returns_drafts(self, store):
+        store.create_work_item(item_id="w1", title="Real", is_draft=False)
+        store.create_work_item(item_id="w2", title="Draft", is_draft=True)
+
+        assert [i["id"] for i in store.fetch_draft_work_items()] == ["w2"]
+
+    def test_drafts_are_visible_in_fetch_work_items_and_active_items(self, store):
+        """A draft is a normal work item in every other respect --
+        overlap detection and Mission Control's normal listings must see
+        it, not just the dedicated drafts endpoint."""
+        store.create_work_item(item_id="w1", title="Draft", estimated_files=["a.py"], is_draft=True)
+
+        assert [i["id"] for i in store.fetch_work_items()] == ["w1"]
+        assert [i["id"] for i in store.fetch_active_work_items()] == ["w1"]
+
+    def test_approve_draft_clears_the_flag(self, store):
+        store.create_work_item(item_id="w1", title="Draft", is_draft=True)
+
+        approved = store.approve_draft_work_item("w1")
+
+        assert approved["is_draft"] is False
+        assert store.fetch_work_item("w1")["is_draft"] is False
+
+    def test_approve_logs_activity(self, store):
+        store.create_work_item(item_id="w1", title="Draft", is_draft=True)
+        store.approve_draft_work_item("w1", actor_user_id="u1")
+
+        event = next(a for a in store.fetch_activity(work_item_id="w1") if a["event"] == "draft_approved")
+        assert event["actor_user_id"] == "u1"
+
+    def test_approve_rejects_a_non_draft_item(self, store):
+        store.create_work_item(item_id="w1", title="Real")
+        with pytest.raises(CollaborationError, match="not a draft"):
+            store.approve_draft_work_item("w1")
+
+    def test_approve_rejects_unknown_item(self, store):
+        with pytest.raises(CollaborationError, match="No such work item"):
+            store.approve_draft_work_item("does-not-exist")
+
+    def test_discard_deletes_the_row(self, store):
+        store.create_work_item(item_id="w1", title="Draft", is_draft=True)
+
+        store.discard_draft_work_item("w1")
+
+        assert store.fetch_work_item("w1") is None
+
+    def test_discard_deletes_its_activity_log_too(self, store):
+        """Without this, the FK from work_item_activity would block the
+        DELETE outright (PRAGMA foreign_keys = ON)."""
+        store.create_work_item(item_id="w1", title="Draft", is_draft=True)
+
+        store.discard_draft_work_item("w1")  # must not raise an IntegrityError
+
+        assert store.fetch_activity(work_item_id="w1") == []
+
+    def test_discard_rejects_a_non_draft_item(self, store):
+        """Refuses to delete a real work item -- the whole point of this
+        method existing separately from a generic delete."""
+        store.create_work_item(item_id="w1", title="Real")
+        with pytest.raises(CollaborationError, match="not a draft"):
+            store.discard_draft_work_item("w1")
+        assert store.fetch_work_item("w1") is not None  # still there
+
+    def test_discard_rejects_unknown_item(self, store):
+        with pytest.raises(CollaborationError, match="No such work item"):
+            store.discard_draft_work_item("does-not-exist")

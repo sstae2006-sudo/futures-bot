@@ -402,10 +402,12 @@ work_items = Table(
     Column("priority", String, nullable=False, server_default="medium"),
     Column("owner_type", String, nullable=False, server_default="human"),
     Column("org_id", String),
+    Column("is_draft", Boolean, nullable=False, server_default="false"),
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Column("updated_at", _TSTZ, nullable=False, server_default=func.now()),
     Index("idx_work_items_status", "status"),
     Index("idx_work_items_org_id", "org_id"),
+    Index("idx_work_items_is_draft", "is_draft"),
 )
 
 work_item_activity = Table(

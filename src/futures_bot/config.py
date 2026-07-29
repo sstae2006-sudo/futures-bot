@@ -263,6 +263,33 @@ class DeploymentSettings(BaseModel):
     )
 
 
+class AutomationSettings(BaseModel):
+    """SIL Phase 4 "Intelligent Automation Layer": a background
+    git-watcher (drafts a work item for uncovered uncommitted changes)
+    plus a periodic maintenance job (discards stale drafts, checks DB
+    health). `enabled` defaults to `False`, same "zero behavior change
+    unless deliberately opted into" convention `research_server.enabled`/
+    `live_feed` already establish -- every existing single-developer
+    setup, and every test that boots the app via `create_app()`, sees no
+    new background thread and no new database writes unless this is
+    turned on in `config.yaml`. It only ever creates/discards its own
+    `is_draft=True` work items (never a real one, never a git operation),
+    so turning it on is low-risk once opted into -- see
+    `collaboration/git_watcher.py`'s module docstring for the exact
+    dedup/supersede contract that keeps it from ever touching real work."""
+
+    enabled: bool = False
+    git_watcher_interval_seconds: int = Field(
+        default=300, ge=30, description="Seconds between git-watcher cycles (git status --porcelain checks)."
+    )
+    maintenance_interval_seconds: int = Field(
+        default=3600, ge=300, description="Seconds between maintenance cycles (stale-draft cleanup, DB health check)."
+    )
+    stale_draft_days: float = Field(
+        default=3.0, ge=0.0, description="A draft work item untouched (updated_at) for this many days is discarded by the maintenance job."
+    )
+
+
 class Settings(BaseModel):
     """Top-level configuration."""
 
@@ -276,6 +303,7 @@ class Settings(BaseModel):
     strategy_params: dict = Field(default_factory=dict)
     research_server: ResearchServerSettings = Field(default_factory=ResearchServerSettings)
     deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
+    automation: AutomationSettings = Field(default_factory=AutomationSettings)
     live_feed: Literal["rest", "websocket"] = Field(
         default="rest",
         description="How LiveSessionManager and AutonomousPaperTrader poll for new bars: 'rest' "

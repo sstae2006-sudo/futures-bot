@@ -12,10 +12,10 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest, MergeReadinessOut,
-    MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out,
-    PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest,
-    WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
+    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest, GitWatcherStatusOut,
+    MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut,
+    OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest, TimelineEntryOut,
+    UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -50,6 +50,14 @@ def list_conflicts(org_id: Optional[str] = None) -> list[ConflictPairOut]:
     set -- registered ahead of `GET /api/work-items/{item_id}` so
     "conflicts" is never swallowed as a (nonexistent) work item id."""
     return services.list_conflicts(org_id=org_id)
+
+
+@router.get("/api/work-items/drafts", response_model=list[WorkItemOut])
+def list_draft_work_items(org_id: Optional[str] = None) -> list[WorkItemOut]:
+    """SIL Phase 4's git-watcher output -- registered ahead of `GET
+    /api/work-items/{item_id}` for the same reason `conflicts` is
+    (above)."""
+    return services.list_draft_work_items(org_id=org_id)
 
 
 @router.get("/api/work-items/{item_id}", response_model=WorkItemOut)
@@ -94,6 +102,21 @@ def update_work_item_status(item_id: str, req: UpdateWorkItemStatusRequest) -> W
     claim/release/complete for open/claimed/completed -- unchanged from
     Phase 1."""
     return services.update_work_item_status(item_id, req.status)
+
+
+@router.post("/api/work-items/{item_id}/approve-draft", response_model=WorkItemOut)
+def approve_draft_work_item(item_id: str) -> WorkItemOut:
+    """Promotes a git-watcher draft to a real work item. 400 if the item
+    doesn't exist or isn't currently a draft."""
+    return services.approve_draft_work_item(item_id)
+
+
+@router.delete("/api/work-items/{item_id}/draft")
+def discard_draft_work_item(item_id: str) -> dict[str, bool]:
+    """Hard-deletes a draft. Refuses (400) on a real work item -- see
+    `collaboration/store.py::discard_draft_work_item`'s docstring."""
+    services.discard_draft_work_item(item_id)
+    return {"discarded": True}
 
 
 @router.get("/api/work-items-activity", response_model=list[WorkItemActivityOut])
@@ -155,3 +178,12 @@ def get_context_bundle(req: ContextBundleRequest) -> ContextBundleOut:
         req.proposed_files, title=req.title, description=req.description,
         org_id=req.org_id, commit_limit=req.commit_limit,
     )
+
+
+@router.get("/api/collaboration/git-watcher/status", response_model=GitWatcherStatusOut)
+def get_git_watcher_status() -> GitWatcherStatusOut:
+    """SIL Phase 4's background git-watcher status -- see
+    `collaboration/git_watcher.py`'s module docstring. Returns
+    `running=False` and zeroed counters if `automation.enabled` is off
+    (the watcher singleton simply never started)."""
+    return services.get_git_watcher_status()

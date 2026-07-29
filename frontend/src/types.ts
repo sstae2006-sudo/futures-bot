@@ -758,6 +758,7 @@ export interface WorkItem {
   estimated_files: string[]
   priority: WorkItemPriority
   org_id: string | null
+  is_draft: boolean
   created_at: string
   updated_at: string
 }

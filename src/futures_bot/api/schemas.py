@@ -861,6 +861,7 @@ class WorkItemOut(BaseModel):
     estimated_files: list[str]
     priority: PriorityLiteral
     org_id: Optional[str] = None
+    is_draft: bool = False
     created_at: str
     updated_at: str
 
@@ -1097,3 +1098,14 @@ class ContextBundleOut(BaseModel):
     branch_info: BranchInfoOut
     overlap_warnings: list[OverlapWarningV2Out]
     relevant_docs: list[DocExcerptOut]
+
+
+class GitWatcherStatusOut(BaseModel):
+    """SIL Phase 4's background git-watcher (`collaboration/git_watcher.py`)
+    -- same shape `MarketDataScheduler.status()` already established."""
+    running: bool
+    last_cycle_at: Optional[str] = None
+    last_result: Optional[str] = None
+    last_error: Optional[str] = None
+    cycles_completed: int
+    drafts_created_count: int

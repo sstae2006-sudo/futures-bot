@@ -62,6 +62,8 @@ def _row_with_files(row: dict) -> dict:
         row["estimated_files"] = json.loads(row["estimated_files"])
     except (TypeError, json.JSONDecodeError):
         row["estimated_files"] = []
+    if "is_draft" in row:
+        row["is_draft"] = bool(row["is_draft"])  # SQLite has no native boolean -- stored/read as 0/1
     return row
 
 
@@ -84,9 +86,18 @@ class CollaborationStore:
     #: without a session) is simply unscoped, visible regardless of which
     #: org is asking. See `fetch_work_items`/`fetch_active_work_items`'s
     #: `org_id` filter for how that's applied.
+    #: `is_draft` added for SIL Phase 4's automatic git-watcher
+    #: (2026-07-29) -- a draft is a normal work item in every other respect
+    #: (visible in `fetch_work_items`/`fetch_active_work_items`, subject to
+    #: overlap detection) except that it was created by the background
+    #: watcher rather than a human/AI session, and must be explicitly
+    #: approved (clears this flag) or discarded (hard-deletes the row --
+    #: see `discard_draft_work_item`) rather than silently acted on. Every
+    #: existing row backfills to `false` via the column default.
     _WORK_ITEM_COLLABORATION_COLUMNS = (
         ("owner_type", "TEXT NOT NULL DEFAULT 'human'"),
         ("org_id", "TEXT"),
+        ("is_draft", "BOOLEAN NOT NULL DEFAULT 0"),
     )
 
     def __init__(self, path: Path | str | None = None) -> None:
@@ -123,7 +134,7 @@ class CollaborationStore:
         self, *, item_id: str, title: str, description: Optional[str] = None,
         owner_user_id: Optional[str] = None, branch: Optional[str] = None,
         estimated_files: Optional[list[str]] = None, priority: str = "medium",
-        owner_type: str = "human", org_id: Optional[str] = None,
+        owner_type: str = "human", org_id: Optional[str] = None, is_draft: bool = False,
     ) -> dict:
         if priority not in PRIORITIES:
             raise CollaborationError(f"Unknown priority {priority!r} -- must be one of {PRIORITIES}.")
@@ -132,15 +143,54 @@ class CollaborationStore:
         status = "claimed" if owner_user_id else "open"
         self._conn.execute(
             """
-            INSERT INTO work_items (id, title, description, owner_user_id, branch, status, estimated_files, priority, owner_type, org_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO work_items (id, title, description, owner_user_id, branch, status, estimated_files, priority, owner_type, org_id, is_draft)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (item_id, title, description, owner_user_id, branch, status,
-             json.dumps(estimated_files or []), priority, owner_type, org_id),
+             json.dumps(estimated_files or []), priority, owner_type, org_id, is_draft),
         )
-        self._log_activity(item_id, "created", owner_user_id, f"status={status}")
+        self._log_activity(item_id, "created", owner_user_id, f"status={status}" + (" draft=true" if is_draft else ""))
         self._conn.commit()
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
+
+    # --- Drafts (SIL Phase 4's git-watcher) ---
+
+    def fetch_draft_work_items(self, *, org_id: Optional[str] = None) -> list[dict]:
+        return [i for i in self.fetch_work_items(org_id=org_id) if i["is_draft"]]
+
+    def approve_draft_work_item(self, item_id: str, *, actor_user_id: Optional[str] = None) -> dict:
+        """Promotes a draft to a real work item -- clears `is_draft`,
+        nothing else about the row changes. Raises if the item doesn't
+        exist or isn't currently a draft, same "explicit precondition,
+        explicit error" convention every other lifecycle transition here
+        follows (see `claim_work_item`)."""
+        item = self.fetch_work_item(item_id)
+        if item is None:
+            raise CollaborationError(f"No such work item: {item_id!r}.")
+        if not item["is_draft"]:
+            raise CollaborationError(f"Work item {item_id!r} is not a draft.")
+        self._conn.execute(
+            "UPDATE work_items SET is_draft = 0, updated_at=datetime('now') WHERE id = ?", (item_id,),
+        )
+        self._log_activity(item_id, "draft_approved", actor_user_id, None)
+        self._conn.commit()
+        return self.fetch_work_item(item_id)  # type: ignore[return-value]
+
+    def discard_draft_work_item(self, item_id: str, *, actor_user_id: Optional[str] = None) -> None:
+        """Hard-deletes a draft -- the one place this store deletes a work
+        item at all. Deliberately refuses on a non-draft item: a real
+        (human/AI-claimed or already-approved) work item is never
+        deletable through this path, only ever completed/released/
+        reassigned, so a caller can't accidentally destroy real work by
+        reusing this method."""
+        item = self.fetch_work_item(item_id)
+        if item is None:
+            raise CollaborationError(f"No such work item: {item_id!r}.")
+        if not item["is_draft"]:
+            raise CollaborationError(f"Work item {item_id!r} is not a draft -- refusing to delete a real work item.")
+        self._conn.execute("DELETE FROM work_item_activity WHERE work_item_id = ?", (item_id,))
+        self._conn.execute("DELETE FROM work_items WHERE id = ?", (item_id,))
+        self._conn.commit()
 
     def fetch_work_item(self, item_id: str) -> Optional[dict]:
         self._conn.row_factory = sqlite3.Row

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.engine import Engine
 
 from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES
@@ -55,7 +55,7 @@ class PgCollaborationStore:
         self, *, item_id: str, title: str, description: Optional[str] = None,
         owner_user_id: Optional[str] = None, branch: Optional[str] = None,
         estimated_files: Optional[list[str]] = None, priority: str = "medium",
-        owner_type: str = "human", org_id: Optional[str] = None,
+        owner_type: str = "human", org_id: Optional[str] = None, is_draft: bool = False,
     ) -> dict:
         if priority not in PRIORITIES:
             raise CollaborationError(f"Unknown priority {priority!r} -- must be one of {PRIORITIES}.")
@@ -66,10 +66,41 @@ class PgCollaborationStore:
             conn.execute(work_items.insert().values(
                 id=item_id, title=title, description=description, owner_user_id=owner_user_id,
                 branch=branch, status=status, estimated_files=estimated_files or [], priority=priority,
-                owner_type=owner_type, org_id=org_id,
+                owner_type=owner_type, org_id=org_id, is_draft=is_draft,
             ))
-            self._log_activity(conn, item_id, "created", owner_user_id, f"status={status}")
+            self._log_activity(conn, item_id, "created", owner_user_id, f"status={status}" + (" draft=true" if is_draft else ""))
         return self.fetch_work_item(item_id)  # type: ignore[return-value]
+
+    # --- Drafts (SIL Phase 4's git-watcher) ---
+
+    def fetch_draft_work_items(self, *, org_id: Optional[str] = None) -> list[dict]:
+        return [i for i in self.fetch_work_items(org_id=org_id) if i["is_draft"]]
+
+    def approve_draft_work_item(self, item_id: str, *, actor_user_id: Optional[str] = None) -> dict:
+        """Mirrors `CollaborationStore.approve_draft_work_item`."""
+        item = self.fetch_work_item(item_id)
+        if item is None:
+            raise CollaborationError(f"No such work item: {item_id!r}.")
+        if not item["is_draft"]:
+            raise CollaborationError(f"Work item {item_id!r} is not a draft.")
+        with self._engine.begin() as conn:
+            conn.execute(work_items.update().where(work_items.c.id == item_id).values(
+                is_draft=False, updated_at=func.now(),
+            ))
+            self._log_activity(conn, item_id, "draft_approved", actor_user_id, None)
+        return self.fetch_work_item(item_id)  # type: ignore[return-value]
+
+    def discard_draft_work_item(self, item_id: str, *, actor_user_id: Optional[str] = None) -> None:
+        """Mirrors `CollaborationStore.discard_draft_work_item` -- refuses
+        on a non-draft item, see that docstring for why."""
+        item = self.fetch_work_item(item_id)
+        if item is None:
+            raise CollaborationError(f"No such work item: {item_id!r}.")
+        if not item["is_draft"]:
+            raise CollaborationError(f"Work item {item_id!r} is not a draft -- refusing to delete a real work item.")
+        with self._engine.begin() as conn:
+            conn.execute(delete(work_item_activity).where(work_item_activity.c.work_item_id == item_id))
+            conn.execute(delete(work_items).where(work_items.c.id == item_id))
 
     def fetch_work_item(self, item_id: str) -> Optional[dict]:
         with self._engine.connect() as conn:

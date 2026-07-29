@@ -11,15 +11,16 @@ from typing import Optional
 from ..collaboration import git_info
 from ..collaboration.context_bundle import build_context_bundle
 from ..collaboration.git_info import BranchInfo, Commit
+from ..collaboration.git_watcher import get_git_watcher
 from ..collaboration.overlap import detect_overlap
 from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readiness
 from ..collaboration.overlap_v2 import compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
 from .schemas import (
-    BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut, MergeReadinessOut, MergeSummaryOut,
-    OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut,
-    WorkItemActivityOut, WorkItemOut,
+    BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut, GitWatcherStatusOut,
+    MergeReadinessOut, MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut,
+    TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
 )
 from .services import ApiError
 
@@ -313,6 +314,34 @@ def merge_readiness(
         branch_info=_branch_info_out(info),
         overlap_warnings=[OverlapWarningV2Out(**w.__dict__) for w in warnings],
     )
+
+
+def list_draft_work_items(org_id: Optional[str] = None) -> list[WorkItemOut]:
+    """Every `is_draft=True` work item -- SIL Phase 4's git-watcher output
+    awaiting human/AI review. Never includes a real work item."""
+    store = get_collaboration_store()
+    return [WorkItemOut(**i) for i in store.fetch_draft_work_items(org_id=org_id)]
+
+
+def approve_draft_work_item(item_id: str, actor_user_id: Optional[str] = None) -> WorkItemOut:
+    store = get_collaboration_store()
+    try:
+        item = store.approve_draft_work_item(item_id, actor_user_id=actor_user_id)
+    except CollaborationError as exc:
+        raise ApiError(str(exc)) from exc
+    return WorkItemOut(**item)
+
+
+def discard_draft_work_item(item_id: str, actor_user_id: Optional[str] = None) -> None:
+    store = get_collaboration_store()
+    try:
+        store.discard_draft_work_item(item_id, actor_user_id=actor_user_id)
+    except CollaborationError as exc:
+        raise ApiError(str(exc)) from exc
+
+
+def get_git_watcher_status() -> GitWatcherStatusOut:
+    return GitWatcherStatusOut(**get_git_watcher().status())
 
 
 def get_context_bundle(

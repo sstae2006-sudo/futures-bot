@@ -513,3 +513,87 @@ class TestContextBundleRoute:
 
         assert resp.status_code == 200
         assert resp.json()["active_work_items"] == []
+
+
+class TestDraftWorkItemRoutes:
+    """SIL Phase 4's git-watcher output. The scheduler itself is tested
+    separately (`tests/test_git_watcher.py`); these tests exercise the
+    HTTP-level draft lifecycle a draft goes through once created (drafts
+    are created directly via the store here, matching how the
+    background thread would)."""
+
+    def _create_draft(self, tmp_path, monkeypatch, **overrides):
+        from futures_bot.collaboration.store import get_collaboration_store
+
+        client = _client(tmp_path, monkeypatch)
+        kwargs = {"item_id": "d1", "title": "Uncommitted changes: src", "estimated_files": ["src/a.py"], "is_draft": True}
+        kwargs.update(overrides)
+        get_collaboration_store().create_work_item(**kwargs)
+        return client
+
+    def test_list_drafts_only_returns_drafts(self, tmp_path, monkeypatch):
+        client = self._create_draft(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Real item"})
+
+        resp = client.get("/api/work-items/drafts")
+
+        assert resp.status_code == 200
+        assert [i["id"] for i in resp.json()] == ["d1"]
+
+    def test_approve_draft_clears_the_flag(self, tmp_path, monkeypatch):
+        client = self._create_draft(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/d1/approve-draft")
+
+        assert resp.status_code == 200
+        assert resp.json()["is_draft"] is False
+        assert client.get("/api/work-items/drafts").json() == []
+
+    def test_approve_unknown_draft_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/does-not-exist/approve-draft")
+
+        assert resp.status_code == 400
+
+    def test_approve_a_real_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Real item"}).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/approve-draft")
+
+        assert resp.status_code == 400
+
+    def test_discard_draft_deletes_it(self, tmp_path, monkeypatch):
+        client = self._create_draft(tmp_path, monkeypatch)
+
+        resp = client.delete("/api/work-items/d1/draft")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"discarded": True}
+        assert client.get("/api/work-items/d1").status_code == 400
+
+    def test_discard_a_real_item_is_400_and_does_not_delete_it(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Real item"}).json()["work_item"]
+
+        resp = client.delete(f"/api/work-items/{item['id']}/draft")
+
+        assert resp.status_code == 400
+        assert client.get(f"/api/work-items/{item['id']}").status_code == 200
+
+
+class TestGitWatcherStatusRoute:
+    def test_returns_not_running_when_the_watcher_was_never_started(self, tmp_path, monkeypatch):
+        from futures_bot.collaboration.git_watcher import reset_git_watcher
+
+        reset_git_watcher()
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/collaboration/git-watcher/status")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["running"] is False
+        assert body["cycles_completed"] == 0
+        assert body["drafts_created_count"] == 0
