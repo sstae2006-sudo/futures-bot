@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1611 tests as of 2026-07-29** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1560 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1650 tests as of 2026-07-29** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1599 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1611 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1650 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,31 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-29: **SIL Phase 6 "Integration Coordinator" Milestone 1 — Worker
+Registry + Integration Queue.** Scoped deliberately (a design-review
+subagent validated the plan and pushed back on several framings before
+implementation started) as a foundation, not the full spec's much larger
+"Integration Branch"/"Coordinator Memory"/"Rollback Intelligence" pieces
+— those are explicit, documented Milestone 2+ items
+(`ROADMAP.md`'s Future section), not built now. Built: a `workers` table
+(`collaboration/store.py`/`pg_store.py`, Alembic `6794ec903e7c`) — a
+generic Worker Registry (`WORKER_TYPES`, deliberately not `OWNER_TYPES`:
+human developers, Claude Code sessions, other/future AI agents,
+validation/research workers, background services, future distributed
+compute workers) with upsert heartbeats (`POST
+/api/workers/{id}/heartbeat`, `api/worker_service.py`) and JSON
+capability tags; the Integration Queue (`GET /api/integration/queue`,
+`GET /api/work-items/{id}/review`) — a *view* over `work_items` reusing
+`merge_readiness.py`/`overlap_v2.py`, no new persisted queue, ordered by
+confidence score with an explicit `priority`→`updated_at` tiebreak.
+Mission Control's `WorkforcePanel.tsx`/`IntegrationQueuePanel.tsx`;
+`CollaborationWorkspace.tsx`'s pre-existing "Merge Queue" tab (a plain
+client-side filter, no real scoring) renamed to "Testing / Ready for
+Review" to avoid two different things both called "queue." 42 new tests
+this milestone (35 backend: 1599 total, 51 skipped, 0 failed; 7
+frontend: 129 total, 0 failed). See `docs/ARCHITECTURE.md`'s "SIL Phase
+6" section.
 
 2026-07-29: **SIL Phase 6 collaboration audit — 5 findings, 2 fixed with
 regression tests, 3 documented and deliberately deferred.** Requested

@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from ..collaboration import git_info
+from ..collaboration import PRIORITIES, git_info
 from ..collaboration.context_bundle import build_context_bundle
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.git_sync import get_git_sync_scheduler
@@ -21,10 +21,16 @@ from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
 from .schemas import (
     AutomationStatusOut, BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut,
-    GitSyncStatusOut, GitWatcherStatusOut, MaintenanceStatusOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
-    OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
+    GitSyncStatusOut, GitWatcherStatusOut, IntegrationQueueEntryOut, MaintenanceStatusOut, MergeReadinessOut,
+    MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut,
+    WorkItemActivityOut, WorkItemOut, WorkItemReviewOut,
 )
 from .services import ApiError
+
+#: Work item lifecycle stages the Integration Queue surfaces -- see
+#: `docs/ARCHITECTURE.md`'s "SIL Phase 6" section for why this is a
+#: *view* over `work_items`, not a new persisted queue table.
+_INTEGRATION_QUEUE_STATUSES = ("testing", "ready_for_review")
 
 _RISK_SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "no_risk": 0}
 
@@ -315,6 +321,68 @@ def merge_readiness(
         factors=[_readiness_factor_out(f) for f in readiness.factors],
         branch_info=_branch_info_out(info),
         overlap_warnings=[OverlapWarningV2Out(**w.__dict__) for w in warnings],
+    )
+
+
+def _readiness_note(item: dict) -> Optional[str]:
+    """`merge_readiness.py` was built to score a real `git diff`'s
+    `changed_files`, not a work item's self-reported `estimated_files`.
+    Every queued item that isn't the currently-checked-out branch (i.e.
+    essentially all of them, since `git_info` only introspects the
+    working tree, not arbitrary other branches) has its score computed
+    from that weaker proxy -- flagged here rather than silently
+    presented at the same confidence as a real-diff score, same honesty
+    `test_status="unknown"` already models elsewhere in this package."""
+    branch = item.get("branch")
+    current = git_info.current_branch()
+    if branch is None or branch != current:
+        return (
+            "Score computed from this item's self-reported estimated_files, not a real git diff "
+            "(its branch isn't the one currently checked out here)."
+        )
+    return None
+
+
+def get_integration_queue(org_id: Optional[str] = None) -> list[IntegrationQueueEntryOut]:
+    """The Integration Queue -- `work_items` in `testing`/`ready_for_review`,
+    scored via the existing `merge_readiness` call above and ordered by
+    that score. No new table: the ordering *is* the queue position,
+    recomputed fresh every request, matching this package's "compute
+    live" philosophy throughout. Ties (equal score) break on `priority`
+    descending, then `updated_at` ascending (oldest-waiting-first) --
+    stated explicitly rather than left to incidental sort stability."""
+    store = get_collaboration_store()
+    items = [i for i in store.fetch_work_items(org_id=org_id) if i["status"] in _INTEGRATION_QUEUE_STATUSES]
+
+    entries: list[tuple[int, int, str, IntegrationQueueEntryOut]] = []
+    for item in items:
+        readiness = merge_readiness(
+            item["estimated_files"], branch=item.get("branch"), work_item_id=item["id"], org_id=org_id,
+        )
+        entry = IntegrationQueueEntryOut(
+            work_item=WorkItemOut(**item), merge_readiness=readiness, readiness_note=_readiness_note(item),
+        )
+        priority_rank = PRIORITIES.index(item["priority"]) if item["priority"] in PRIORITIES else 0
+        entries.append((-readiness.score, -priority_rank, item["updated_at"], entry))
+
+    entries.sort(key=lambda t: (t[0], t[1], t[2]))
+    return [e[3] for e in entries]
+
+
+def get_work_item_review(item_id: str) -> WorkItemReviewOut:
+    """The Continuous Review Pipeline's per-item output -- wires together
+    `merge_readiness` (which already includes overlap warnings and
+    branch info) rather than computing new intelligence. See
+    `docs/ARCHITECTURE.md`'s "SIL Phase 6" section."""
+    store = get_collaboration_store()
+    item = store.fetch_work_item(item_id)
+    if item is None:
+        raise ApiError(f"No such work item: {item_id!r}")
+    readiness = merge_readiness(
+        item["estimated_files"], branch=item.get("branch"), work_item_id=item_id, org_id=item.get("org_id"),
+    )
+    return WorkItemReviewOut(
+        work_item=WorkItemOut(**item), merge_readiness=readiness, readiness_note=_readiness_note(item),
     )
 
 

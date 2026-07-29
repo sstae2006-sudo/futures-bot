@@ -14,9 +14,15 @@ import type { ConflictPair, TimelineEntry, WorkItem } from '../../types'
 // user's own organization (session.tsx) -- "My Active Work" uses their
 // real user id, not a manually-typed one, now that a real (if still
 // no-auth) session concept exists.
+// "Merge Queue" was renamed to "Testing / Ready for Review" (SIL Phase 6
+// Milestone 1): this tab is a plain client-side filter with no scoring
+// or ordering behind it (see mergeQueueItems below) -- keeping the old
+// name alongside the real Integration Queue panel (a genuine
+// merge-readiness-scored queue, IntegrationQueuePanel.tsx) would have
+// left two differently-named things both called "queue."
 const TABS = [
   'My Active Work', 'Team Active Work', 'AI Workers', 'Recent Activity',
-  'Merge Queue', 'Conflict Warnings', 'Ready For Review',
+  'Testing / Ready for Review', 'Conflict Warnings', 'Ready For Review',
 ] as const
 type Tab = (typeof TABS)[number]
 
@@ -104,7 +110,7 @@ export default function CollaborationWorkspace() {
             'My Active Work': myItems.length,
             'Team Active Work': activeItems.length,
             'AI Workers': aiItems.length,
-            'Merge Queue': mergeQueueItems.length,
+            'Testing / Ready for Review': mergeQueueItems.length,
             'Conflict Warnings': conflicts?.length ?? 0,
             'Ready For Review': readyForReviewItems.length,
           }
@@ -126,7 +132,7 @@ export default function CollaborationWorkspace() {
 
       {tab === 'Recent Activity' && <TimelineList entries={timeline ?? []} />}
 
-      {tab === 'Merge Queue' && (
+      {tab === 'Testing / Ready for Review' && (
         <WorkItemTable items={mergeQueueItems} onRefetch={refetchItems} emptyMessage="Nothing in testing or ready for review." />
       )}
 

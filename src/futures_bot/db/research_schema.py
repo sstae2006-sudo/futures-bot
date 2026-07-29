@@ -422,3 +422,26 @@ work_item_activity = Table(
     Index("idx_work_item_activity_item", "work_item_id", "created_at"),
     Index("idx_work_item_activity_created_at", "created_at"),
 )
+
+# SIL Phase 6 "Integration Coordinator" Milestone 1 -- see
+# collaboration/store.py's matching SQLite schema for the full
+# rationale (caller-supplied id, soft references, JSONB capabilities,
+# staleness computed live and never stored here).
+workers = Table(
+    "workers",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("worker_type", String, nullable=False, server_default="ai_agent"),
+    Column("display_name", String, nullable=False),
+    Column("user_id", String),
+    Column("org_id", String),
+    Column("status", String, nullable=False, server_default="online"),
+    Column("current_work_item_id", String),
+    Column("subsystem", String),
+    Column("capabilities", JSONB, nullable=False, server_default="[]"),
+    Column("last_heartbeat_at", _TSTZ, nullable=False, server_default=func.now()),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    Column("updated_at", _TSTZ, nullable=False, server_default=func.now()),
+    Index("idx_workers_org_id", "org_id"),
+    Index("idx_workers_status", "status"),
+)

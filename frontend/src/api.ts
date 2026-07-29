@@ -21,6 +21,7 @@ import type {
   ImportUploadResponse,
   Infrastructure,
   InsightOut,
+  IntegrationQueueEntry,
   JobOut,
   LiveSessionStatus,
   LogEntry,
@@ -62,6 +63,10 @@ import type {
   WorkItemActivity,
   WorkItemCreated,
   WorkItemPriority,
+  WorkItemReview,
+  Worker,
+  WorkerStatus,
+  WorkerType,
 } from './types'
 
 // Local Mode (scripts/start.ps1) runs the frontend as a separate Vite dev
@@ -679,3 +684,35 @@ export const discardDraftWorkItem = (itemId: string) =>
   request<{ discarded: boolean }>(`/api/work-items/${itemId}/draft`, { method: 'DELETE' })
 
 export const getAutomationStatus = () => request<AutomationStatus>('/api/automation/status')
+
+// SIL Phase 6 "Integration Coordinator" Milestone 1: Worker Registry + Integration Queue.
+
+export interface WorkerHeartbeatRequest {
+  worker_type?: WorkerType
+  display_name: string
+  user_id?: string
+  org_id?: string
+  status?: WorkerStatus
+  current_work_item_id?: string
+  subsystem?: string
+  capabilities?: string[]
+}
+
+export const heartbeatWorker = (workerId: string, body: WorkerHeartbeatRequest) =>
+  request<Worker>(`/api/workers/${encodeURIComponent(workerId)}/heartbeat`, { method: 'POST', body: JSON.stringify(body) })
+
+export const getWorkers = (orgId?: string, status?: WorkerStatus, capability?: string) => {
+  const qs = new URLSearchParams()
+  if (orgId) qs.set('org_id', orgId)
+  if (status) qs.set('status', status)
+  if (capability) qs.set('capability', capability)
+  const query = qs.toString()
+  return request<Worker[]>(`/api/workers${query ? `?${query}` : ''}`)
+}
+
+export const getWorker = (workerId: string) => request<Worker>(`/api/workers/${encodeURIComponent(workerId)}`)
+
+export const getIntegrationQueue = (orgId?: string) =>
+  request<IntegrationQueueEntry[]>(orgId ? `/api/integration/queue?org_id=${encodeURIComponent(orgId)}` : '/api/integration/queue')
+
+export const getWorkItemReview = (itemId: string) => request<WorkItemReview>(`/api/work-items/${itemId}/review`)

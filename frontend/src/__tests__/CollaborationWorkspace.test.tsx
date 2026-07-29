@@ -105,7 +105,11 @@ describe('CollaborationWorkspace', () => {
     expect(screen.queryByText('Not mine')).not.toBeInTheDocument()
   })
 
-  it('Merge Queue shows testing and ready_for_review items only', async () => {
+  it('Testing / Ready for Review shows testing and ready_for_review items only', async () => {
+    // Renamed from "Merge Queue" (SIL Phase 6 Milestone 1) -- this tab is
+    // a plain client-side filter with no scoring/ordering behind it,
+    // unlike the real Integration Queue panel (IntegrationQueuePanel.tsx);
+    // keeping the old name would have left two things both called "queue."
     vi.mocked(api.getWorkItems).mockResolvedValue([
       makeItem({ id: 'w1', title: 'Testing item', status: 'testing', owner_user_id: 'alice' }),
       makeItem({ id: 'w2', title: 'In progress item', status: 'in_progress', owner_user_id: 'alice' }),
@@ -115,7 +119,7 @@ describe('CollaborationWorkspace', () => {
     await waitFor(() => expect(screen.getByText('Testing item')).toBeInTheDocument())
 
     const { fireEvent } = await import('@testing-library/react')
-    fireEvent.click(screen.getByText(/Merge Queue/))
+    fireEvent.click(screen.getByText(/Testing \/ Ready for Review/))
 
     await waitFor(() => expect(screen.getByText('Testing item')).toBeInTheDocument())
     expect(screen.queryByText('In progress item')).not.toBeInTheDocument()

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..research.trade_store import default_db_path
-from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES
+from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES, WORKER_STATUSES, WORKER_TYPES
 
 #: Same convention `accounts/store.py`/`api/store.py::get_store()` already
 #: established.
@@ -55,6 +55,40 @@ CREATE INDEX IF NOT EXISTS idx_work_item_activity_item ON work_item_activity(wor
 -- ALTER-TABLE-if-missing dance needed the way _WORK_ITEM_COLLABORATION_
 -- COLUMNS requires for columns.
 CREATE INDEX IF NOT EXISTS idx_work_item_activity_created_at ON work_item_activity(created_at);
+
+-- SIL Phase 6 "Integration Coordinator" Milestone 1. `id` is
+-- caller-supplied (not minted via uuid.uuid4() the way work_items.id
+-- is) -- a worker (an AI session, a background job) needs a stable id
+-- it already knows so repeated heartbeats land on the same row across
+-- process restarts. `current_work_item_id` is a soft reference, same
+-- "no real FK, informal by convention" precedent work_items.owner_user_id
+-- already establishes. `last_heartbeat_at` is the only liveness signal
+-- persisted -- staleness itself is always computed live at read time
+-- (collaboration_service.py), never stored, matching every other
+-- liveness-adjacent computation in this package. `worker_type` is
+-- WORKER_TYPES (a generic platform vocabulary), deliberately NOT
+-- OWNER_TYPES ("human"/"ai" only) -- this registry must not hardcode an
+-- assumption that only Claude Code will ever connect. `capabilities` is
+-- a JSON-as-TEXT list of free-form tags, same pattern estimated_files
+-- already establishes -- queryable via Python-side filtering, not a SQL
+-- JSON query, matching how fetch_draft_work_items already filters over
+-- fetch_work_items's result rather than pushing that into SQL.
+CREATE TABLE IF NOT EXISTS workers (
+    id                    TEXT PRIMARY KEY,
+    worker_type           TEXT NOT NULL DEFAULT 'ai_agent',
+    display_name          TEXT NOT NULL,
+    user_id               TEXT,
+    org_id                TEXT,
+    status                TEXT NOT NULL DEFAULT 'online',
+    current_work_item_id  TEXT,
+    subsystem             TEXT,
+    capabilities          TEXT NOT NULL DEFAULT '[]',
+    last_heartbeat_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_workers_org_id ON workers(org_id);
+CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
 """
 
 
@@ -73,6 +107,15 @@ def _row_with_files(row: dict) -> dict:
         row["estimated_files"] = []
     if "is_draft" in row:
         row["is_draft"] = bool(row["is_draft"])  # SQLite has no native boolean -- stored/read as 0/1
+    return row
+
+
+def _row_with_capabilities(row: dict) -> dict:
+    row = dict(row)
+    try:
+        row["capabilities"] = json.loads(row["capabilities"])
+    except (TypeError, json.JSONDecodeError):
+        row["capabilities"] = []
     return row
 
 
@@ -363,6 +406,85 @@ class CollaborationStore:
             ).fetchall()
         self._conn.row_factory = None
         return [dict(r) for r in rows]
+
+    # --- Workers (SIL Phase 6 "Integration Coordinator" Milestone 1) ---
+
+    def heartbeat_worker(
+        self, *, worker_id: str, worker_type: str = "ai_agent", display_name: str,
+        user_id: Optional[str] = None, org_id: Optional[str] = None, status: str = "online",
+        current_work_item_id: Optional[str] = None, subsystem: Optional[str] = None,
+        capabilities: Optional[list[str]] = None,
+    ) -> dict:
+        """Upsert, not update-only -- deliberately does NOT mirror
+        `accounts/store.py::touch_last_active`'s update-only/404-if-missing
+        precedent. That precedent exists because a user has a distinct,
+        meaningful registration flow (create-organization then
+        create-user) heartbeat must never substitute for; a worker (an
+        AI session, a background job) has no equivalent signup moment,
+        and there's no auth layer (KNOWN_ISSUES.md ISSUE-036) to make a
+        separate "register" call mean anything extra beyond formality.
+        Race safety: last-write-wins is *correct* semantics here (unlike
+        `claim_work_item`'s guarded `WHERE`, which exists because
+        ownership races are genuinely not benign) -- no rowcount-guard
+        needed for "who's most recently alive." `current_work_item_id`
+        is never validated against `work_items` -- a soft reference, same
+        convention `owner_user_id` already establishes."""
+        if worker_type not in WORKER_TYPES:
+            raise CollaborationError(f"Unknown worker_type {worker_type!r} -- must be one of {WORKER_TYPES}.")
+        if status not in WORKER_STATUSES:
+            raise CollaborationError(f"Unknown status {status!r} -- must be one of {WORKER_STATUSES}.")
+        capabilities_json = json.dumps(capabilities or [])
+        existing = self.fetch_worker(worker_id)
+        if existing is None:
+            self._conn.execute(
+                """
+                INSERT INTO workers (id, worker_type, display_name, user_id, org_id, status, current_work_item_id, subsystem, capabilities)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (worker_id, worker_type, display_name, user_id, org_id, status, current_work_item_id, subsystem, capabilities_json),
+            )
+        else:
+            self._conn.execute(
+                """
+                UPDATE workers SET worker_type=?, display_name=?, user_id=?, org_id=?, status=?,
+                       current_work_item_id=?, subsystem=?, capabilities=?,
+                       last_heartbeat_at=datetime('now'), updated_at=datetime('now')
+                WHERE id = ?
+                """,
+                (worker_type, display_name, user_id, org_id, status, current_work_item_id, subsystem, capabilities_json, worker_id),
+            )
+        self._conn.commit()
+        return self.fetch_worker(worker_id)  # type: ignore[return-value]
+
+    def fetch_worker(self, worker_id: str) -> Optional[dict]:
+        self._conn.row_factory = sqlite3.Row
+        row = self._conn.execute("SELECT * FROM workers WHERE id = ?", (worker_id,)).fetchone()
+        self._conn.row_factory = None
+        return _row_with_capabilities(dict(row)) if row is not None else None
+
+    def fetch_workers(
+        self, *, org_id: Optional[str] = None, status: Optional[str] = None, capability: Optional[str] = None,
+    ) -> list[dict]:
+        """`capability` filters in Python, not SQL -- consistent with
+        `fetch_draft_work_items`'s existing precedent of filtering over
+        an already-fetched list rather than pushing a JSON-membership
+        query down into SQLite, which has no native JSON indexing here
+        anyway."""
+        self._conn.row_factory = sqlite3.Row
+        clauses, params = [], []
+        if org_id is not None:
+            clauses.append("org_id = ?")
+            params.append(org_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._conn.execute(f"SELECT * FROM workers {where} ORDER BY last_heartbeat_at DESC", params).fetchall()
+        self._conn.row_factory = None
+        workers = [_row_with_capabilities(dict(r)) for r in rows]
+        if capability is not None:
+            workers = [w for w in workers if capability in w["capabilities"]]
+        return workers
 
 
 def get_collaboration_store():

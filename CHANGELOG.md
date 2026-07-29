@@ -4,6 +4,74 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — SIL Phase 6 "Integration Coordinator" Milestone 1: Worker Registry + Integration Queue
+
+A large, multi-part spec asking to "transform SIL into a centralized
+engineering coordination platform." Scoped deliberately (a design-review
+subagent read every relevant file directly and pushed back on several
+framings before implementation started) into a buildable foundation:
+wire together primitives that already exist rather than invent new
+intelligence, and defer the spec's much larger, more speculative pieces
+to an explicit, documented Milestone 2+ list rather than build them
+speculatively. Full design in `docs/ARCHITECTURE.md`'s "SIL Phase 6"
+section; this is the summary.
+
+**Added — Worker Registry.** A `workers` table
+(`collaboration/store.py`/`pg_store.py`, Alembic `6794ec903e7c`) --
+extends the existing dual-backend `CollaborationStore` rather than a new
+store module (workers join constantly against `work_items` for the
+Integration Queue). Generic by design: `WORKER_TYPES` (human developer,
+Claude Code session, other/future AI agent, validation worker, research
+worker, background service, future distributed compute worker) is
+deliberately NOT `OWNER_TYPES` ("human"/"ai" only) -- this registry must
+not hardcode an assumption that only Claude Code will ever connect.
+`POST /api/workers/{id}/heartbeat` is an upsert with a caller-supplied
+id (not `touch_last_active`'s update-only precedent -- a worker has no
+equivalent "signup" moment a user does). JSON `capabilities` tags
+(Backend/Frontend/Database/etc., free-form, queryable). Staleness
+(`is_stale`/`seconds_since_heartbeat`) is always computed live from
+`last_heartbeat_at`, never stored -- matching every other
+liveness-adjacent computation in this package.
+
+**Added — Integration Queue.** `GET /api/integration/queue` and
+`GET /api/work-items/{id}/review` -- a *view* over `work_items`
+(status in `testing`/`ready_for_review`), not a new persisted queue
+table. Reuses `merge_readiness.py`'s existing 0-100 explainable score
+and `overlap_v2.py` directly; ordering (score descending, tiebreak:
+`priority` desc then `updated_at` asc) *is* the queue position,
+recomputed fresh every request. `readiness_note` honestly flags when a
+work item's self-reported `estimated_files` was used as a proxy for a
+real `git diff` (essentially always) -- same honesty
+`test_status="unknown"` already models elsewhere, rather than silently
+presenting a weaker signal at full confidence.
+
+**Added — Mission Control.** `WorkforcePanel.tsx` (worker list, 15s
+polling), `IntegrationQueuePanel.tsx` (ordered rows, expandable
+merge-readiness factor breakdown -- this expansion *is* the "Confidence
+Dashboard" for Milestone 1, a separate panel isn't justified until
+usage history exists). `CollaborationWorkspace.tsx`'s pre-existing
+"Merge Queue" tab (confirmed: a plain client-side filter, zero backend
+concept) renamed to "Testing / Ready for Review" in the same change --
+leaving two different things both called "queue" would have been
+exactly the confusion the preceding audit flagged.
+
+**Explicitly deferred, documented in `ROADMAP.md`'s Future section as
+Milestones 2-7, not built now**: logging the review pipeline onto
+`work_item_activity` + folding worker staleness into `merge_readiness`
+(M2); a trend-based Confidence Dashboard (M3, needs M2's history first);
+a Conflict Heat Map + Pending Approvals rollup (M4); Coordinator Memory
+(M5, no usage data exists yet to build it from); an Integration Branch
+git workflow (M6, needs separate explicit human sign-off -- changes
+actual day-to-day git usage); Rollback Intelligence (M7, likely depends
+on M6).
+
+42 new tests (35 backend -- schema/store, API routes, a concurrency
+test mirroring `claim_work_item`'s, a golden-equivalence test guarding
+the queue against silently drifting from the primitive it wraps, a
+tiebreak test; 7 frontend panel tests). Full suite verified: 1650
+backend tests (1599 passed, 51 skipped, 0 failed), 129 frontend tests
+(0 failed).
+
 ## 2026-07-29 — SIL Phase 6 collaboration audit: 5 findings, 2 fixed
 
 User asked for a complete audit of the collaboration architecture (Team

@@ -384,3 +384,116 @@ class TestDrafts:
     def test_discard_rejects_unknown_item(self, store):
         with pytest.raises(CollaborationError, match="No such work item"):
             store.discard_draft_work_item("does-not-exist")
+
+
+class TestWorkers:
+    """SIL Phase 6 "Integration Coordinator" Milestone 1 -- the Worker
+    Registry. Heartbeat is an upsert (not update-only like
+    accounts/store.py::touch_last_active) -- see
+    `heartbeat_worker`'s own docstring for why."""
+
+    def test_first_heartbeat_creates_the_worker(self, store):
+        worker = store.heartbeat_worker(worker_id="w1", worker_type="claude_code_session", display_name="Session 1")
+
+        assert worker["id"] == "w1"
+        assert worker["worker_type"] == "claude_code_session"
+        assert worker["status"] == "online"
+        assert worker["capabilities"] == []
+
+    def test_second_heartbeat_updates_in_place_no_duplicate_row(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="Session 1", status="online")
+        store.heartbeat_worker(worker_id="w1", display_name="Session 1", status="idle")
+
+        workers = store.fetch_workers()
+        assert len(workers) == 1
+        assert workers[0]["status"] == "idle"
+
+    def test_heartbeat_with_a_nonexistent_current_work_item_id_succeeds(self, store):
+        """Pinned as a regression test, not just a docstring note, so a
+        future contributor can't silently "fix" this into a hard FK
+        without an explicit discussion -- current_work_item_id is a soft
+        reference by design, same convention work_items.owner_user_id
+        already establishes."""
+        worker = store.heartbeat_worker(
+            worker_id="w1", display_name="Session 1", current_work_item_id="does-not-exist-at-all",
+        )
+
+        assert worker["current_work_item_id"] == "does-not-exist-at-all"
+
+    def test_heartbeat_rejects_unknown_worker_type(self, store):
+        with pytest.raises(CollaborationError, match="Unknown worker_type"):
+            store.heartbeat_worker(worker_id="w1", display_name="X", worker_type="not_a_real_type")
+
+    def test_heartbeat_rejects_unknown_status(self, store):
+        with pytest.raises(CollaborationError, match="Unknown status"):
+            store.heartbeat_worker(worker_id="w1", display_name="X", status="not_a_real_status")
+
+    def test_capabilities_round_trip_as_a_list(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="X", capabilities=["backend", "testing"])
+
+        assert store.fetch_worker("w1")["capabilities"] == ["backend", "testing"]
+
+    def test_capabilities_defaults_to_empty_list(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="X")
+
+        assert store.fetch_worker("w1")["capabilities"] == []
+
+    def test_fetch_worker_unknown_returns_none(self, store):
+        assert store.fetch_worker("does-not-exist") is None
+
+    def test_fetch_workers_filters_by_org_id(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="A", org_id="org-a")
+        store.heartbeat_worker(worker_id="w2", display_name="B", org_id="org-b")
+
+        assert [w["id"] for w in store.fetch_workers(org_id="org-a")] == ["w1"]
+
+    def test_fetch_workers_filters_by_status(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="A", status="online")
+        store.heartbeat_worker(worker_id="w2", display_name="B", status="offline")
+
+        assert [w["id"] for w in store.fetch_workers(status="offline")] == ["w2"]
+
+    def test_fetch_workers_filters_by_capability(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="A", capabilities=["frontend"])
+        store.heartbeat_worker(worker_id="w2", display_name="B", capabilities=["backend", "database"])
+
+        assert [w["id"] for w in store.fetch_workers(capability="database")] == ["w2"]
+
+    def test_fetch_workers_with_no_capability_match_returns_empty(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="A", capabilities=["frontend"])
+
+        assert store.fetch_workers(capability="machine-learning") == []
+
+
+class TestWorkersConcurrency:
+    """Mirrors `claim_work_item`'s two-thread regression test -- heartbeat
+    races are benign (last-write-wins is correct semantics for "who's
+    alive"), but concurrent writers must never crash or lose rows."""
+
+    def test_concurrent_heartbeats_from_many_workers_never_crash_or_lose_rows(self, tmp_path):
+        import threading
+
+        from futures_bot.collaboration.store import CollaborationStore
+
+        store_path = tmp_path / "concurrent_workers.db"
+        CollaborationStore(store_path).close()  # ensure schema exists before threads race on creating it
+        errors = []
+
+        def _heartbeat(n):
+            try:
+                s = CollaborationStore(store_path)
+                s.heartbeat_worker(worker_id=f"worker-{n}", display_name=f"Worker {n}")
+                s.close()
+            except Exception as exc:  # noqa: BLE001 -- captured for the assertion below, not swallowed silently
+                errors.append((n, exc))
+
+        threads = [threading.Thread(target=_heartbeat, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert errors == []
+        final_store = CollaborationStore(store_path)
+        assert len(final_store.fetch_workers()) == 20
+        final_store.close()

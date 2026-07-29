@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import AutomationPanel from '../components/mission-control/AutomationPanel'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
+import IntegrationQueuePanel from '../components/mission-control/IntegrationQueuePanel'
 import TeamPanel from '../components/mission-control/TeamPanel'
+import WorkforcePanel from '../components/mission-control/WorkforcePanel'
 import { SessionProvider } from '../session'
 import * as api from '../api'
-import type { AutomationStatus, Infrastructure, SystemHealth, User, WorkItem } from '../types'
+import type {
+  AutomationStatus, Infrastructure, IntegrationQueueEntry, SystemHealth, User, Worker, WorkItem,
+} from '../types'
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -20,6 +24,8 @@ vi.mock('../api', async () => {
     getDraftWorkItems: vi.fn(),
     approveDraftWorkItem: vi.fn(),
     discardDraftWorkItem: vi.fn(),
+    getWorkers: vi.fn(),
+    getIntegrationQueue: vi.fn(),
   }
 })
 
@@ -253,5 +259,104 @@ describe('AutomationPanel', () => {
 
     await waitFor(() => expect(api.discardDraftWorkItem).toHaveBeenCalledWith('d1'))
     await waitFor(() => expect(vi.mocked(api.getDraftWorkItems).mock.calls.length).toBeGreaterThan(callsBeforeClick))
+  })
+})
+
+function makeWorker(overrides: Partial<Worker> = {}): Worker {
+  return {
+    id: 'w1', worker_type: 'claude_code_session', display_name: 'Claude Session 1', user_id: null, org_id: null,
+    status: 'online', current_work_item_id: null, subsystem: null, capabilities: [],
+    last_heartbeat_at: '2026-07-29T00:00:00+00:00', created_at: '2026-07-29T00:00:00+00:00',
+    updated_at: '2026-07-29T00:00:00+00:00', is_stale: false, seconds_since_heartbeat: 5,
+    ...overrides,
+  }
+}
+
+function makeIntegrationQueueEntry(overrides: Partial<IntegrationQueueEntry> = {}): IntegrationQueueEntry {
+  return {
+    work_item: {
+      id: 'w1', title: 'Ready item', description: null, owner_user_id: null, owner_type: 'human', branch: null,
+      status: 'ready_for_review', estimated_files: ['a.py'], priority: 'medium', org_id: null, is_draft: false,
+      created_at: '2026-07-29T00:00:00+00:00', updated_at: '2026-07-29T00:00:00+00:00',
+    },
+    merge_readiness: {
+      score: 90, level: 'ready', test_status: 'unknown',
+      factors: [{ name: 'overlap', penalty: 0, explanation: 'No conflicts.' }],
+      branch_info: { branch: 'main', is_detached: false, base_branch: null, branch_age_days: null, ahead: null, behind: null, last_commit: null, notes: [] },
+      overlap_warnings: [],
+    },
+    readiness_note: null,
+    ...overrides,
+  }
+}
+
+describe('WorkforcePanel', () => {
+  it('lists workers with their status and capabilities', async () => {
+    vi.mocked(api.getWorkers).mockResolvedValue([makeWorker({ capabilities: ['backend', 'testing'] })])
+
+    render(<WorkforcePanel />)
+
+    await waitFor(() => expect(screen.getByText('Claude Session 1')).toBeInTheDocument())
+    expect(screen.getByText('online')).toBeInTheDocument()
+    expect(screen.getByText('backend')).toBeInTheDocument()
+    expect(screen.getByText('testing')).toBeInTheDocument()
+  })
+
+  it('shows a graceful empty state with no workers', async () => {
+    vi.mocked(api.getWorkers).mockResolvedValue([])
+
+    render(<WorkforcePanel />)
+
+    await waitFor(() => expect(screen.getByText('No workers have reported in yet.')).toBeInTheDocument())
+  })
+
+  it('shows "stale" instead of the raw status for a stale worker', async () => {
+    vi.mocked(api.getWorkers).mockResolvedValue([makeWorker({ status: 'online', is_stale: true })])
+
+    render(<WorkforcePanel />)
+
+    await waitFor(() => expect(screen.getByText('stale')).toBeInTheDocument())
+    expect(screen.queryByText('online')).not.toBeInTheDocument()
+  })
+})
+
+describe('IntegrationQueuePanel', () => {
+  it('shows a graceful empty state with nothing queued', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([])
+
+    render(<IntegrationQueuePanel />)
+
+    await waitFor(() => expect(screen.getByText('Nothing in testing or ready for review.')).toBeInTheDocument())
+  })
+
+  it('shows each entry with its score', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+
+    render(<IntegrationQueuePanel />)
+
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    expect(screen.getByText('90/100')).toBeInTheDocument()
+  })
+
+  it('shows the readiness_note when estimated_files was used as a proxy', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([
+      makeIntegrationQueueEntry({ readiness_note: 'Score computed from estimated_files, not a real git diff.' }),
+    ])
+
+    render(<IntegrationQueuePanel />)
+
+    await waitFor(() => expect(screen.getByText(/Score computed from estimated_files/)).toBeInTheDocument())
+  })
+
+  it('expands to show the merge-readiness factor breakdown on click', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+
+    render(<IntegrationQueuePanel />)
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    expect(screen.queryByText(/No conflicts\./)).not.toBeInTheDocument()
+
+    screen.getByText('Ready item').click()
+
+    await waitFor(() => expect(screen.getByText(/No conflicts\./)).toBeInTheDocument())
   })
 })

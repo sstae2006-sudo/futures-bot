@@ -391,6 +391,25 @@ into git history):
   dedup race under multi-machine Team Mode; a measured SQLite
   concurrent-writer ceiling relevant to the next feature's design). See
   KNOWN_ISSUES.md ISSUE-034 through ISSUE-038.
+- **SIL Phase 6 "Integration Coordinator" Milestone 1** (2026-07-29):
+  Worker Registry (`workers` table -- a generic platform component:
+  human developers, Claude Code sessions, other/future AI agents,
+  validation/research workers, background services, future distributed
+  compute workers; `WORKER_TYPES`, deliberately not `OWNER_TYPES`) with
+  upsert heartbeats (`POST /api/workers/{id}/heartbeat`) and
+  capability tags; the Integration Queue (`GET /api/integration/queue`,
+  `GET /api/work-items/{id}/review`) -- a *view* over `work_items`
+  reusing `merge_readiness.py`/`overlap_v2.py`, no new persisted queue,
+  ordered by confidence score with an explicit tiebreak. Mission
+  Control's `WorkforcePanel.tsx`/`IntegrationQueuePanel.tsx`;
+  `CollaborationWorkspace.tsx`'s pre-existing "Merge Queue" tab (a plain
+  client-side filter, no real scoring) renamed to "Testing / Ready for
+  Review" to avoid two different things both called "queue." 42 new
+  tests (35 backend: schema/store, API routes, a concurrency test, a
+  golden-equivalence test guarding the queue against drifting from the
+  primitive it wraps, a tiebreak test; 7 frontend panel tests). See
+  `docs/ARCHITECTURE.md`'s "SIL Phase 6" section for the full design and
+  the explicit Milestone 2+ deferral list below.
 
 ### Future: Collaboration Platform, beyond what's built so far
 
@@ -429,3 +448,31 @@ actually prioritized:
 - **Distributed worker network.** Trusted machines contributing compute
   (backtesting, optimization, model training, inference) that Mission
   Control monitors and assigns compatible jobs to.
+
+**SIL Phase 6 "Integration Coordinator" Milestone 2+** (Milestone 1 —
+Worker Registry + Integration Queue — done 2026-07-29, see Completed
+above and `docs/ARCHITECTURE.md`'s "SIL Phase 6" section):
+
+- **M2**: wire the review pipeline onto the `ready_for_review` transition
+  (log the computed review into `work_item_activity`); fold worker
+  staleness into `merge_readiness`'s own factor list (a claimed item
+  whose worker has gone stale is itself a merge-risk signal) — cheap
+  once both Milestone 1 pieces exist.
+- **M3**: a real, trend-based Confidence Dashboard, once M2's logging has
+  accumulated real history to show a trend from.
+- **M4**: a Conflict Heat Map (a visual layer over the existing
+  `compute_all_conflicts`, no new backend) and a Pending Approvals
+  rollup (drafts + queue in one panel).
+- **M5**: Coordinator Memory (historical intelligence — previous merge
+  failures, common conflict locations, subsystem stability) — only once
+  M1/M2 have produced real usage data to build it from; re-confirm the
+  "no data yet" premise before starting, don't assume it still holds.
+- **M6**: an Integration Branch git workflow (worker branches → an
+  integration branch → validation → review → recommendation → main,
+  instead of integrating directly into main) — needs explicit, separate
+  human sign-off, since it changes actual day-to-day git usage; never
+  silently bundled into another milestone's PR.
+- **M7**: Rollback Intelligence (identifying a likely-bad work
+  item/subsystem/commit/dependency and recommending, never performing,
+  a rollback) — likely depends on M6's Integration Branch existing
+  first, since a rollback is an operation against that workflow.

@@ -1154,3 +1154,79 @@ class AutomationStatusOut(BaseModel):
     git_watcher: GitWatcherStatusOut
     maintenance: MaintenanceStatusOut
     git_sync: GitSyncStatusOut
+
+
+# --- SIL Phase 6 "Integration Coordinator" Milestone 1: Worker Registry + Integration Queue ---
+
+#: Deliberately NOT reusing OwnerTypeLiteral ("human"/"ai" only) -- see
+#: `collaboration/__init__.py::WORKER_TYPES`'s own docstring for why a
+#: generic platform vocabulary matters here specifically.
+WorkerTypeLiteral = Literal[
+    "human", "claude_code_session", "ai_agent", "validation_worker",
+    "research_worker", "background_service", "distributed_compute_worker",
+]
+WorkerStatusLiteral = Literal["online", "idle", "offline"]
+
+
+class WorkerHeartbeatRequest(BaseModel):
+    """`worker_id` is a path parameter, not part of the body -- see
+    `collaboration/store.py::heartbeat_worker`'s docstring for why this
+    is caller-supplied and why the call is an upsert."""
+    worker_type: WorkerTypeLiteral = "ai_agent"
+    display_name: str
+    user_id: Optional[str] = None
+    org_id: Optional[str] = None
+    status: WorkerStatusLiteral = "online"
+    current_work_item_id: Optional[str] = None
+    subsystem: Optional[str] = None
+    capabilities: list[str] = Field(default_factory=list)
+
+
+class WorkerOut(BaseModel):
+    """`is_stale`/`seconds_since_heartbeat` are derived response fields,
+    computed fresh on every call from `last_heartbeat_at` -- never
+    written back to the row. Matches every other liveness-adjacent
+    computation in `collaboration/` (`merge_readiness`, `overlap_v2`,
+    `context_bundle`, `git_info` are all "compute fresh, never cache")."""
+    id: str
+    worker_type: WorkerTypeLiteral
+    display_name: str
+    user_id: Optional[str] = None
+    org_id: Optional[str] = None
+    status: WorkerStatusLiteral
+    current_work_item_id: Optional[str] = None
+    subsystem: Optional[str] = None
+    capabilities: list[str]
+    last_heartbeat_at: str
+    created_at: str
+    updated_at: str
+    is_stale: bool
+    seconds_since_heartbeat: float
+
+
+class IntegrationQueueEntryOut(BaseModel):
+    """One row in the Integration Queue -- `GET /api/integration/queue`.
+    The queue's *order* (score descending, `priority` then `updated_at`
+    as an explicit tiebreak) is the "queue position"; nothing here is
+    persisted, recomputed fresh every request, matching
+    `merge_readiness`/`overlap_v2`/`context_bundle`'s existing
+    "compute live" philosophy throughout this package. `readiness_note`
+    is set when `estimated_files` (self-reported) was used as a proxy
+    for a real `git diff` -- `merge_readiness.py` was built to score an
+    actual diff, and presenting that weaker signal silently, at the same
+    confidence as a real one, would be dishonest in exactly the way this
+    package's own `test_status="unknown"` precedent already refuses to be."""
+    work_item: WorkItemOut
+    merge_readiness: MergeReadinessOut
+    readiness_note: Optional[str] = None
+
+
+class WorkItemReviewOut(BaseModel):
+    """The Continuous Review Pipeline's per-item output --
+    `GET /api/work-items/{item_id}/review`. Wires together existing
+    primitives (merge readiness, which already includes overlap
+    warnings and branch info) rather than computing new intelligence --
+    see `docs/ARCHITECTURE.md`'s "SIL Phase 6" section."""
+    work_item: WorkItemOut
+    merge_readiness: MergeReadinessOut
+    readiness_note: Optional[str] = None

@@ -851,6 +851,66 @@ export interface AutomationStatus {
   git_sync: GitSyncStatus
 }
 
+// SIL Phase 6 "Integration Coordinator" Milestone 1 -- Worker Registry +
+// Integration Queue. MergeReadiness/ReadinessFactor back the
+// long-existing POST /api/work-items/merge-readiness route, which had
+// no frontend type at all until this milestone actually needed to
+// render its output.
+export interface ReadinessFactor {
+  name: string
+  penalty: number
+  explanation: string
+}
+
+export type MergeReadinessLevel = 'ready' | 'needs_review' | 'risky' | 'not_ready'
+
+export interface MergeReadiness {
+  score: number
+  level: MergeReadinessLevel
+  test_status: 'unknown'
+  factors: ReadinessFactor[]
+  branch_info: BranchInfo
+  overlap_warnings: OverlapWarningV2[]
+}
+
+export interface IntegrationQueueEntry {
+  work_item: WorkItem
+  merge_readiness: MergeReadiness
+  readiness_note: string | null
+}
+
+export interface WorkItemReview {
+  work_item: WorkItem
+  merge_readiness: MergeReadiness
+  readiness_note: string | null
+}
+
+// Deliberately NOT reusing OwnerType ('human'/'ai' only) -- see
+// futures_bot/collaboration/__init__.py::WORKER_TYPES's own docstring
+// for why the Worker Registry needs a generic, extensible vocabulary.
+export type WorkerType =
+  | 'human' | 'claude_code_session' | 'ai_agent' | 'validation_worker'
+  | 'research_worker' | 'background_service' | 'distributed_compute_worker'
+
+export type WorkerStatus = 'online' | 'idle' | 'offline'
+
+export interface Worker {
+  id: string
+  worker_type: WorkerType
+  display_name: string
+  user_id: string | null
+  org_id: string | null
+  status: WorkerStatus
+  current_work_item_id: string | null
+  subsystem: string | null
+  capabilities: string[]
+  last_heartbeat_at: string
+  created_at: string
+  updated_at: string
+  is_stale: boolean
+  seconds_since_heartbeat: number
+}
+
 export interface TimelineEntry {
   kind: 'work_item' | 'commit'
   timestamp: string

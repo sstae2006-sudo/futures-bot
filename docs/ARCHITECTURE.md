@@ -854,6 +854,147 @@ before shipping (three via the very tests being written, one via
 under an interpreter lacking the `db` extra) -- see KNOWN_ISSUES.md
 ISSUE-029 through ISSUE-033 for full detail on each.
 
+## SIL Phase 6 "Integration Coordinator" (2026-07-29, Milestone 1)
+
+A large, multi-part spec ("transform SIL into a centralized engineering
+coordination platform capable of managing multiple humans, multiple AI
+workers, and multiple development machines"), scoped deliberately: this
+milestone builds the Worker Registry and the Integration Queue by wiring
+together primitives that already exist (`merge_readiness.py`,
+`overlap_v2.py`, `git_info.py`), not by inventing new intelligence. Much
+larger, more speculative pieces from the full spec (a permanent
+"Integration Branch" git workflow, historical "Coordinator Memory,"
+"Rollback Intelligence," a trend-based Confidence Dashboard) are
+explicitly deferred -- see the Future list at the end of this section.
+
+Preceded by a requested audit of every collaboration/automation/accounts/
+Team Mode subsystem (the spec's own "fix bugs before new functionality"
+instruction) -- 5 findings, 2 fixed with regression tests, 3 documented
+and deliberately deferred. See KNOWN_ISSUES.md ISSUE-034 through
+ISSUE-038.
+
+```
+collaboration/store.py                A third table, `workers`, added to
+  |                                    the same dual-backend store
+  |                                    work_items/work_item_activity
+  |                                    already live in -- not a separate
+  v                                    module (workers join constantly
+workers                                against work_items for the
+                                       Integration Queue, more entangled
+                                       than work_item_activity already
+                                       is with that table). `id` is
+                                       caller-supplied (not
+                                       uuid.uuid4()-minted like
+                                       work_items.id) -- a worker needs a
+                                       stable id it already knows so
+                                       repeated heartbeats land on the
+                                       same row across process restarts.
+                                       `current_work_item_id`/`user_id`/
+                                       `org_id` are soft references, same
+                                       "no real FK" convention
+                                       work_items.owner_user_id already
+                                       establishes. `capabilities` is
+                                       JSONB (SQLite: JSON-as-TEXT), a
+                                       list of free-form tags, same
+                                       pattern estimated_files already
+                                       establishes -- queryable via
+                                       Python-side filtering, not a SQL
+                                       JSON query.
+
+collaboration/__init__.py             WORKER_TYPES -- deliberately NOT
+                                       OWNER_TYPES ("human"/"ai" only).
+                                       The Worker Registry is a generic
+                                       platform component (human
+                                       developers, Claude Code sessions,
+                                       other/future AI agents, validation
+                                       workers, research workers,
+                                       background services, future
+                                       distributed compute workers), not
+                                       something specific to Claude Code
+                                       -- a plain Python tuple, not a DB
+                                       CHECK constraint, so recognizing a
+                                       new kind of worker later is a
+                                       one-line addition, never a
+                                       migration.
+
+api/worker_service.py                 POST /api/workers/{id}/heartbeat
+                                       is an UPSERT, deliberately NOT
+                                       mirroring accounts/store.py::
+                                       touch_last_active's update-only/
+                                       404-if-missing precedent -- a
+                                       worker has no equivalent
+                                       deliberate "signup" moment the way
+                                       a user does (organization then
+                                       user creation), and there's no
+                                       auth (KNOWN_ISSUES.md ISSUE-036)
+                                       to make a separate "register" call
+                                       mean anything extra. Race safety:
+                                       last-write-wins is *correct*
+                                       semantics for "who's most recently
+                                       alive" (unlike claim_work_item's
+                                       guarded WHERE, which exists
+                                       because ownership races are
+                                       genuinely not benign) -- no
+                                       rowcount-guard needed.
+                                       `is_stale`/`seconds_since_heartbeat`
+                                       are derived response fields,
+                                       computed fresh from
+                                       `last_heartbeat_at` on every call,
+                                       never written back to the row --
+                                       matching every other
+                                       liveness-adjacent computation in
+                                       this package (merge_readiness/
+                                       overlap_v2/context_bundle/git_info
+                                       are all "compute fresh, never
+                                       cache").
+
+api/collaboration_service.py          get_integration_queue()/
+                                       get_work_item_review() -- the
+                                       Integration Queue is a *view* over
+                                       work_items (status in testing/
+                                       ready_for_review), not a new
+                                       persisted queue table. Ordering
+                                       (merge-readiness score descending,
+                                       tiebreak: priority desc then
+                                       updated_at asc) IS the queue
+                                       position, recomputed fresh every
+                                       request. `readiness_note` flags
+                                       when a work item's self-reported
+                                       `estimated_files` was used as a
+                                       proxy for a real `git diff`
+                                       (essentially always, since
+                                       git_info only introspects the
+                                       currently-checked-out branch) --
+                                       same honesty test_status="unknown"
+                                       already models, rather than
+                                       silently presenting a weaker
+                                       signal at full confidence.
+```
+
+**Mission Control**: `WorkforcePanel.tsx` (worker list, 15s polling --
+infra-like cadence, workers are closer to infra than to `TeamPanel`'s
+30s human-roster cadence) and `IntegrationQueuePanel.tsx` (ordered rows,
+expandable merge-readiness factor breakdown -- this expansion *is* the
+"Confidence Dashboard" for Milestone 1; a separate panel isn't justified
+until `ready_for_review` reviews are actually being logged over time).
+`CollaborationWorkspace.tsx`'s pre-existing "Merge Queue" tab (confirmed:
+a pure client-side filter over `work_items`, zero backend concept, zero
+scoring) was renamed to "Testing / Ready for Review" in the same change
+-- leaving two differently-scored things both called "queue" would have
+been exactly the "duplicate systems" confusion the audit itself flagged.
+
+**Deliberately not built in Milestone 1** (see ROADMAP.md's Future
+section for the fuller list and reasoning): a background scheduler
+mutating worker `status` on staleness (live computation at read time
+already answers this; adding a write path would be the "unnecessary
+complexity" the audit warns against -- revisit only if a real coherence
+gap shows up in practice); an "Integration Branch" git workflow (changes
+actual day-to-day git usage -- needs explicit, separate human sign-off,
+never silently bundled into another milestone); "Coordinator Memory"
+(historical intelligence -- no usage data exists yet to build it from);
+"Rollback Intelligence" (same reason, and likely depends on the
+Integration Branch workflow existing first).
+
 ## Why strategies cannot execute trades directly
 
 `Strategy.on_bar` returns a `Signal` — a decision, not an order. The engine

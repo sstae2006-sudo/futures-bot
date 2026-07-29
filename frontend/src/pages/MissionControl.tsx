@@ -5,9 +5,11 @@ import AutomationPanel from '../components/mission-control/AutomationPanel'
 import CollaborationWorkspace from '../components/mission-control/CollaborationWorkspace'
 import HealthGrid from '../components/mission-control/HealthGrid'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
+import IntegrationQueuePanel from '../components/mission-control/IntegrationQueuePanel'
 import QuickActions from '../components/mission-control/QuickActions'
 import RoadmapPanel from '../components/mission-control/RoadmapPanel'
 import TeamPanel from '../components/mission-control/TeamPanel'
+import WorkforcePanel from '../components/mission-control/WorkforcePanel'
 import WorkRegistryPanel from '../components/mission-control/WorkRegistryPanel'
 import { DatabaseSummaryCard, MarketContextSummaryCard, PerformanceCard, ResearchSummaryCard } from '../components/mission-control/SummaryCards'
 
@@ -51,6 +53,13 @@ export default function MissionControl() {
           <QuickActions />
           <RoadmapPanel />
           <AutomationPanel />
+        </div>
+        <div className="mc-column">
+          {/* SIL Phase 6 "Integration Coordinator" Milestone 1 -- Worker
+              Registry + Integration Queue. See docs/ARCHITECTURE.md's
+              "SIL Phase 6" section. */}
+          <WorkforcePanel />
+          <IntegrationQueuePanel />
         </div>
         <div className="mc-column">
           <ResearchSummaryCard />

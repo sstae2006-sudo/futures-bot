@@ -14,10 +14,10 @@ from typing import Optional
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.engine import Engine
 
-from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES
+from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES, WORKER_STATUSES, WORKER_TYPES
 from .store import CollaborationError
 from ..db.engine import get_engine
-from ..db.research_schema import metadata, work_item_activity, work_items
+from ..db.research_schema import metadata, work_item_activity, work_items, workers
 
 
 def _isoformat_datetimes(d: dict) -> dict:
@@ -210,3 +210,64 @@ class PgCollaborationStore:
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).fetchall()
         return [_row_dict(r) for r in rows]
+
+    # --- Workers (SIL Phase 6 "Integration Coordinator" Milestone 1) ---
+
+    def heartbeat_worker(
+        self, *, worker_id: str, worker_type: str = "ai_agent", display_name: str,
+        user_id: Optional[str] = None, org_id: Optional[str] = None, status: str = "online",
+        current_work_item_id: Optional[str] = None, subsystem: Optional[str] = None,
+        capabilities: Optional[list[str]] = None,
+    ) -> dict:
+        """Mirrors `CollaborationStore.heartbeat_worker` -- see that
+        docstring for why this is an upsert (not update-only like
+        `accounts.touch_last_active`) and why races here are benign.
+        `INSERT ... ON CONFLICT DO UPDATE` is the Postgres-native
+        equivalent of the SQLite side's try-INSERT/except-IntegrityError
+        pattern -- one round-trip instead of two."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        if worker_type not in WORKER_TYPES:
+            raise CollaborationError(f"Unknown worker_type {worker_type!r} -- must be one of {WORKER_TYPES}.")
+        if status not in WORKER_STATUSES:
+            raise CollaborationError(f"Unknown status {status!r} -- must be one of {WORKER_STATUSES}.")
+        values = dict(
+            id=worker_id, worker_type=worker_type, display_name=display_name, user_id=user_id, org_id=org_id,
+            status=status, current_work_item_id=current_work_item_id, subsystem=subsystem,
+            capabilities=capabilities or [],
+        )
+        stmt = pg_insert(workers).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[workers.c.id],
+            set_={
+                "worker_type": stmt.excluded.worker_type, "display_name": stmt.excluded.display_name,
+                "user_id": stmt.excluded.user_id, "org_id": stmt.excluded.org_id, "status": stmt.excluded.status,
+                "current_work_item_id": stmt.excluded.current_work_item_id, "subsystem": stmt.excluded.subsystem,
+                "capabilities": stmt.excluded.capabilities, "last_heartbeat_at": func.now(), "updated_at": func.now(),
+            },
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+        return self.fetch_worker(worker_id)  # type: ignore[return-value]
+
+    def fetch_worker(self, worker_id: str) -> Optional[dict]:
+        with self._engine.connect() as conn:
+            row = conn.execute(select(workers).where(workers.c.id == worker_id)).first()
+        return _row_dict(row)
+
+    def fetch_workers(
+        self, *, org_id: Optional[str] = None, status: Optional[str] = None, capability: Optional[str] = None,
+    ) -> list[dict]:
+        """`capability` filters in Python, matching
+        `CollaborationStore.fetch_workers`'s identical precedent."""
+        stmt = select(workers).order_by(workers.c.last_heartbeat_at.desc())
+        if org_id is not None:
+            stmt = stmt.where(workers.c.org_id == org_id)
+        if status is not None:
+            stmt = stmt.where(workers.c.status == status)
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).fetchall()
+        result = [_row_dict(r) for r in rows]
+        if capability is not None:
+            result = [w for w in result if capability in (w["capabilities"] or [])]
+        return result

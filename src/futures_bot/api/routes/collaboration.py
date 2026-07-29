@@ -13,10 +13,10 @@ from fastapi import APIRouter
 from .. import collaboration_service as services
 from ..schemas import (
     AutomationStatusOut, BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest,
-    GitSyncStatusOut, GitWatcherStatusOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut,
-    MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest,
-    ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
-    WorkItemCreateRequest, WorkItemOut,
+    GitSyncStatusOut, GitWatcherStatusOut, IntegrationQueueEntryOut, MergeReadinessOut, MergeReadinessRequest,
+    MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut,
+    PreWorkCheckRequest, ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut,
+    WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut, WorkItemReviewOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -74,6 +74,15 @@ def check_overlap(item_id: str) -> list[OverlapWarningOut]:
 @router.get("/api/work-items/{item_id}/overlap-v2", response_model=list[OverlapWarningV2Out])
 def check_overlap_v2(item_id: str) -> list[OverlapWarningV2Out]:
     return services.check_overlap_v2(item_id)
+
+
+@router.get("/api/work-items/{item_id}/review", response_model=WorkItemReviewOut)
+def get_work_item_review(item_id: str) -> WorkItemReviewOut:
+    """SIL Phase 6's Continuous Review Pipeline for a single item --
+    wires together existing primitives (merge readiness, which already
+    includes overlap warnings and branch info), never new intelligence.
+    See `docs/ARCHITECTURE.md`'s "SIL Phase 6" section."""
+    return services.get_work_item_review(item_id)
 
 
 @router.post("/api/work-items/{item_id}/claim", response_model=WorkItemOut)
@@ -137,6 +146,16 @@ def merge_readiness(req: MergeReadinessRequest) -> MergeReadinessOut:
     `"unknown"` (no CI integration exists yet -- see
     `collaboration/merge_readiness.py`'s module docstring)."""
     return services.merge_readiness(req.changed_files, branch=req.branch, work_item_id=req.work_item_id, org_id=req.org_id)
+
+
+@router.get("/api/integration/queue", response_model=list[IntegrationQueueEntryOut])
+def get_integration_queue(org_id: Optional[str] = None) -> list[IntegrationQueueEntryOut]:
+    """SIL Phase 6's Integration Queue -- work items in `testing`/
+    `ready_for_review`, ordered by merge-readiness confidence score
+    (ties broken by priority, then oldest-waiting-first). A *view* over
+    `work_items`, not a new persisted queue -- recomputed fresh every
+    call. See `docs/ARCHITECTURE.md`'s "SIL Phase 6" section."""
+    return services.get_integration_queue(org_id=org_id)
 
 
 @router.get("/api/activity/timeline", response_model=list[TimelineEntryOut])

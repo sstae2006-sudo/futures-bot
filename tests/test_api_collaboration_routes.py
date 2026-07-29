@@ -635,3 +635,144 @@ class TestAutomationStatusRoute:
         assert body["maintenance"]["stale_drafts_discarded_count"] == 0
         assert body["git_sync"]["running"] is False
         assert body["git_sync"]["pulls_applied_count"] == 0
+
+
+class TestIntegrationQueueRoute:
+    """SIL Phase 6 "Integration Coordinator" Milestone 1 -- a *view* over
+    `work_items`, not a new persisted queue. See
+    `api/collaboration_service.py::get_integration_queue`'s docstring."""
+
+    def test_only_testing_and_ready_for_review_items_appear(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        open_item = client.post("/api/work-items", json={"title": "Open"}).json()["work_item"]
+        ready_item = client.post("/api/work-items", json={"title": "Ready"}).json()["work_item"]
+        client.post(f"/api/work-items/{ready_item['id']}/status", json={"status": "ready_for_review"})
+
+        resp = client.get("/api/integration/queue")
+
+        assert resp.status_code == 200
+        ids = [e["work_item"]["id"] for e in resp.json()]
+        assert ready_item["id"] in ids
+        assert open_item["id"] not in ids
+
+    def test_each_entry_includes_a_real_merge_readiness_score(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Ready", "estimated_files": ["a.py"]}).json()["work_item"]
+        client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        resp = client.get("/api/integration/queue")
+
+        entry = resp.json()[0]
+        assert 0 <= entry["merge_readiness"]["score"] <= 100
+        assert entry["merge_readiness"]["test_status"] == "unknown"
+
+    def test_golden_equivalence_with_a_direct_merge_readiness_call(self, tmp_path, monkeypatch):
+        """Guards against the Integration Queue silently drifting from
+        the primitive it wraps -- the queue must never compute a
+        *different* score for the same inputs than calling
+        merge-readiness directly would."""
+        client = _client(tmp_path, monkeypatch)
+        item = client.post(
+            "/api/work-items", json={"title": "Ready", "estimated_files": ["a.py", "b.py"]},
+        ).json()["work_item"]
+        client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        queue_entry = client.get("/api/integration/queue").json()[0]
+        direct = client.post(
+            "/api/work-items/merge-readiness",
+            json={"changed_files": ["a.py", "b.py"], "work_item_id": item["id"]},
+        ).json()
+
+        assert queue_entry["merge_readiness"]["score"] == direct["score"]
+        assert queue_entry["merge_readiness"]["level"] == direct["level"]
+        assert queue_entry["merge_readiness"]["factors"] == direct["factors"]
+
+    def test_readiness_note_flags_estimated_files_as_a_proxy(self, tmp_path, monkeypatch):
+        """estimated_files is self-reported, not a real git diff -- must
+        be flagged honestly, same as test_status="unknown" already is,
+        rather than silently presented at full confidence."""
+        client = _client(tmp_path, monkeypatch)
+        item = client.post(
+            "/api/work-items", json={"title": "Ready", "branch": "some-other-branch", "estimated_files": ["a.py"]},
+        ).json()["work_item"]
+        client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        entry = client.get("/api/integration/queue").json()[0]
+
+        assert entry["readiness_note"] is not None
+        assert "estimated_files" in entry["readiness_note"]
+
+    def test_ordered_by_score_descending(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        # A clean, small change scores high; a change overlapping heavily
+        # with other active work scores lower (Overlap V2 penalty).
+        client.post("/api/work-items", json={
+            "title": "Existing conflicting work", "estimated_files": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        low_item = client.post(
+            "/api/work-items", json={"title": "Conflicting", "estimated_files": ["a.py", "b.py", "c.py", "d.py", "e.py"]},
+        ).json()["work_item"]
+        high_item = client.post(
+            "/api/work-items", json={"title": "Clean", "estimated_files": ["z.py"]},
+        ).json()["work_item"]
+        for item in (low_item, high_item):
+            client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        entries = client.get("/api/integration/queue").json()
+
+        scores_by_id = {e["work_item"]["id"]: e["merge_readiness"]["score"] for e in entries}
+        assert scores_by_id[high_item["id"]] >= scores_by_id[low_item["id"]]
+        ordered_ids = [e["work_item"]["id"] for e in entries]
+        assert ordered_ids.index(high_item["id"]) < ordered_ids.index(low_item["id"])
+
+    def test_tiebreak_by_priority_then_oldest_waiting_first(self, tmp_path, monkeypatch):
+        """Equal-score items must not rely on incidental Python sort
+        stability -- the tiebreak (priority desc, then updated_at asc)
+        is an explicit, tested contract."""
+        client = _client(tmp_path, monkeypatch)
+        low_priority = client.post(
+            "/api/work-items", json={"title": "Low priority", "priority": "low"},
+        ).json()["work_item"]
+        high_priority = client.post(
+            "/api/work-items", json={"title": "High priority", "priority": "high"},
+        ).json()["work_item"]
+        for item in (low_priority, high_priority):
+            client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        entries = client.get("/api/integration/queue").json()
+
+        # Both have identical (empty) estimated_files and no overlap --
+        # same score -- so the tiebreak must place "high" priority first.
+        ordered_ids = [e["work_item"]["id"] for e in entries]
+        assert ordered_ids.index(high_priority["id"]) < ordered_ids.index(low_priority["id"])
+
+    def test_org_scoping(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item_a = client.post("/api/work-items", json={"title": "Org A", "org_id": "org-a"}).json()["work_item"]
+        item_b = client.post("/api/work-items", json={"title": "Org B", "org_id": "org-b"}).json()["work_item"]
+        for item in (item_a, item_b):
+            client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        resp = client.get("/api/integration/queue", params={"org_id": "org-a"})
+
+        assert [e["work_item"]["id"] for e in resp.json()] == [item_a["id"]]
+
+
+class TestWorkItemReviewRoute:
+    def test_returns_merge_readiness_for_the_item(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task", "estimated_files": ["a.py"]}).json()["work_item"]
+
+        resp = client.get(f"/api/work-items/{item['id']}/review")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["work_item"]["id"] == item["id"]
+        assert 0 <= body["merge_readiness"]["score"] <= 100
+
+    def test_unknown_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/work-items/does-not-exist/review")
+
+        assert resp.status_code == 400

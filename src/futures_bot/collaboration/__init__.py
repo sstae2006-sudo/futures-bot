@@ -61,3 +61,25 @@ RISK_LEVELS = ("no_risk", "low", "medium", "high", "critical")
 #: and the pre-work-check's coordination advice distinguish an
 #: AI-assisted session's own claimed work from a human teammate's.
 OWNER_TYPES = ("human", "ai")
+#: SIL Phase 6 "Integration Coordinator" Milestone 1 -- a worker's
+#: self-reported liveness state. `offline` is never set automatically by
+#: a background scheduler in Milestone 1 (staleness is computed live at
+#: read time from `last_heartbeat_at`, never written back) -- a worker
+#: only reports `offline` itself, e.g. on graceful shutdown.
+WORKER_STATUSES = ("online", "idle", "offline")
+#: Deliberately NOT `OWNER_TYPES` ("human"/"ai" only) -- the Worker
+#: Registry is a generic platform component, not something specific to
+#: Claude Code, and must not hardcode an assumption that only Claude Code
+#: sessions will ever connect. A plain validated Python tuple (not a DB
+#: CHECK constraint), so recognizing a new kind of worker later is a
+#: one-line addition here, never a migration. Extend this list, don't
+#: replace it, as new worker kinds show up in practice.
+WORKER_TYPES = (
+    "human",                     # a human developer, tracked directly (not through accounts/ -- no auth to tie to yet)
+    "claude_code_session",       # an interactive Claude Code session (this project's own primary AI worker today)
+    "ai_agent",                  # any other AI agent/assistant, present or future, not specifically Claude Code
+    "validation_worker",         # a process whose job is running tests/checks, not authoring changes
+    "research_worker",           # an automated research/backtesting/optimization job
+    "background_service",        # this process's own schedulers (git_watcher/maintenance/git_sync) self-reporting, if ever wired in
+    "distributed_compute_worker", # a future networked compute contributor (see ROADMAP.md's "Future" section)
+)
