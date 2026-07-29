@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
+from ..collaboration.git_sync import get_git_sync_scheduler
 from ..collaboration.git_watcher import get_git_watcher
 from ..collaboration.maintenance import get_maintenance_scheduler
 from ..config import load_settings
@@ -89,7 +90,13 @@ def _maybe_start_automation() -> None:
     Same "never fail API startup over this" posture as
     `_maybe_start_research_server` above: a missing/unparseable config
     file is treated as "not enabled," never as a reason the whole API
-    should fail to boot."""
+    should fail to boot.
+
+    `automation.git_sync_enabled` is a *separate* toggle, checked
+    independently of `automation.enabled` below -- it touches the actual
+    working tree (a fast-forward merge), a materially different risk
+    profile than the git-watcher/maintenance scheduler's draft-only
+    writes, so opting into one must not silently opt into the other."""
     config_path = _config_path()
     if not config_path.exists():
         return
@@ -98,24 +105,37 @@ def _maybe_start_automation() -> None:
     except Exception as exc:  # noqa: BLE001 -- a bad config must not crash the API's own startup.
         log.error("Could not load %s for automation auto-start: %s", config_path, exc)
         return
-    if not settings.automation.enabled:
-        return
-    try:
-        get_git_watcher().start(interval_seconds=settings.automation.git_watcher_interval_seconds)
-        log.info("SIL Phase 4 git-watcher started on boot (interval=%ss).", settings.automation.git_watcher_interval_seconds)
-    except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
-        log.error("Failed to auto-start the git-watcher: %s", exc, exc_info=True)
-    try:
-        get_maintenance_scheduler().start(
-            interval_seconds=settings.automation.maintenance_interval_seconds,
-            stale_draft_days=settings.automation.stale_draft_days,
-        )
-        log.info(
-            "SIL Phase 4 maintenance scheduler started on boot (interval=%ss, stale_draft_days=%s).",
-            settings.automation.maintenance_interval_seconds, settings.automation.stale_draft_days,
-        )
-    except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
-        log.error("Failed to auto-start the maintenance scheduler: %s", exc, exc_info=True)
+
+    if settings.automation.enabled:
+        try:
+            get_git_watcher().start(interval_seconds=settings.automation.git_watcher_interval_seconds)
+            log.info("SIL Phase 4 git-watcher started on boot (interval=%ss).", settings.automation.git_watcher_interval_seconds)
+        except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
+            log.error("Failed to auto-start the git-watcher: %s", exc, exc_info=True)
+        try:
+            get_maintenance_scheduler().start(
+                interval_seconds=settings.automation.maintenance_interval_seconds,
+                stale_draft_days=settings.automation.stale_draft_days,
+            )
+            log.info(
+                "SIL Phase 4 maintenance scheduler started on boot (interval=%ss, stale_draft_days=%s).",
+                settings.automation.maintenance_interval_seconds, settings.automation.stale_draft_days,
+            )
+        except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
+            log.error("Failed to auto-start the maintenance scheduler: %s", exc, exc_info=True)
+
+    if settings.automation.git_sync_enabled:
+        try:
+            get_git_sync_scheduler().start(
+                interval_seconds=settings.automation.git_sync_interval_seconds,
+                remote=settings.automation.git_sync_remote,
+            )
+            log.info(
+                "Git-sync (pull-only) started on boot (interval=%ss, remote=%r).",
+                settings.automation.git_sync_interval_seconds, settings.automation.git_sync_remote,
+            )
+        except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
+            log.error("Failed to auto-start git-sync: %s", exc, exc_info=True)
 
 
 def _maybe_prime_db_engine() -> None:
@@ -168,6 +188,12 @@ async def _lifespan(app: FastAPI):
             maintenance.stop()
     except Exception:  # noqa: BLE001 -- shutdown must not raise past this point.
         log.error("Failed to stop the maintenance scheduler during API shutdown.", exc_info=True)
+    try:
+        sync = get_git_sync_scheduler()
+        if sync.status()["running"]:
+            sync.stop()
+    except Exception:  # noqa: BLE001 -- shutdown must not raise past this point.
+        log.error("Failed to stop git-sync during API shutdown.", exc_info=True)
 
 
 def create_app() -> FastAPI:

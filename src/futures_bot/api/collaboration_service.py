@@ -11,6 +11,7 @@ from typing import Optional
 from ..collaboration import git_info
 from ..collaboration.context_bundle import build_context_bundle
 from ..collaboration.git_info import BranchInfo, Commit
+from ..collaboration.git_sync import get_git_sync_scheduler
 from ..collaboration.git_watcher import get_git_watcher
 from ..collaboration.maintenance import get_maintenance_scheduler
 from ..collaboration.overlap import detect_overlap
@@ -20,7 +21,7 @@ from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
 from .schemas import (
     AutomationStatusOut, BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut,
-    GitWatcherStatusOut, MaintenanceStatusOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
+    GitSyncStatusOut, GitWatcherStatusOut, MaintenanceStatusOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
     OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
 )
 from .services import ApiError
@@ -349,7 +350,12 @@ def get_automation_status() -> AutomationStatusOut:
     return AutomationStatusOut(
         git_watcher=GitWatcherStatusOut(**get_git_watcher().status()),
         maintenance=MaintenanceStatusOut(**get_maintenance_scheduler().status()),
+        git_sync=GitSyncStatusOut(**get_git_sync_scheduler().status()),
     )
+
+
+def get_git_sync_status() -> GitSyncStatusOut:
+    return GitSyncStatusOut(**get_git_sync_scheduler().status())
 
 
 def get_context_bundle(

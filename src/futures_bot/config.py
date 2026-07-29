@@ -288,6 +288,18 @@ class AutomationSettings(BaseModel):
     stale_draft_days: float = Field(
         default=3.0, ge=0.0, description="A draft work item untouched (updated_at) for this many days is discarded by the maintenance job."
     )
+    git_sync_enabled: bool = Field(
+        default=False,
+        description="Background pull-only git sync (collaboration/git_sync.py) -- fast-forwards this checkout's "
+                     "current branch from its remote on an interval. A separate opt-in from the flag above: this "
+                     "one touches the actual working tree (a fast-forward merge), not just draft metadata, so it "
+                     "gets its own explicit toggle rather than being bundled under `enabled`. Never pushes -- "
+                     "publishing local commits stays a manual/explicit action. See that module's own docstring.",
+    )
+    git_sync_interval_seconds: int = Field(
+        default=120, ge=30, description="Seconds between git-sync cycles (git fetch + fast-forward-only merge attempts)."
+    )
+    git_sync_remote: str = Field(default="origin", description="Which remote git-sync fetches/fast-forwards from.")
 
 
 class Settings(BaseModel):

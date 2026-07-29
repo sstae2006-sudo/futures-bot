@@ -780,6 +780,24 @@ collaboration/maintenance.py          MaintenanceScheduler -- same shape,
                                        candidates -- a real item's age is
                                        never relevant.
 
+collaboration/git_sync.py             GitSyncScheduler (2026-07-29) -- same
+                                       shape again, pull-only. Skips
+                                       entirely on a dirty working tree
+                                       (never touches uncommitted work),
+                                       fetches the configured remote, and
+                                       fast-forwards ONLY when local HEAD
+                                       is a real ancestor of the
+                                       remote-tracking ref -- a diverged
+                                       history (unpushed local commits) is
+                                       reported, never merged/rebased/
+                                       forced. Never pushes, under any
+                                       code path -- separate opt-in
+                                       (automation.git_sync_enabled) from
+                                       enabled above, since this is the
+                                       one automation scheduler that
+                                       writes to the real working tree,
+                                       not just draft metadata.
+
 tools/local_validate.py               Maps uncommitted changes (git_info.
                                        changed_files(), reused) to their
                                        likely test files -- most follow
@@ -804,16 +822,21 @@ tools/draft_changelog.py              Drafts a CHANGELOG.md-style entry
                                        edits CHANGELOG.md itself.
 ```
 
-**Why both schedulers default to disabled.** `automation.enabled` in
-`config.yaml` defaults `False` -- same "zero behavior change unless
-deliberately opted into" convention `research_server.enabled`/`live_feed`
-already establish, and for a concrete, specific reason here: this
-codebase's test suite calls `create_app()` (directly, or via `TestClient`)
-well over a thousand times across its ~1500 tests. If either scheduler
-defaulted to running, every one of those calls would start a real daemon
-thread hitting this repo's own real `git status` and writing real
-`is_draft` rows into whatever SQLite/Postgres database that test happened
-to be pointed at -- nondeterministic test pollution, not a hypothetical.
+**Why all three schedulers default to disabled.** `automation.enabled`
+and `automation.git_sync_enabled` in `config.yaml` both default `False`
+-- same "zero behavior change unless deliberately opted into" convention
+`research_server.enabled`/`live_feed` already establish, and for a
+concrete, specific reason here: this codebase's test suite calls
+`create_app()` (directly, or via `TestClient`) well over a thousand
+times across its ~1600 tests. If any scheduler defaulted to running,
+every one of those calls would start a real daemon thread hitting this
+repo's own real `git status`/`git fetch` and writing real `is_draft` rows
+(or, for git-sync, attempting a real merge) into whatever repo/database
+that test happened to be pointed at -- nondeterministic test pollution,
+not a hypothetical. `git_sync_enabled` is checked independently of
+`enabled` (not nested under it) precisely so turning on one doesn't
+silently turn on the other -- they have different risk profiles (draft
+metadata writes vs. a real working-tree merge).
 
 **Why a draft is never auto-approved.** SIL Phase 4's own automation
 rules (safe, reversible, logged, explainable, configurable, never

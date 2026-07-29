@@ -4,6 +4,55 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Pull-only auto-sync (git-sync scheduler)
+
+User asked whether a teammate on their own machine could edit/commit
+this repo the same way this session does (yes -- plain git, nothing
+session-specific), then asked for automatic sync. Clarified via
+AskUserQuestion that "sync" meant two very different risk profiles:
+auto-*pull* (safe, reversible) vs auto-*push* (a "pushing code" action
+this project's own operating rules treat as confirm-each-time, not a
+background-loop action). User chose pull-only.
+
+**Prerequisite discovered and fixed**: local `main` was 60 commits ahead
+of `origin/main` -- nothing from this entire session (Team Mode fixes
+through SIL Phase 4) had ever been pushed. Pushed with explicit
+confirmation before building anything else.
+
+**Added**: `collaboration/git_sync.py`'s `GitSyncScheduler` -- same
+daemon-thread shape as `git_watcher.py`/`maintenance.py`. Every cycle:
+skips entirely if the working tree is dirty (never touches uncommitted
+work), fetches the configured remote, and applies a merge **only** when
+it's a genuine fast-forward (local HEAD is an ancestor of the
+remote-tracking ref) -- a diverged history (unpushed local commits) is
+reported, never merged/rebased/forced. **Never pushes**, under any code
+path -- confirmed by a dedicated test. `automation.git_sync_enabled`
+(default `False`, a *separate* toggle from `automation.enabled` since
+this touches the real working tree via merge, not just draft metadata)
++ `git_sync_interval_seconds`/`git_sync_remote`. `GET
+/api/collaboration/git-sync/status`; `AutomationStatusOut`/Mission
+Control's `AutomationPanel.tsx` gained a third scheduler row.
+
+**Fixed while writing this feature's own tests** (test-fixture bug, not
+a product bug -- see full detail in the commit): a throwaway bare-repo
+test fixture's default branch didn't match `main`, causing a `git
+clone` inside the test to silently check out the wrong branch and land
+simulated commits somewhere `git_sync.py` was never looking --
+corrected in the test fixture, not the scheduler itself.
+
+**Also fixed**: `config.example.yaml` never documented the
+`automation` section at all (a pre-existing gap predating this
+session's SIL Phase 4 work) -- added now, alongside the new git-sync
+fields.
+
+31 new tests (11 `test_git_sync.py`, 6 `test_api_app_automation_startup.py`
+covering the independent enabled/git_sync_enabled gating -- written
+specifically because that gating logic was restructured and is exactly
+the kind of change that can silently invert a condition -- plus API
+route/schema/frontend coverage). Full suite verified: 1560 backend
+tests (0 failed, 51 skipped), 122 frontend tests (0 failed, confirmed
+across 4 consecutive full runs after one non-reproducing flake).
+
 ## 2026-07-29 — SIL Phase 4 "Intelligent Automation Layer"
 
 Six milestones, built directly on the existing Collaboration Platform

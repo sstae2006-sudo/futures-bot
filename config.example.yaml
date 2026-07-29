@@ -124,6 +124,22 @@ research_server:
   nightly_job_hour_ct: 2       # 24h, Central Time
   weekly_report_weekday: 6     # Monday=0 .. Sunday=6 -- also runs a full strategy comparison
 
+# SIL Phase 4/5 "Intelligent Automation Layer" -- opt-in background
+# schedulers (see docs/ARCHITECTURE.md's "SIL Phase 4" section). Both
+# `enabled` and `git_sync_enabled` default false -- every existing
+# single-developer setup sees zero behavior change unless turned on here.
+automation:
+  enabled: false                      # git-watcher (drafts a work item for uncovered uncommitted changes)
+                                       # + maintenance (discards stale drafts, checks DB health)
+  git_watcher_interval_seconds: 300
+  maintenance_interval_seconds: 3600
+  stale_draft_days: 3.0
+  git_sync_enabled: false             # pull-only auto-sync -- fast-forwards this checkout from its
+                                       # remote on an interval. Never pushes. Separate opt-in from
+                                       # `enabled` above -- this one touches the real working tree.
+  git_sync_interval_seconds: 120
+  git_sync_remote: origin
+
 # Team deployment (see TEAM_DEPLOYMENT.md). Uncomment to change from the
 # single-developer default -- the database connection string itself
 # (FUTURES_BOT_DATABASE_URL) is NEVER set here; it holds credentials and

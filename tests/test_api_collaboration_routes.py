@@ -599,13 +599,31 @@ class TestGitWatcherStatusRoute:
         assert body["drafts_created_count"] == 0
 
 
+class TestGitSyncStatusRoute:
+    def test_returns_not_running_when_never_started(self, tmp_path, monkeypatch):
+        from futures_bot.collaboration.git_sync import reset_git_sync_scheduler
+
+        reset_git_sync_scheduler()
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/collaboration/git-sync/status")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["running"] is False
+        assert body["cycles_completed"] == 0
+        assert body["pulls_applied_count"] == 0
+
+
 class TestAutomationStatusRoute:
-    def test_returns_both_schedulers_not_running_by_default(self, tmp_path, monkeypatch):
+    def test_returns_all_schedulers_not_running_by_default(self, tmp_path, monkeypatch):
+        from futures_bot.collaboration.git_sync import reset_git_sync_scheduler
         from futures_bot.collaboration.git_watcher import reset_git_watcher
         from futures_bot.collaboration.maintenance import reset_maintenance_scheduler
 
         reset_git_watcher()
         reset_maintenance_scheduler()
+        reset_git_sync_scheduler()
         client = _client(tmp_path, monkeypatch)
 
         resp = client.get("/api/automation/status")
@@ -615,3 +633,5 @@ class TestAutomationStatusRoute:
         assert body["git_watcher"]["running"] is False
         assert body["maintenance"]["running"] is False
         assert body["maintenance"]["stale_drafts_discarded_count"] == 0
+        assert body["git_sync"]["running"] is False
+        assert body["git_sync"]["pulls_applied_count"] == 0

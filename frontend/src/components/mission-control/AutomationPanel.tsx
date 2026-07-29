@@ -106,6 +106,14 @@ export default function AutomationPanel() {
             lastError={status.maintenance.last_error}
             cyclesCompleted={status.maintenance.cycles_completed}
           />
+          <SchedulerStatus
+            label="Git-sync (pull-only)"
+            running={status.git_sync.running}
+            lastCycleAt={status.git_sync.last_cycle_at}
+            lastResult={status.git_sync.last_result}
+            lastError={status.git_sync.last_error}
+            cyclesCompleted={status.git_sync.cycles_completed}
+          />
         </>
       )}
 

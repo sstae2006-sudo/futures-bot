@@ -13,10 +13,10 @@ from fastapi import APIRouter
 from .. import collaboration_service as services
 from ..schemas import (
     AutomationStatusOut, BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest,
-    GitWatcherStatusOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest,
-    OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest,
-    TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest,
-    WorkItemOut,
+    GitSyncStatusOut, GitWatcherStatusOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut,
+    MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest,
+    ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
+    WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -188,6 +188,14 @@ def get_git_watcher_status() -> GitWatcherStatusOut:
     `running=False` and zeroed counters if `automation.enabled` is off
     (the watcher singleton simply never started)."""
     return services.get_git_watcher_status()
+
+
+@router.get("/api/collaboration/git-sync/status", response_model=GitSyncStatusOut)
+def get_git_sync_status() -> GitSyncStatusOut:
+    """Pull-only auto-sync status -- see `collaboration/git_sync.py`'s
+    module docstring. Returns `running=False` if
+    `automation.git_sync_enabled` is off (the default)."""
+    return services.get_git_sync_status()
 
 
 @router.get("/api/automation/status", response_model=AutomationStatusOut)

@@ -1126,6 +1126,22 @@ class MaintenanceStatusOut(BaseModel):
     last_db_health_ok: Optional[bool] = None
 
 
+class GitSyncStatusOut(BaseModel):
+    """Pull-only auto-sync (`collaboration/git_sync.py`) -- fast-forwards
+    this checkout from its remote on an interval. `last_result` is a
+    human-readable outcome ("up to date" / "pulled abc123 -> def456 on
+    'main'" / "skipped: uncommitted changes present" / "skipped: local
+    'main' has diverged..."), not a separate structured field per
+    outcome -- there's no action a caller takes differently per case
+    beyond reading what happened."""
+    running: bool
+    last_cycle_at: Optional[str] = None
+    last_result: Optional[str] = None
+    last_error: Optional[str] = None
+    cycles_completed: int
+    pulls_applied_count: int
+
+
 class AutomationStatusOut(BaseModel):
     """SIL Phase 4's combined automation status -- Mission Control's
     Automation panel. Deliberately doesn't duplicate
@@ -1133,3 +1149,4 @@ class AutomationStatusOut(BaseModel):
     fields; a client wanting the full picture calls all three."""
     git_watcher: GitWatcherStatusOut
     maintenance: MaintenanceStatusOut
+    git_sync: GitSyncStatusOut

@@ -81,6 +81,10 @@ function makeAutomationStatus(overrides: Partial<AutomationStatus> = {}): Automa
       running: false, last_cycle_at: null, last_result: null, last_error: null,
       cycles_completed: 0, stale_drafts_discarded_count: 0, last_db_health_ok: null,
     },
+    git_sync: {
+      running: false, last_cycle_at: null, last_result: null, last_error: null,
+      cycles_completed: 0, pulls_applied_count: 0,
+    },
     ...overrides,
   }
 }
@@ -168,14 +172,30 @@ describe('TeamPanel', () => {
 })
 
 describe('AutomationPanel', () => {
-  it('shows both schedulers as not running when automation is disabled', async () => {
+  it('shows all three schedulers as not running when automation is disabled', async () => {
     vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
     vi.mocked(api.getDraftWorkItems).mockResolvedValue([])
 
     render(<AutomationPanel />)
 
-    await waitFor(() => expect(screen.getAllByText('stopped')).toHaveLength(2))
+    await waitFor(() => expect(screen.getAllByText('stopped')).toHaveLength(3))
     expect(screen.getByText('No drafts awaiting review.')).toBeInTheDocument()
+  })
+
+  it('shows the git-sync scheduler with its last result', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus({
+      git_sync: {
+        running: true, last_cycle_at: '2026-07-29T12:00:00+00:00', last_result: 'up to date',
+        last_error: null, cycles_completed: 3, pulls_applied_count: 0,
+      },
+    }))
+    vi.mocked(api.getDraftWorkItems).mockResolvedValue([])
+
+    render(<AutomationPanel />)
+
+    await waitFor(() => expect(screen.getByText('Git-sync (pull-only)')).toBeInTheDocument())
+    expect(screen.getByText('up to date')).toBeInTheDocument()
+    expect(screen.getByText('3 cycles completed', { exact: false })).toBeInTheDocument()
   })
 
   it('shows a running scheduler with its last result', async () => {

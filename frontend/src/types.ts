@@ -831,9 +831,24 @@ export interface MaintenanceStatus {
   last_db_health_ok: boolean | null
 }
 
+// Pull-only auto-sync (collaboration/git_sync.py) -- fast-forwards this
+// checkout from its remote on an interval. Never pushes -- publishing
+// local commits stays a manual/explicit action. Separate opt-in
+// (automation.git_sync_enabled) from the flag above, since this touches
+// the real working tree via merge, not just draft metadata.
+export interface GitSyncStatus {
+  running: boolean
+  last_cycle_at: string | null
+  last_result: string | null
+  last_error: string | null
+  cycles_completed: number
+  pulls_applied_count: number
+}
+
 export interface AutomationStatus {
   git_watcher: GitWatcherStatus
   maintenance: MaintenanceStatus
+  git_sync: GitSyncStatus
 }
 
 export interface TimelineEntry {

@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1593 tests as of 2026-07-29** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1542 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1611 tests as of 2026-07-29** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1560 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1593 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1611 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,20 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-29: **Pull-only auto-sync (`collaboration/git_sync.py`).** A
+third opt-in scheduler alongside SIL Phase 4's git-watcher/maintenance
+(same daemon-thread shape) that fast-forwards this checkout from its
+remote on an interval — never pushes, never touches a dirty working
+tree, never merges/rebases a diverged history. `automation.git_sync_enabled`
+(default `False`, independent of `automation.enabled`). Prerequisite
+fixed first: local `main` was 60 commits ahead of `origin/main` — nothing
+this whole session had ever been pushed; pushed with explicit
+confirmation. 31 new tests, including 6 specifically covering the
+enabled/git_sync_enabled independent-gating logic (this exact function
+was restructured to add the new toggle, and a wrong gate is the kind of
+regression that fails silently). Full suite green: 1560 backend, 122
+frontend. See `CHANGELOG.md`'s matching entry.
 
 2026-07-29: **SIL Phase 4 "Intelligent Automation Layer" — 6 milestones,
 built on the existing Collaboration Platform with no redesign.** Full
