@@ -9,6 +9,7 @@ import uuid
 from typing import Optional
 
 from ..collaboration import git_info
+from ..collaboration.context_bundle import build_context_bundle
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.overlap import detect_overlap
 from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readiness
@@ -16,8 +17,9 @@ from ..collaboration.overlap_v2 import compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
 from .schemas import (
-    BranchInfoOut, CommitOut, ConflictPairOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
-    OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
+    BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut, MergeReadinessOut, MergeSummaryOut,
+    OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut,
+    WorkItemActivityOut, WorkItemOut,
 )
 from .services import ApiError
 
@@ -310,4 +312,26 @@ def merge_readiness(
         factors=[_readiness_factor_out(f) for f in readiness.factors],
         branch_info=_branch_info_out(info),
         overlap_warnings=[OverlapWarningV2Out(**w.__dict__) for w in warnings],
+    )
+
+
+def get_context_bundle(
+    proposed_files: list[str], title: Optional[str] = None, description: Optional[str] = None,
+    org_id: Optional[str] = None, commit_limit: int = 10,
+) -> ContextBundleOut:
+    """SIL Phase 4's "Automatic AI Context" call -- see
+    `collaboration/context_bundle.py`'s module docstring for what each
+    field is (and, just as importantly, isn't -- no architecture graph,
+    no semantic search)."""
+    bundle = build_context_bundle(
+        proposed_files=proposed_files, title=title, description=description,
+        org_id=org_id, commit_limit=commit_limit,
+    )
+    return ContextBundleOut(
+        active_work_items=[WorkItemOut(**i) for i in bundle.active_work_items],
+        similar_past_work=[WorkItemOut(**i) for i in bundle.similar_past_work],
+        recent_commits=[_commit_out(c) for c in bundle.recent_commits],
+        branch_info=_branch_info_out(bundle.branch_info),
+        overlap_warnings=[OverlapWarningV2Out(**w.__dict__) for w in bundle.overlap_warnings],
+        relevant_docs=[DocExcerptOut(**d.__dict__) for d in bundle.relevant_docs],
     )

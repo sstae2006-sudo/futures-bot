@@ -451,3 +451,65 @@ class TestTimelineRoute:
         resp = client.get("/api/activity/timeline", params={"include_commits": False, "limit": 2})
 
         assert len(resp.json()) == 2
+
+
+class TestContextBundleRoute:
+    """SIL Phase 4's "Automatic AI Context" call --
+    `collaboration/context_bundle.py`'s module docstring covers what each
+    field is (and isn't)."""
+
+    def test_empty_request_still_returns_branch_and_commits(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/collaboration/context-bundle", json={})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["active_work_items"] == []
+        assert body["similar_past_work"] == []
+        assert "branch_info" in body
+        assert isinstance(body["recent_commits"], list)
+
+    def test_includes_active_work_items(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Existing task", "estimated_files": ["a.py"]})
+
+        resp = client.post("/api/collaboration/context-bundle", json={"proposed_files": ["b.py"]})
+
+        assert resp.status_code == 200
+        assert [i["title"] for i in resp.json()["active_work_items"]] == ["Existing task"]
+
+    def test_surfaces_overlap_warnings_for_proposed_files(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Existing task", "estimated_files": ["a.py"]})
+
+        resp = client.post("/api/collaboration/context-bundle", json={"proposed_files": ["a.py"]})
+
+        assert resp.status_code == 200
+        assert len(resp.json()["overlap_warnings"]) == 1
+
+    def test_similar_past_work_matches_completed_items_by_keyword(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post(
+            "/api/work-items", json={"title": "Refactor authentication middleware", "estimated_files": ["auth.py"]},
+        ).json()["work_item"]
+        client.post(f"/api/work-items/{item['id']}/complete")
+
+        resp = client.post(
+            "/api/collaboration/context-bundle",
+            json={"title": "Fix authentication middleware bug", "proposed_files": ["auth.py"]},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["active_work_items"] == []  # completed items aren't "active"
+        assert [i["title"] for i in body["similar_past_work"]] == ["Refactor authentication middleware"]
+
+    def test_org_scoping_excludes_other_orgs_active_work(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Org A task", "org_id": "org-a"})
+
+        resp = client.post("/api/collaboration/context-bundle", json={"org_id": "org-b"})
+
+        assert resp.status_code == 200
+        assert resp.json()["active_work_items"] == []

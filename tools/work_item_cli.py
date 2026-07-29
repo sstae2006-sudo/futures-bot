@@ -81,6 +81,16 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_context(args: argparse.Namespace) -> int:
+    """SIL Phase 4's "Automatic AI Context" bundle -- everything a session
+    would otherwise gather by hand before starting work, in one call."""
+    result = services.get_context_bundle(
+        args.files or [], title=args.title, description=args.description, commit_limit=args.commit_limit,
+    )
+    _print_json(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="work_item_cli", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -122,6 +132,13 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("item_id")
     status.add_argument("new_status")
     status.set_defaults(func=cmd_status)
+
+    context = sub.add_parser("context", help="AI context bundle: active work, similar past work, recent commits, overlap, relevant docs.")
+    context.add_argument("--files", nargs="*", default=[], help="Files you plan to touch.")
+    context.add_argument("--title", default=None)
+    context.add_argument("--description", default=None)
+    context.add_argument("--commit-limit", type=int, default=10)
+    context.set_defaults(func=cmd_context)
 
     return parser
 

@@ -1067,3 +1067,33 @@ class InfrastructureOut(BaseModel):
     disk_percent: float
     jobs_queued: int
     jobs_running: int
+
+
+class DocExcerptOut(BaseModel):
+    """One substring match against `KNOWN_ISSUES.md`/`ROADMAP.md` --
+    `collaboration/context_bundle.py`'s module docstring covers why this
+    is plain case-insensitive substring search, not semantic search."""
+    file: str
+    line_number: int
+    text: str
+
+
+class ContextBundleRequest(BaseModel):
+    """SIL Phase 4's "Automatic AI Context" call -- everything a human or
+    an AI-assisted session would otherwise gather by hand before starting
+    work, in one request. All fields optional: an empty call still
+    returns active work items, recent commits, and branch info."""
+    proposed_files: list[str] = Field(default_factory=list)
+    title: Optional[str] = None
+    description: Optional[str] = None
+    org_id: Optional[str] = None
+    commit_limit: int = Field(default=10, ge=1, le=100)
+
+
+class ContextBundleOut(BaseModel):
+    active_work_items: list[WorkItemOut]
+    similar_past_work: list[WorkItemOut]
+    recent_commits: list[CommitOut]
+    branch_info: BranchInfoOut
+    overlap_warnings: list[OverlapWarningV2Out]
+    relevant_docs: list[DocExcerptOut]

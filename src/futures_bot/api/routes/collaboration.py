@@ -12,10 +12,10 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut,
-    MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest,
-    ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut,
-    WorkItemCreateRequest, WorkItemOut,
+    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest, MergeReadinessOut,
+    MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out,
+    PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest,
+    WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -142,3 +142,16 @@ def get_branch_info(branch: Optional[str] = None) -> BranchInfoOut:
 @router.get("/api/work-items/{item_id}/branch-info", response_model=BranchInfoOut)
 def get_work_item_branch_info(item_id: str) -> BranchInfoOut:
     return services.get_work_item_branch_info(item_id)
+
+
+@router.post("/api/collaboration/context-bundle", response_model=ContextBundleOut)
+def get_context_bundle(req: ContextBundleRequest) -> ContextBundleOut:
+    """SIL Phase 4's "Automatic AI Context" call -- one request that
+    gathers active work items, similar past work, recent commits, branch
+    info, overlap warnings, and relevant KNOWN_ISSUES/ROADMAP excerpts
+    (see `collaboration/context_bundle.py`'s module docstring). Reuses
+    existing systems only -- no new persisted index."""
+    return services.get_context_bundle(
+        req.proposed_files, title=req.title, description=req.description,
+        org_id=req.org_id, commit_limit=req.commit_limit,
+    )
