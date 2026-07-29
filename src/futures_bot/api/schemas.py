@@ -1109,3 +1109,27 @@ class GitWatcherStatusOut(BaseModel):
     last_error: Optional[str] = None
     cycles_completed: int
     drafts_created_count: int
+
+
+class MaintenanceStatusOut(BaseModel):
+    """SIL Phase 4's periodic housekeeping (`collaboration/maintenance.py`)
+    -- stale-draft cleanup + a DB health check. `last_db_health_ok` is
+    `None` when this process isn't in team-deployment mode (SQLite has no
+    "connectivity" to check), matching `db.health.DatabaseHealth.configured`
+    semantics elsewhere."""
+    running: bool
+    last_cycle_at: Optional[str] = None
+    last_result: Optional[str] = None
+    last_error: Optional[str] = None
+    cycles_completed: int
+    stale_drafts_discarded_count: int
+    last_db_health_ok: Optional[bool] = None
+
+
+class AutomationStatusOut(BaseModel):
+    """SIL Phase 4's combined automation status -- Mission Control's
+    Automation panel. Deliberately doesn't duplicate
+    `/api/research-server/status` or `/api/system/infrastructure`'s own
+    fields; a client wanting the full picture calls all three."""
+    git_watcher: GitWatcherStatusOut
+    maintenance: MaintenanceStatusOut

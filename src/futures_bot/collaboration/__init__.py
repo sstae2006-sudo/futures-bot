@@ -20,6 +20,23 @@ ROADMAP.md's "Future" section.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+
+def parse_db_timestamp(value: str) -> datetime:
+    """Both stores' timestamp columns end up as ISO-ish strings by the
+    time they reach Python, but not identically: `CollaborationStore`
+    (SQLite) writes `datetime('now')`, which comes back space-separated
+    and naive (`"2026-07-29 12:00:00"`, implicitly UTC); `PgCollaborationStore`
+    (Postgres `TIMESTAMPTZ`) comes back already `T`-separated with a real
+    offset. Normalizing both to an aware UTC `datetime` here, once, is
+    what `maintenance.py`'s staleness check and `draft_changelog.py`'s
+    "completed since X" filter both need and would otherwise each
+    reimplement slightly differently."""
+    parsed = datetime.fromisoformat(value.replace(" ", "T"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 #: Fixed vocabulary, validated at the store layer -- same convention
 #: `accounts.ROLES` already established. `open` and `planned` are
 #: synonyms for "not yet claimed" (kept both for backward compatibility --

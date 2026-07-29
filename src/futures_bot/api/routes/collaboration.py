@@ -12,10 +12,11 @@ from fastapi import APIRouter
 
 from .. import collaboration_service as services
 from ..schemas import (
-    BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest, GitWatcherStatusOut,
-    MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut,
-    OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest, TimelineEntryOut,
-    UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut,
+    AutomationStatusOut, BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest,
+    GitWatcherStatusOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest,
+    OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest,
+    TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest,
+    WorkItemOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -187,3 +188,11 @@ def get_git_watcher_status() -> GitWatcherStatusOut:
     `running=False` and zeroed counters if `automation.enabled` is off
     (the watcher singleton simply never started)."""
     return services.get_git_watcher_status()
+
+
+@router.get("/api/automation/status", response_model=AutomationStatusOut)
+def get_automation_status() -> AutomationStatusOut:
+    """Mission Control's Automation panel -- git-watcher + maintenance
+    scheduler status in one call. Both report `running=False` if
+    `automation.enabled` is off in config.yaml (the default)."""
+    return services.get_automation_status()

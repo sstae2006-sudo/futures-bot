@@ -24,7 +24,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from futures_bot.collaboration import git_info
+from futures_bot.collaboration import git_info, parse_db_timestamp
 from futures_bot.collaboration.store import get_collaboration_store
 
 _DEFAULT_OUT = ".changelog_draft.md"
@@ -53,15 +53,13 @@ def _recently_done_work_items(since: Optional[datetime]) -> list[dict]:
     items = [i for i in store.fetch_work_items() if i["status"] in _DONE_STATUSES]
     if since is None:
         return items
+    since_aware = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
     result = []
     for item in items:
         try:
-            updated_at = datetime.fromisoformat(item["updated_at"].replace(" ", "T"))
-            if updated_at.tzinfo is None:
-                updated_at = updated_at.replace(tzinfo=timezone.utc)
-        except (ValueError, AttributeError):
+            updated_at = parse_db_timestamp(item["updated_at"])
+        except (ValueError, AttributeError, TypeError):
             continue
-        since_aware = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
         if updated_at >= since_aware:
             result.append(item)
     return result

@@ -12,15 +12,16 @@ from ..collaboration import git_info
 from ..collaboration.context_bundle import build_context_bundle
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.git_watcher import get_git_watcher
+from ..collaboration.maintenance import get_maintenance_scheduler
 from ..collaboration.overlap import detect_overlap
 from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readiness
 from ..collaboration.overlap_v2 import compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
 from .schemas import (
-    BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut, GitWatcherStatusOut,
-    MergeReadinessOut, MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut,
-    TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
+    AutomationStatusOut, BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut,
+    GitWatcherStatusOut, MaintenanceStatusOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut,
+    OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut, WorkItemActivityOut, WorkItemOut,
 )
 from .services import ApiError
 
@@ -342,6 +343,13 @@ def discard_draft_work_item(item_id: str, actor_user_id: Optional[str] = None) -
 
 def get_git_watcher_status() -> GitWatcherStatusOut:
     return GitWatcherStatusOut(**get_git_watcher().status())
+
+
+def get_automation_status() -> AutomationStatusOut:
+    return AutomationStatusOut(
+        git_watcher=GitWatcherStatusOut(**get_git_watcher().status()),
+        maintenance=MaintenanceStatusOut(**get_maintenance_scheduler().status()),
+    )
 
 
 def get_context_bundle(

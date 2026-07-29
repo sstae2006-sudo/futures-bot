@@ -807,6 +807,35 @@ export interface WorkItemActivity {
   created_at: string
 }
 
+// SIL Phase 4 "Intelligent Automation Layer" -- the background
+// git-watcher (drafts a work item for uncovered uncommitted changes) and
+// the maintenance scheduler (discards stale drafts, checks DB health).
+// Both default to disabled (automation.enabled in config.yaml) -- see
+// AutomationPanel.tsx and futures_bot/config.py::AutomationSettings.
+export interface GitWatcherStatus {
+  running: boolean
+  last_cycle_at: string | null
+  last_result: string | null
+  last_error: string | null
+  cycles_completed: number
+  drafts_created_count: number
+}
+
+export interface MaintenanceStatus {
+  running: boolean
+  last_cycle_at: string | null
+  last_result: string | null
+  last_error: string | null
+  cycles_completed: number
+  stale_drafts_discarded_count: number
+  last_db_health_ok: boolean | null
+}
+
+export interface AutomationStatus {
+  git_watcher: GitWatcherStatus
+  maintenance: MaintenanceStatus
+}
+
 export interface TimelineEntry {
   kind: 'work_item' | 'commit'
   timestamp: string

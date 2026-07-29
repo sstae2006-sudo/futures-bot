@@ -4,6 +4,7 @@
 // ever consumes the API, never reimplements trading logic.
 
 import type {
+  AutomationStatus,
   ClientProfile,
   CompareResult,
   ConfigDeploymentOut,
@@ -665,3 +666,16 @@ export const getTimeline = (filters: TimelineFilters = {}) => {
   qs.set('limit', String(filters.limit ?? 50))
   return request<TimelineEntry[]>(`/api/activity/timeline?${qs.toString()}`)
 }
+
+// SIL Phase 4: draft work items (background git-watcher output) + automation status.
+
+export const getDraftWorkItems = (orgId?: string) =>
+  request<WorkItem[]>(orgId ? `/api/work-items/drafts?org_id=${encodeURIComponent(orgId)}` : '/api/work-items/drafts')
+
+export const approveDraftWorkItem = (itemId: string) =>
+  request<WorkItem>(`/api/work-items/${itemId}/approve-draft`, { method: 'POST' })
+
+export const discardDraftWorkItem = (itemId: string) =>
+  request<{ discarded: boolean }>(`/api/work-items/${itemId}/draft`, { method: 'DELETE' })
+
+export const getAutomationStatus = () => request<AutomationStatus>('/api/automation/status')

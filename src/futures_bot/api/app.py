@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..collaboration.git_watcher import get_git_watcher
+from ..collaboration.maintenance import get_maintenance_scheduler
 from ..config import load_settings
 from ..journal import LOGGER_NAME
 from ..research_server.orchestrator import get_research_server
@@ -104,6 +105,17 @@ def _maybe_start_automation() -> None:
         log.info("SIL Phase 4 git-watcher started on boot (interval=%ss).", settings.automation.git_watcher_interval_seconds)
     except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
         log.error("Failed to auto-start the git-watcher: %s", exc, exc_info=True)
+    try:
+        get_maintenance_scheduler().start(
+            interval_seconds=settings.automation.maintenance_interval_seconds,
+            stale_draft_days=settings.automation.stale_draft_days,
+        )
+        log.info(
+            "SIL Phase 4 maintenance scheduler started on boot (interval=%ss, stale_draft_days=%s).",
+            settings.automation.maintenance_interval_seconds, settings.automation.stale_draft_days,
+        )
+    except Exception as exc:  # noqa: BLE001 -- see docstring: never take the API down over this.
+        log.error("Failed to auto-start the maintenance scheduler: %s", exc, exc_info=True)
 
 
 def _maybe_prime_db_engine() -> None:
@@ -150,6 +162,12 @@ async def _lifespan(app: FastAPI):
             watcher.stop()
     except Exception:  # noqa: BLE001 -- shutdown must not raise past this point.
         log.error("Failed to stop the git-watcher during API shutdown.", exc_info=True)
+    try:
+        maintenance = get_maintenance_scheduler()
+        if maintenance.status()["running"]:
+            maintenance.stop()
+    except Exception:  # noqa: BLE001 -- shutdown must not raise past this point.
+        log.error("Failed to stop the maintenance scheduler during API shutdown.", exc_info=True)
 
 
 def create_app() -> FastAPI:

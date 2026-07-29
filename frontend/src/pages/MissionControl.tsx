@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import AlertCenter from '../components/mission-control/AlertCenter'
 import ActivityFeed from '../components/mission-control/ActivityFeed'
+import AutomationPanel from '../components/mission-control/AutomationPanel'
 import CollaborationWorkspace from '../components/mission-control/CollaborationWorkspace'
 import HealthGrid from '../components/mission-control/HealthGrid'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
@@ -49,6 +50,7 @@ export default function MissionControl() {
         <div className="mc-column">
           <QuickActions />
           <RoadmapPanel />
+          <AutomationPanel />
         </div>
         <div className="mc-column">
           <ResearchSummaryCard />

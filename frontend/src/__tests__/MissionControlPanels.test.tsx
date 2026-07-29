@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import AutomationPanel from '../components/mission-control/AutomationPanel'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
 import TeamPanel from '../components/mission-control/TeamPanel'
 import { SessionProvider } from '../session'
 import * as api from '../api'
-import type { Infrastructure, SystemHealth, User } from '../types'
+import type { AutomationStatus, Infrastructure, SystemHealth, User, WorkItem } from '../types'
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -15,6 +16,10 @@ vi.mock('../api', async () => {
     getSystemHealth: vi.fn(),
     getUserMe: vi.fn(),
     getOrganization: vi.fn(),
+    getAutomationStatus: vi.fn(),
+    getDraftWorkItems: vi.fn(),
+    approveDraftWorkItem: vi.fn(),
+    discardDraftWorkItem: vi.fn(),
   }
 })
 
@@ -62,6 +67,29 @@ function makeHealth(overrides: Partial<SystemHealth> = {}): SystemHealth {
     status: 'ok', version: '0.7.0', environment: 'development', uptime_seconds: 100,
     database: { configured: false, ok: false, latency_ms: null, error: null },
     last_backup_at: null, connected_users: 3,
+    ...overrides,
+  }
+}
+
+function makeAutomationStatus(overrides: Partial<AutomationStatus> = {}): AutomationStatus {
+  return {
+    git_watcher: {
+      running: false, last_cycle_at: null, last_result: null, last_error: null,
+      cycles_completed: 0, drafts_created_count: 0,
+    },
+    maintenance: {
+      running: false, last_cycle_at: null, last_result: null, last_error: null,
+      cycles_completed: 0, stale_drafts_discarded_count: 0, last_db_health_ok: null,
+    },
+    ...overrides,
+  }
+}
+
+function makeDraft(overrides: Partial<WorkItem> = {}): WorkItem {
+  return {
+    id: 'd1', title: 'Uncommitted changes: src', description: null, owner_user_id: null, owner_type: 'human',
+    branch: null, status: 'open', estimated_files: ['src/a.py'], priority: 'low', org_id: null, is_draft: true,
+    created_at: '2026-07-29T00:00:00+00:00', updated_at: '2026-07-29T00:00:00+00:00',
     ...overrides,
   }
 }
@@ -136,5 +164,74 @@ describe('TeamPanel', () => {
     renderTeamPanel()
 
     await waitFor(() => expect(screen.getByText('4h ago')).toBeInTheDocument())
+  })
+})
+
+describe('AutomationPanel', () => {
+  it('shows both schedulers as not running when automation is disabled', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
+    vi.mocked(api.getDraftWorkItems).mockResolvedValue([])
+
+    render(<AutomationPanel />)
+
+    await waitFor(() => expect(screen.getAllByText('stopped')).toHaveLength(2))
+    expect(screen.getByText('No drafts awaiting review.')).toBeInTheDocument()
+  })
+
+  it('shows a running scheduler with its last result', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus({
+      git_watcher: {
+        running: true, last_cycle_at: '2026-07-29T12:00:00+00:00', last_result: 'no uncovered changes',
+        last_error: null, cycles_completed: 5, drafts_created_count: 1,
+      },
+    }))
+    vi.mocked(api.getDraftWorkItems).mockResolvedValue([])
+
+    render(<AutomationPanel />)
+
+    await waitFor(() => expect(screen.getByText('no uncovered changes')).toBeInTheDocument())
+    expect(screen.getByText('5 cycles completed', { exact: false })).toBeInTheDocument()
+  })
+
+  it('lists draft work items with Approve/Discard actions', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
+    vi.mocked(api.getDraftWorkItems).mockResolvedValue([makeDraft({ title: 'Uncommitted changes: src' })])
+
+    render(<AutomationPanel />)
+
+    await waitFor(() => expect(screen.getByText('Uncommitted changes: src')).toBeInTheDocument())
+    expect(screen.getByText('Approve')).toBeInTheDocument()
+    expect(screen.getByText('Discard')).toBeInTheDocument()
+  })
+
+  it('approving a draft calls the API and refetches the list', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
+    vi.mocked(api.getDraftWorkItems).mockResolvedValue([makeDraft()])
+    vi.mocked(api.approveDraftWorkItem).mockResolvedValue(makeDraft({ is_draft: false }))
+
+    render(<AutomationPanel />)
+    await waitFor(() => expect(screen.getByText('Approve')).toBeInTheDocument())
+    // Mocks aren't cleared between `it()` blocks in this file, so an exact
+    // call-count assertion would be fragile (it'd depend on test order) --
+    // capture the baseline right before clicking and assert it increased.
+    const callsBeforeClick = vi.mocked(api.getDraftWorkItems).mock.calls.length
+    screen.getByText('Approve').click()
+
+    await waitFor(() => expect(api.approveDraftWorkItem).toHaveBeenCalledWith('d1'))
+    await waitFor(() => expect(vi.mocked(api.getDraftWorkItems).mock.calls.length).toBeGreaterThan(callsBeforeClick))
+  })
+
+  it('discarding a draft calls the API and refetches the list', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
+    vi.mocked(api.getDraftWorkItems).mockResolvedValue([makeDraft()])
+    vi.mocked(api.discardDraftWorkItem).mockResolvedValue({ discarded: true })
+
+    render(<AutomationPanel />)
+    await waitFor(() => expect(screen.getByText('Discard')).toBeInTheDocument())
+    const callsBeforeClick = vi.mocked(api.getDraftWorkItems).mock.calls.length
+    screen.getByText('Discard').click()
+
+    await waitFor(() => expect(api.discardDraftWorkItem).toHaveBeenCalledWith('d1'))
+    await waitFor(() => expect(vi.mocked(api.getDraftWorkItems).mock.calls.length).toBeGreaterThan(callsBeforeClick))
   })
 })

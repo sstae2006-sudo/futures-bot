@@ -597,3 +597,21 @@ class TestGitWatcherStatusRoute:
         assert body["running"] is False
         assert body["cycles_completed"] == 0
         assert body["drafts_created_count"] == 0
+
+
+class TestAutomationStatusRoute:
+    def test_returns_both_schedulers_not_running_by_default(self, tmp_path, monkeypatch):
+        from futures_bot.collaboration.git_watcher import reset_git_watcher
+        from futures_bot.collaboration.maintenance import reset_maintenance_scheduler
+
+        reset_git_watcher()
+        reset_maintenance_scheduler()
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/automation/status")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["git_watcher"]["running"] is False
+        assert body["maintenance"]["running"] is False
+        assert body["maintenance"]["stale_drafts_discarded_count"] == 0
