@@ -153,9 +153,51 @@ class FileSignature:
     frontend_components: frozenset[str] = frozenset()
 
 
-def analyze_files(paths: list[str], repo_root: Optional[Path] = None) -> FileSignature:
+def _analyze_one_file(rel_path: str, root: Optional[Path]) -> FileSignature:
+    """The per-file "atom" `analyze_files` unions together below -- split
+    out so a shared cache can memoize each file's own read+parse exactly
+    once across many overlapping file lists in the same request, instead
+    of re-reading and re-parsing it once per list it happens to appear
+    in (see `analyze_files`'s `file_cache` parameter -- KNOWN_ISSUES.md
+    ISSUE-039, an O(N^2) blowup this fixes for the Integration Queue)."""
+    config_files = frozenset({rel_path}) if _is_config_file(rel_path) else frozenset()
+    component = _frontend_component_name(rel_path)
+    frontend_components = frozenset({component}) if component else frozenset()
+    imports: frozenset[str] = frozenset()
+    routes: frozenset[str] = frozenset()
+    tables: frozenset[str] = frozenset()
+
+    if root is not None:
+        text = _read_text(root, rel_path)
+        if text is not None:
+            if rel_path.endswith(".py"):
+                imports = frozenset(_python_imports(text))
+                routes = frozenset(_api_routes(text))
+                tables = frozenset(_db_tables(text))
+            elif rel_path.endswith((".ts", ".tsx", ".js", ".jsx")):
+                imports = frozenset(_ts_imports(text))
+
+    return FileSignature(
+        files=frozenset({rel_path}), imports=imports, routes=routes, tables=tables,
+        config_files=config_files, frontend_components=frontend_components,
+    )
+
+
+def analyze_files(
+    paths: list[str], repo_root: Optional[Path] = None, *, file_cache: Optional[dict[str, FileSignature]] = None,
+) -> FileSignature:
     """Reads each path (best-effort -- a missing/unreadable file just
-    contributes nothing) and extracts its imports/routes/tables/etc."""
+    contributes nothing) and extracts its imports/routes/tables/etc.
+
+    `file_cache`, when supplied, is a plain dict shared across many calls
+    to this function within one request (e.g. building the whole
+    Integration Queue, which calls this once per queued item *and* once
+    per other active item each of those is compared against) -- a file
+    already seen once in that request is never re-read/re-parsed, it's
+    looked up in the cache instead. `file_cache=None` (every caller
+    before SIL Phase 6 Milestone 2's performance fix, and every caller
+    that still doesn't pass one) preserves the exact previous cost and
+    behavior -- this parameter is purely additive."""
     root = repo_root if repo_root is not None else git_info.repo_root()
     imports: set[str] = set()
     routes: set[str] = set()
@@ -164,22 +206,17 @@ def analyze_files(paths: list[str], repo_root: Optional[Path] = None) -> FileSig
     components: set[str] = set()
 
     for rel_path in paths:
-        if _is_config_file(rel_path):
-            config_files.add(rel_path)
-        component = _frontend_component_name(rel_path)
-        if component:
-            components.add(component)
-        if root is None:
-            continue
-        text = _read_text(root, rel_path)
-        if text is None:
-            continue
-        if rel_path.endswith(".py"):
-            imports |= _python_imports(text)
-            routes |= _api_routes(text)
-            tables |= _db_tables(text)
-        elif rel_path.endswith((".ts", ".tsx", ".js", ".jsx")):
-            imports |= _ts_imports(text)
+        if file_cache is not None and rel_path in file_cache:
+            atom = file_cache[rel_path]
+        else:
+            atom = _analyze_one_file(rel_path, root)
+            if file_cache is not None:
+                file_cache[rel_path] = atom
+        imports |= atom.imports
+        routes |= atom.routes
+        tables |= atom.tables
+        config_files |= atom.config_files
+        components |= atom.frontend_components
 
     return FileSignature(
         files=frozenset(paths), imports=frozenset(imports), routes=frozenset(routes),
@@ -264,20 +301,27 @@ def _score_pair(proposed: FileSignature, other: FileSignature, keyword_overlap: 
 def compute_overlap_v2(
     proposed_files: list[str], active_items: list[dict], *,
     proposed_title: Optional[str] = None, proposed_description: Optional[str] = None,
-    repo_root: Optional[Path] = None,
+    repo_root: Optional[Path] = None, file_cache: Optional[dict[str, FileSignature]] = None,
 ) -> list[OverlapWarningV2]:
     """`active_items` is every other currently-active work item (same
     shape `overlap.detect_overlap` expects). Returns one `OverlapWarningV2`
     per active item with a nonzero confidence score, sorted highest-first
     -- an item that shares nothing across every dimension is omitted
-    entirely, matching V1's "nothing to warn about" convention."""
+    entirely, matching V1's "nothing to warn about" convention.
+
+    `file_cache`, passed through to `analyze_files` (see that function's
+    docstring), lets a caller comparing the SAME proposed item against
+    many active items -- or comparing many items against each other in
+    one request -- share one per-file parse cache instead of re-reading
+    every active item's files from scratch on every call. `None` (every
+    caller before the Integration Queue performance fix) is unaffected."""
     root = repo_root if repo_root is not None else git_info.repo_root()
-    proposed_sig = analyze_files(proposed_files, root)
+    proposed_sig = analyze_files(proposed_files, root, file_cache=file_cache)
     proposed_keywords = _keywords(proposed_title, proposed_description)
 
     warnings: list[OverlapWarningV2] = []
     for item in active_items:
-        other_sig = analyze_files(item.get("estimated_files") or [], root)
+        other_sig = analyze_files(item.get("estimated_files") or [], root, file_cache=file_cache)
         other_keywords = _keywords(item.get("title"), item.get("description"))
         keyword_overlap = frozenset(proposed_keywords & other_keywords)
 

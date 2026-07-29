@@ -4,6 +4,45 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Fix: Integration Queue was O(N^2) in queue size (ISSUE-039)
+
+Prompted by a direct question about whether the newly-shipped Milestone
+2 pipeline was fast. Measured it rather than guessing, via `TestClient`
+against real repo files: `GET /api/integration/queue` took ~145ms at 1
+queued item, but ~5.6s at 20 items and **~23s at 50 items** — not
+linear, quadratic. Root cause: each queued item's merge-readiness was
+computed via a fully independent call that separately re-fetched the
+entire active-item set from the database and re-read/re-parsed every
+other active item's files from scratch (no caching within or across
+calls) — for N items, roughly N x N file re-parses. `generate_integration_review`
+had a smaller, 2x (not N^2) instance of the same pattern: it computed
+Overlap Engine V2 twice on identical inputs.
+
+**Fixed**, without changing any item's computed score (confirmed via
+the existing golden-equivalence test plus 6 new regression tests
+directly counting file reads): `overlap_v2.analyze_files`/
+`compute_overlap_v2` gained an optional, purely-additive `file_cache`
+parameter that memoizes each file's parse per request;
+`get_integration_queue` now fetches the active set once and shares one
+cache across every item's readiness computation instead of each item
+repeating both from scratch; `generate_integration_review` now reuses
+the overlap warnings `merge_readiness` already computed (via a new
+`OverlapWarningLike` structural-typing `Protocol` in
+`conflict_resolution.py`) instead of recomputing them. Re-measured
+after the fix: **50 items now takes ~6.3s (was ~23s), and the curve is
+roughly linear again, not quadratic.**
+
+**Not fully solved, documented as a known remaining cost:** ~120ms/item
+at scale is now dominated by `git` subprocess spawns for branch info
+(still one per queued item, inherent since each item can reference a
+different branch) — this degrades gracefully now instead of exploding,
+but isn't eliminated. See `KNOWN_ISSUES.md` ISSUE-039 for full detail
+and the before/after numbers.
+
+6 new tests (`tests/test_collaboration_overlap_v2.py::TestAnalyzeFilesCache`,
+two file-read-count regression tests in `tests/test_api_collaboration_routes.py`).
+Full suite verified green.
+
 ## 2026-07-29 — SIL Phase 6 "Integration Coordinator" Milestone 2: Intelligent Review Pipeline
 
 Builds directly on Milestone 1 (below) without redesigning the Worker

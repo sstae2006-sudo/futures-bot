@@ -311,12 +311,24 @@ def _readiness_factor_out(factor: ReadinessFactor) -> ReadinessFactorOut:
 
 def merge_readiness(
     changed_files: list[str], branch: Optional[str] = None, work_item_id: Optional[str] = None,
-    org_id: Optional[str] = None,
+    org_id: Optional[str] = None, *,
+    active_items: Optional[list[dict]] = None, file_cache: Optional[dict] = None,
 ) -> MergeReadinessOut:
     """Everything `merge_summary` already computes, folded into one
     explainable 0-100 score alongside branch age/behind-count/change-size
     -- see `merge_readiness.py`'s module docstring for why test pass/fail
-    is deliberately reported as `"unknown"` rather than guessed at."""
+    is deliberately reported as `"unknown"` rather than guessed at.
+
+    `active_items`/`file_cache` are an opt-in performance path (KNOWN_ISSUES.md
+    ISSUE-039): `get_integration_queue` below calls this once per queued
+    item, and every call independently re-fetching the full active-item
+    set from the database, then re-reading and re-parsing every one of
+    those items' files from scratch, made building the whole queue
+    O(N^2) in the number of queued items. A caller that already has the
+    active set (and a shared per-file cache) can pass both here to skip
+    the redundant fetch and reuse already-parsed files -- the resulting
+    score is identical either way, only the cost changes. `None` (every
+    caller before this fix) is unaffected."""
     store = get_collaboration_store()
     exclude_id = work_item_id
     title = description = None
@@ -328,8 +340,10 @@ def merge_readiness(
         else:
             exclude_id = None
 
-    active = store.fetch_active_work_items(exclude_id=exclude_id, org_id=org_id)
-    warnings = compute_overlap_v2(changed_files, active, proposed_title=title, proposed_description=description)
+    active = active_items if active_items is not None else store.fetch_active_work_items(exclude_id=exclude_id, org_id=org_id)
+    warnings = compute_overlap_v2(
+        changed_files, active, proposed_title=title, proposed_description=description, file_cache=file_cache,
+    )
     info = git_info.get_branch_info(branch=branch)
     readiness = compute_merge_readiness(changed_files, warnings, info)
 
@@ -367,14 +381,32 @@ def get_integration_queue(org_id: Optional[str] = None) -> list[IntegrationQueue
     recomputed fresh every request, matching this package's "compute
     live" philosophy throughout. Ties (equal score) break on `priority`
     descending, then `updated_at` ascending (oldest-waiting-first) --
-    stated explicitly rather than left to incidental sort stability."""
+    stated explicitly rather than left to incidental sort stability.
+
+    KNOWN_ISSUES.md ISSUE-039 (measured, fixed 2026-07-29): computing
+    each item's readiness via a *fully independent* `merge_readiness`
+    call -- its own DB fetch of every other active item, its own
+    from-scratch read+parse of every one of those items' files -- made
+    this endpoint O(N^2) in the number of queued items (23s for 50
+    items, measured). The active-item set is now fetched exactly ONCE
+    here and reused for every queued item's comparison (mathematically
+    identical to each item's own independent fetch minus itself, just
+    not repeated N times), and `file_cache` is shared across every one
+    of those comparisons so each distinct file is read/parsed at most
+    once for the whole request, not once per item that references it.
+    Every item's resulting score is unchanged -- same inputs, same
+    computation, only the redundant work is gone."""
     store = get_collaboration_store()
     items = [i for i in store.fetch_work_items(org_id=org_id) if i["status"] in _INTEGRATION_QUEUE_STATUSES]
+    all_active = store.fetch_active_work_items(org_id=org_id)
+    file_cache: dict = {}
 
     entries: list[tuple[int, int, str, IntegrationQueueEntryOut]] = []
     for item in items:
+        other_active = [i for i in all_active if i["id"] != item["id"]]
         readiness = merge_readiness(
             item["estimated_files"], branch=item.get("branch"), work_item_id=item["id"], org_id=org_id,
+            active_items=other_active, file_cache=file_cache,
         )
         entry = IntegrationQueueEntryOut(
             work_item=WorkItemOut(**item), merge_readiness=readiness, readiness_note=_readiness_note(item),
@@ -505,22 +537,29 @@ def generate_integration_review(item_id: str, worker_id: Optional[str] = None) -
     package's usual "compute live, never cache" rule). Wires together
     existing primitives only: `merge_readiness` (overlap + branch info),
     the Conflict Resolution Assistant, the minimal subsystem lookup, and
-    the shared validation-planning heuristic -- no new scoring model."""
+    the shared validation-planning heuristic -- no new scoring model.
+
+    Fetches the active-item set once and reuses `readiness.overlap_warnings`
+    for the Conflict Resolution Assistant instead of calling
+    `compute_overlap_v2` a second time on the same inputs (KNOWN_ISSUES.md
+    ISSUE-039 -- a smaller, 2x-not-N^2 instance of the same redundant-
+    recomputation pattern fixed in `get_integration_queue`).
+    `readiness.overlap_warnings` are `OverlapWarningV2Out` (pydantic), not
+    `overlap_v2.OverlapWarningV2` (the dataclass) -- `build_conflict_resolutions`
+    accepts either via `OverlapWarningLike`'s structural typing."""
     store = get_collaboration_store()
     item = store.fetch_work_item(item_id)
     if item is None:
         raise ApiError(f"No such work item: {item_id!r}")
 
-    readiness = merge_readiness(
-        item["estimated_files"], branch=item.get("branch"), work_item_id=item_id, org_id=item.get("org_id"),
-    )
     other_items_by_id = {
         i["id"]: i for i in store.fetch_active_work_items(exclude_id=item_id, org_id=item.get("org_id"))
     }
-    warnings_v2 = compute_overlap_v2(
-        item["estimated_files"], list(other_items_by_id.values()),
-        proposed_title=item.get("title"), proposed_description=item.get("description"),
+    readiness = merge_readiness(
+        item["estimated_files"], branch=item.get("branch"), work_item_id=item_id, org_id=item.get("org_id"),
+        active_items=list(other_items_by_id.values()),
     )
+    warnings_v2 = readiness.overlap_warnings
     resolutions = build_conflict_resolutions(item, warnings_v2, other_items_by_id)
     subsystems = affected_subsystems(item["estimated_files"])
     plan = plan_validation(item["estimated_files"], git_info.repo_root() or Path("."))

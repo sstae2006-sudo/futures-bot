@@ -9,6 +9,7 @@ this project's real source tree.
 
 from __future__ import annotations
 
+from futures_bot.collaboration import overlap_v2
 from futures_bot.collaboration.overlap_v2 import (
     analyze_files, compute_all_conflicts, compute_overlap_v2,
 )
@@ -64,6 +65,68 @@ class TestAnalyzeFiles:
     def test_path_escaping_repo_root_is_rejected(self, tmp_path):
         sig = analyze_files(["../../etc/passwd"], tmp_path)
         assert sig.imports == frozenset()
+
+
+class TestAnalyzeFilesCache:
+    """KNOWN_ISSUES.md ISSUE-039: `file_cache` lets a caller (the
+    Integration Queue) parse each distinct file at most once across many
+    `analyze_files` calls in one request, instead of once per work item
+    that happens to reference it. `file_cache=None` (every caller before
+    this fix) must be completely unaffected -- pinned below."""
+
+    def test_shared_cache_reads_a_repeated_file_only_once(self, tmp_path, monkeypatch):
+        _write(tmp_path, "a.py", "import os\n")
+        read_calls = []
+        original_read_text = overlap_v2._read_text
+
+        def counting_read_text(root, rel_path):
+            read_calls.append(rel_path)
+            return original_read_text(root, rel_path)
+
+        monkeypatch.setattr(overlap_v2, "_read_text", counting_read_text)
+
+        cache: dict = {}
+        analyze_files(["a.py"], tmp_path, file_cache=cache)
+        analyze_files(["a.py"], tmp_path, file_cache=cache)
+        analyze_files(["a.py"], tmp_path, file_cache=cache)
+
+        assert read_calls == ["a.py"]  # only the first call actually reads the file
+
+    def test_without_a_cache_a_repeated_file_is_read_every_time(self, tmp_path, monkeypatch):
+        """Pins the pre-fix behavior for every caller that doesn't opt in
+        -- `file_cache` must be purely additive, never a silent default
+        behavior change."""
+        _write(tmp_path, "a.py", "import os\n")
+        read_calls = []
+        original_read_text = overlap_v2._read_text
+        monkeypatch.setattr(overlap_v2, "_read_text", lambda root, rel_path: (read_calls.append(rel_path), original_read_text(root, rel_path))[1])
+
+        analyze_files(["a.py"], tmp_path)
+        analyze_files(["a.py"], tmp_path)
+
+        assert read_calls == ["a.py", "a.py"]
+
+    def test_cached_and_uncached_results_are_identical(self, tmp_path):
+        _write(tmp_path, "a.py", 'import os\n@router.post("/api/x")\ndef f(): pass\n')
+        _write(tmp_path, "b.py", "import sys\n")
+
+        uncached = analyze_files(["a.py", "b.py"], tmp_path)
+        cached = analyze_files(["a.py", "b.py"], tmp_path, file_cache={})
+
+        assert uncached == cached
+
+    def test_cache_is_populated_per_file_not_per_call(self, tmp_path):
+        """A later call with a *different* file list that overlaps the
+        first should still hit the cache for the shared file."""
+        _write(tmp_path, "a.py", "import os\n")
+        _write(tmp_path, "b.py", "import sys\n")
+        cache: dict = {}
+
+        analyze_files(["a.py"], tmp_path, file_cache=cache)
+        assert set(cache.keys()) == {"a.py"}
+
+        analyze_files(["a.py", "b.py"], tmp_path, file_cache=cache)
+        assert set(cache.keys()) == {"a.py", "b.py"}
 
 
 class TestComputeOverlapV2:

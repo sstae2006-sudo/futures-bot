@@ -1323,3 +1323,78 @@ verified fixed — instead mark it Resolved with a date and commit.
   proposed; this finding exists to inform, not block, any future
   multi-worker feature design. Any such design should either require
   Team Mode (Postgres) or explicitly document the SQLite-mode ceiling.
+
+---
+
+### ISSUE-039 — Integration Queue was O(N^2) in the number of queued items (RESOLVED)
+
+- **Severity:** High -- not a theoretical concern, a measured, severe
+  cliff at plausible real-world scale.
+- **Description:** Found and fixed 2026-07-29, prompted by a direct
+  question about the Integration Queue's performance. `GET
+  /api/integration/queue` computed each queued item's merge-readiness
+  via a fully independent `merge_readiness()` call. Each of those calls
+  separately (a) fetched the ENTIRE active-item set from the database,
+  and (b) re-read and re-parsed every one of those other items'
+  files from scratch (AST-parsing every Python file, regexing every
+  TypeScript file) via `overlap_v2.analyze_files`, with zero caching
+  within or across calls. For N queued items, that's roughly N x N file
+  re-parses, on top of N separate `git` subprocess spawns (branch
+  info) -- real, measured latency, not a theoretical bound:
+
+  | Queue size | Latency (measured, `TestClient`, in-process) |
+  |---|---|
+  | 1 item | ~145ms |
+  | 5 items | ~830ms |
+  | 20 items | ~5.6s |
+  | 50 items | ~23s |
+
+  Mission Control polls this endpoint every 15 seconds -- at ~20 queued
+  items (plausible for even a small team), a single poll already takes
+  longer than the poll interval itself, so requests pile up faster than
+  they complete rather than degrading gracefully.
+- **Files involved:** `src/futures_bot/collaboration/overlap_v2.py`
+  (`analyze_files`, `compute_overlap_v2`), `src/futures_bot/api/collaboration_service.py`
+  (`merge_readiness`, `get_integration_queue`, `generate_integration_review`).
+- **Possible cause:** `merge_readiness()` was designed and tested as a
+  single-item primitive (used correctly, at that scale, everywhere else
+  it's called) -- `get_integration_queue()` calling it once per item
+  with no shared state between calls was the actual bug: correct in
+  isolation, quadratic in aggregate. A smaller, non-quadratic instance
+  of the same pattern also existed in `generate_integration_review`,
+  which computed Overlap Engine V2 TWICE on identical inputs (once
+  inside `merge_readiness`, once again for the Conflict Resolution
+  Assistant).
+- **Current status:** **Resolved 2026-07-29.** `overlap_v2.analyze_files`/
+  `compute_overlap_v2` gained an optional, purely-additive `file_cache`
+  parameter (a plain dict) that memoizes each file's own parse per
+  request; `get_integration_queue` now fetches the active-item set
+  exactly once and shares one `file_cache` across every queued item's
+  readiness computation instead of each item repeating both from
+  scratch. `generate_integration_review` now reuses the overlap warnings
+  `merge_readiness` already computed (via a new `OverlapWarningLike`
+  structural-typing `Protocol` in `conflict_resolution.py`, since the
+  reused warnings are the pydantic response type, not the dataclass)
+  instead of calling `compute_overlap_v2` a second time. Every affected
+  item's *score* is unchanged -- confirmed by the existing golden-
+  equivalence test plus new dedup-focused regression tests
+  (`tests/test_collaboration_overlap_v2.py::TestAnalyzeFilesCache`,
+  `tests/test_api_collaboration_routes.py`'s file-read-count tests) --
+  only the redundant work is gone. Re-measured after the fix:
+
+  | Queue size | Latency (measured, after fix) |
+  |---|---|
+  | 1 item | ~150ms (unchanged -- no redundancy to remove at N=1) |
+  | 5 items | ~665ms |
+  | 20 items | ~2.6s |
+  | 50 items | **~6.3s** (was ~23s -- ~3.7x faster, and now scales
+    roughly linearly, not quadratically) |
+
+  **Not fully solved:** the remaining cost is now dominated by the
+  O(N) `git` subprocess spawns (branch info) still made once per queued
+  item -- inherent, since each item can reference a genuinely different
+  branch, and there's no cache-without-staleness way to avoid asking
+  git about N different branches N times. This no longer explodes, but
+  ~120ms/item at scale is a real, still-present, informational cost
+  worth knowing about for a much larger queue (hundreds of items) --
+  not addressed here, and not urgent at today's usage.

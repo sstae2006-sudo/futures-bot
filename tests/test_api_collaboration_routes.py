@@ -687,6 +687,39 @@ class TestIntegrationQueueRoute:
         assert queue_entry["merge_readiness"]["level"] == direct["level"]
         assert queue_entry["merge_readiness"]["factors"] == direct["factors"]
 
+    def test_shared_files_across_many_items_are_parsed_once_not_per_item(self, tmp_path, monkeypatch):
+        """KNOWN_ISSUES.md ISSUE-039 -- building the whole queue used to
+        re-read and re-parse every item's files once per OTHER item it
+        was compared against, an O(N^2) blowup measured at 23s for 50
+        items. With the shared per-request file_cache, each distinct
+        file across the whole queue is read at most once regardless of
+        how many items reference it or how many items are in the queue."""
+        from futures_bot.collaboration import overlap_v2
+
+        read_calls: list[str] = []
+        original_read_text = overlap_v2._read_text
+        monkeypatch.setattr(
+            overlap_v2, "_read_text",
+            lambda root, rel_path: (read_calls.append(rel_path), original_read_text(root, rel_path))[1],
+        )
+
+        client = _client(tmp_path, monkeypatch)
+        # 10 items, all sharing the exact same 2 files -- pre-fix, this
+        # would read each of the 2 files ~10 times (once per item, each
+        # comparing against the other 9). Post-fix: at most 2 reads total.
+        for i in range(10):
+            item = client.post(
+                "/api/work-items", json={"title": f"Task {i}", "estimated_files": ["shared_a.py", "shared_b.py"]},
+            ).json()["work_item"]
+            client.post(f"/api/work-items/{item['id']}/status", json={"status": "ready_for_review"})
+
+        resp = client.get("/api/integration/queue")
+
+        assert resp.status_code == 200
+        assert len(resp.json()) == 10
+        assert set(read_calls) == {"shared_a.py", "shared_b.py"}
+        assert len(read_calls) <= 2  # each distinct file read at most once for the whole request
+
     def test_readiness_note_flags_estimated_files_as_a_proxy(self, tmp_path, monkeypatch):
         """estimated_files is self-reported, not a real git diff -- must
         be flagged honestly, same as test_status="unknown" already is,
@@ -881,3 +914,32 @@ class TestIntegrationReviewRoutes:
         resolution = body["conflict_resolutions"][0]
         assert resolution["suggested_resolution"]
         assert "Risk Management" in resolution["architecture_components_affected"]
+
+    def test_generate_review_parses_each_shared_file_only_once(self, tmp_path, monkeypatch):
+        """KNOWN_ISSUES.md ISSUE-039 -- generating a review used to call
+        compute_overlap_v2 twice on the same inputs (once inside
+        merge_readiness, once again for the Conflict Resolution
+        Assistant), doubling every file read. Now overlap is computed
+        once and reused."""
+        from futures_bot.collaboration import overlap_v2
+
+        read_calls: list[str] = []
+        original_read_text = overlap_v2._read_text
+        monkeypatch.setattr(
+            overlap_v2, "_read_text",
+            lambda root, rel_path: (read_calls.append(rel_path), original_read_text(root, rel_path))[1],
+        )
+
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={"title": "Other", "estimated_files": ["shared.py"]})
+        item = client.post(
+            "/api/work-items", json={"title": "This", "estimated_files": ["shared.py"]},
+        ).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/reviews", json={})
+
+        assert resp.status_code == 200
+        # "shared.py" is the proposed item's own file (read once) plus the
+        # other active item's file (read once) -- 2 total, not 4, if
+        # overlap were still computed twice.
+        assert read_calls.count("shared.py") == 2

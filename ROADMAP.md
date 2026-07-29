@@ -512,6 +512,15 @@ Pipeline — both done 2026-07-29, see Completed above and
   item/subsystem/commit/dependency and recommending, never performing,
   a rollback) — likely depends on M6's Integration Branch existing
   first, since a rollback is an operation against that workflow.
+- **Batch/cache `git` branch-info across a queue build.** KNOWN_ISSUES.md
+  ISSUE-039's fix removed the Integration Queue's O(N^2) file-reparsing,
+  but the remaining ~120ms/item is `git` subprocess spawns for
+  per-item branch info (ahead/behind/age/last-commit), still one set of
+  calls per queued item since each can reference a different branch.
+  Not urgent at today's usage (linear, not quadratic, and the queue
+  is small in practice) — revisit if a queue of hundreds of items ever
+  becomes real; likely solution is a single `git for-each-ref`-style
+  batch call instead of N separate `git log`/`rev-list` invocations.
 - **A real Architecture Model / Trading Intelligence Layer.**
   `architecture_map.py` (Milestone 2) is a deliberately minimal, static
   path-prefix lookup, explicitly not a real dependency/import graph --

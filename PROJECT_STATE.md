@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1705 tests as of 2026-07-29** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1654 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1711 tests as of 2026-07-29** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1660 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1705 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1711 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,30 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-29: **Fix: Integration Queue was O(N^2) in queue size
+(KNOWN_ISSUES.md ISSUE-039).** Found by actually measuring the
+just-shipped Milestone 2 pipeline instead of assuming it was fine:
+`GET /api/integration/queue` took ~145ms at 1 item but ~23s at 50 items
+(measured via `TestClient`, real repo files) — each queued item's
+readiness was computed via a fully independent call that re-fetched
+every active item from the DB and re-parsed every one of their files
+from scratch, no caching, giving roughly N x N file re-parses for N
+items. Fixed: `overlap_v2.analyze_files`/`compute_overlap_v2` gained an
+optional `file_cache` parameter (memoizes each file's parse per
+request); `get_integration_queue` fetches the active set once and
+shares one cache across every item instead of each item repeating both
+from scratch; `generate_integration_review` (which separately computed
+Overlap Engine V2 twice on identical inputs) now reuses
+`merge_readiness`'s already-computed warnings via a new
+`OverlapWarningLike` structural-typing `Protocol`. No item's score
+changed — confirmed by the existing golden-equivalence test plus 6 new
+regression tests directly counting file reads. Re-measured: 50 items
+now ~6.3s (was ~23s, ~3.7x faster), scaling roughly linearly instead of
+quadratically. Remaining cost (~120ms/item, `git` subprocess spawns for
+per-item branch info) is inherent and documented, not eliminated — it
+degrades gracefully now instead of exploding. See `KNOWN_ISSUES.md`
+ISSUE-039 for the full before/after numbers.
 
 2026-07-29: **SIL Phase 6 "Integration Coordinator" Milestone 2 —
 Intelligent Review Pipeline.** Builds directly on Milestone 1 (below) —

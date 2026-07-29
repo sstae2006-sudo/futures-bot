@@ -17,15 +17,32 @@ section for why autonomous merging stays out of scope).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional, Protocol
 
 from . import STATUSES
 from .architecture_map import affected_subsystems
-from .overlap_v2 import OverlapWarningV2
+
+
+class OverlapWarningLike(Protocol):
+    """Structurally, not nominally, typed -- `build_conflict_resolutions`
+    reads only these fields, so it accepts `overlap_v2.OverlapWarningV2`
+    (the dataclass) *or* `api.schemas.OverlapWarningV2Out` (the pydantic
+    response model) without either module importing the other.
+    `api/collaboration_service.py::generate_integration_review` passes
+    the latter -- reusing a `MergeReadinessOut` it already computed,
+    rather than re-running `compute_overlap_v2` a second time on the
+    same inputs just to get the dataclass version."""
+    work_item_id: str
+    title: str
+    owner_user_id: Optional[str]
+    risk: str
+    confidence: int
+    reason: str
 
 
 @dataclass(frozen=True)
 class ConflictResolution:
-    warning: OverlapWarningV2
+    warning: OverlapWarningLike
     architecture_components_affected: list[str] = field(default_factory=list)
     suggested_resolution: str = ""
 
@@ -47,7 +64,7 @@ def _integration_order(this_item: dict, other_item: dict) -> tuple[dict, dict]:
     return (this_item, other_item) if this_created <= other_created else (other_item, this_item)
 
 
-def _suggested_resolution(warning: OverlapWarningV2, this_item: dict, other_item: dict) -> str:
+def _suggested_resolution(warning: OverlapWarningLike, this_item: dict, other_item: dict) -> str:
     owner = warning.owner_user_id or "its (unclaimed) owner"
     if warning.risk in ("critical", "high"):
         first, second = _integration_order(this_item, other_item)
@@ -62,7 +79,7 @@ def _suggested_resolution(warning: OverlapWarningV2, this_item: dict, other_item
 
 
 def build_conflict_resolutions(
-    this_item: dict, warnings: list[OverlapWarningV2], other_items_by_id: dict[str, dict],
+    this_item: dict, warnings: list[OverlapWarningLike], other_items_by_id: dict[str, dict],
 ) -> list[ConflictResolution]:
     """`other_items_by_id` maps `work_item_id` -> the full work item dict
     for each warning's target -- needed for `_integration_order`'s
