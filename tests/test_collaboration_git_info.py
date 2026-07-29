@@ -65,6 +65,32 @@ class TestRecentCommits:
         assert git_info.recent_commits(limit=0) == []
 
 
+class TestLastCommitTouching:
+    def test_finds_the_commit_for_a_real_tracked_file(self):
+        commit = git_info.last_commit_touching("CHANGELOG.md")
+        assert commit is not None
+        assert commit.hash
+
+    def test_nonexistent_path_returns_none(self):
+        assert git_info.last_commit_touching("this/path/does/not/exist.md") is None
+
+
+class TestCommitsSince:
+    def test_no_ref_matches_recent_commits_but_oldest_first(self):
+        newest_first = git_info.recent_commits(limit=5)
+        oldest_first = git_info.commits_since(None, limit=5)
+        assert [c.hash for c in oldest_first] == [c.hash for c in reversed(newest_first)]
+
+    def test_a_real_ref_excludes_commits_at_or_before_it(self):
+        commit = git_info.last_commit_touching("CHANGELOG.md")
+        assert commit is not None
+        since = git_info.commits_since(commit.hash, limit=200)
+        assert commit.hash not in [c.hash for c in since]
+
+    def test_zero_limit_returns_empty(self):
+        assert git_info.commits_since(None, limit=0) == []
+
+
 class TestNotARepo:
     def test_repo_root_lookup_is_isolated_from_process_cwd(self, tmp_path, monkeypatch):
         """`_repo_root` walks up from this *module's* location, not the

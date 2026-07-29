@@ -230,3 +230,36 @@ def recent_commits(limit: int = 20, branch: Optional[str] = None) -> list[Commit
         return []
     commits = [_parse_commit(line) for line in raw.splitlines()]
     return [c for c in commits if c is not None]
+
+
+def last_commit_touching(path: str) -> Optional[Commit]:
+    """The most recent commit that changed `path` (repo-root-relative) --
+    used by the SIL Phase 4 documentation draft assistant to find "the
+    last time CHANGELOG.md was updated" as the boundary for "what's
+    happened since." `None` if the path was never committed, or this
+    isn't a git repo."""
+    root = _repo_root()
+    if root is None:
+        return None
+    fmt = f"%H{_FIELD_SEP}%s{_FIELD_SEP}%an{_FIELD_SEP}%aI"
+    return _parse_commit(_git(["log", "-1", f"--format={fmt}", "--", path], cwd=root))
+
+
+def commits_since(ref: Optional[str], limit: int = 200, branch: Optional[str] = None) -> list[Commit]:
+    """Commits reachable from `branch` (default: checked-out HEAD) but not
+    from `ref` -- i.e. `git log {ref}..{branch}` -- oldest first (the
+    order a changelog entry reads naturally in). `ref=None` returns
+    `recent_commits(limit, branch)` unchanged (oldest-first instead of
+    newest-first) -- "no boundary" degrades to "everything," not to
+    nothing, so a repo whose CHANGELOG.md was never committed still gets
+    a useful draft rather than an empty one."""
+    root = _repo_root()
+    if root is None:
+        return []
+    fmt = f"%H{_FIELD_SEP}%s{_FIELD_SEP}%an{_FIELD_SEP}%aI"
+    range_arg = f"{ref}..{branch or 'HEAD'}" if ref else (branch or "HEAD")
+    raw = _git(["log", "--reverse", f"-{max(limit, 0)}", f"--format={fmt}", range_arg], cwd=root)
+    if not raw:
+        return []
+    commits = [_parse_commit(line) for line in raw.splitlines()]
+    return [c for c in commits if c is not None]

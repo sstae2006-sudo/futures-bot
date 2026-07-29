@@ -85,3 +85,8 @@ frontend/.vite/
 # design; see brokers/tradovate.py's module docstring), but a local .env
 # some shells may source for TRADOVATE_*/MASSIVE_API_KEY should never be.
 .env
+
+# SIL Phase 4: tools/draft_changelog.py's scratch output -- a starting
+# point for a human to rewrite into CHANGELOG.md by hand, never committed
+# as-is.
+.changelog_draft.md
