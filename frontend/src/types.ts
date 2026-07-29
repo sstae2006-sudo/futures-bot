@@ -911,6 +911,46 @@ export interface Worker {
   seconds_since_heartbeat: number
 }
 
+// SIL Phase 6 "Integration Coordinator" Milestone 2 -- the PERSISTENT
+// Integration Review (POST/GET /api/work-items/{id}/reviews). Distinct
+// from WorkItemReview above (Milestone 1's live, ephemeral single-item
+// check) -- every generated review is kept forever, never overwritten.
+export interface ValidationRecommendation {
+  recommended_tests: string[]
+  unmapped_files: string[]
+  recommend_full_suite: boolean
+  frontend_validation_recommended: boolean
+}
+
+export interface ConflictResolution {
+  work_item_id: string
+  title: string
+  risk: RiskLevel
+  confidence: number
+  reason: string
+  architecture_components_affected: string[]
+  suggested_resolution: string
+}
+
+export interface IntegrationReview {
+  id: string
+  work_item_id: string
+  worker_id: string | null
+  branch: string | null
+  status_at_review: WorkItemStatus
+  confidence_score: number
+  risk_level: RiskLevel
+  level: MergeReadinessLevel
+  related_work_item_ids: string[]
+  affected_subsystems: string[]
+  conflict_resolutions: ConflictResolution[]
+  validation_recommendation: ValidationRecommendation
+  readiness_note: string | null
+  summary: string
+  recommendation: string
+  created_at: string
+}
+
 export interface TimelineEntry {
   kind: 'work_item' | 'commit'
   timestamp: string

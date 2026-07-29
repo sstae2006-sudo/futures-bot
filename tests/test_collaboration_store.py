@@ -465,6 +465,132 @@ class TestWorkers:
         assert store.fetch_workers(capability="machine-learning") == []
 
 
+class TestSetWorkerStatus:
+    """SIL Phase 6 Milestone 2 -- the maintenance scheduler's stale-worker
+    cleanup write path. Deliberately separate from `heartbeat_worker`:
+    must NOT bump `last_heartbeat_at` (see `set_worker_status`'s own
+    docstring for why)."""
+
+    def test_sets_status_without_touching_last_heartbeat_at(self, store):
+        worker = store.heartbeat_worker(worker_id="w1", display_name="X", status="online")
+        original_heartbeat = worker["last_heartbeat_at"]
+
+        updated = store.set_worker_status("w1", "offline")
+
+        assert updated["status"] == "offline"
+        assert updated["last_heartbeat_at"] == original_heartbeat
+
+    def test_rejects_unknown_status(self, store):
+        store.heartbeat_worker(worker_id="w1", display_name="X")
+        with pytest.raises(CollaborationError, match="Unknown status"):
+            store.set_worker_status("w1", "not_a_real_status")
+
+    def test_rejects_nonexistent_worker(self, store):
+        with pytest.raises(CollaborationError, match="No such worker"):
+            store.set_worker_status("does-not-exist", "offline")
+
+    def test_worker_marked_offline_recovers_on_next_heartbeat(self, store):
+        """SIL Phase 6 Milestone 2 reliability pass -- the maintenance
+        scheduler's stale-worker cleanup (`set_worker_status`) must never
+        permanently strand a worker: its very next heartbeat should bring
+        it back `online` (and, since it's a real heartbeat, `last_heartbeat_at`
+        SHOULD move forward this time -- unlike `set_worker_status` itself)."""
+        store.heartbeat_worker(worker_id="w1", display_name="X", status="online")
+        store.set_worker_status("w1", "offline")
+        assert store.fetch_worker("w1")["status"] == "offline"
+
+        recovered = store.heartbeat_worker(worker_id="w1", display_name="X", status="online")
+
+        assert recovered["status"] == "online"
+
+
+class TestIntegrationReviews:
+    """SIL Phase 6 Milestone 2 -- the persistent Integration Review. Unlike
+    every other collaboration/ computation (merge_readiness, overlap_v2,
+    worker staleness), this is a deliberate exception to "compute live,
+    never persist": every call inserts a new, immutable row."""
+
+    def _make_item(self, store):
+        return store.create_work_item(item_id="wi1", title="Test item", estimated_files=["src/futures_bot/risk/manager.py"])
+
+    def _review_kwargs(self, **overrides):
+        kwargs = dict(
+            review_id="rev1", work_item_id="wi1", worker_id="w1", branch="main", status_at_review="testing",
+            confidence_score=85, risk_level="low", level="ready", related_work_item_ids=["wi2"],
+            affected_subsystems=["Risk Management"], conflict_resolutions=[{"work_item_id": "wi2", "title": "x"}],
+            validation_recommendation={"recommended_tests": ["tests/test_risk.py"]}, readiness_note=None,
+            summary="summary text", recommendation="proceed",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_create_review_round_trips_all_fields(self, store):
+        self._make_item(store)
+        review = store.create_integration_review(**self._review_kwargs())
+
+        assert review["id"] == "rev1"
+        assert review["work_item_id"] == "wi1"
+        assert review["confidence_score"] == 85
+        assert review["related_work_item_ids"] == ["wi2"]
+        assert review["affected_subsystems"] == ["Risk Management"]
+        assert review["conflict_resolutions"] == [{"work_item_id": "wi2", "title": "x"}]
+        assert review["validation_recommendation"] == {"recommended_tests": ["tests/test_risk.py"]}
+
+    def test_two_reviews_for_the_same_item_never_overwrite_each_other(self, store):
+        """The core "never overwrite historical reviews" contract --
+        pinned as a real regression test, not just documented."""
+        self._make_item(store)
+        store.create_integration_review(**self._review_kwargs(review_id="rev1", confidence_score=50))
+        store.create_integration_review(**self._review_kwargs(review_id="rev2", confidence_score=90))
+
+        reviews = store.fetch_integration_reviews("wi1")
+        assert len(reviews) == 2
+        assert {r["id"] for r in reviews} == {"rev1", "rev2"}
+
+    def test_fetch_reviews_newest_first(self, store):
+        self._make_item(store)
+        store.create_integration_review(**self._review_kwargs(review_id="rev1"))
+        store.create_integration_review(**self._review_kwargs(review_id="rev2"))
+
+        reviews = store.fetch_integration_reviews("wi1")
+        assert [r["id"] for r in reviews] == ["rev2", "rev1"]
+
+    def test_fetch_latest_review_returns_the_most_recent(self, store):
+        self._make_item(store)
+        store.create_integration_review(**self._review_kwargs(review_id="rev1", confidence_score=50))
+        store.create_integration_review(**self._review_kwargs(review_id="rev2", confidence_score=90))
+
+        assert store.fetch_latest_integration_review("wi1")["id"] == "rev2"
+
+    def test_fetch_latest_review_for_item_with_none_returns_none(self, store):
+        self._make_item(store)
+        assert store.fetch_latest_integration_review("wi1") is None
+
+    def test_create_review_logs_review_generated_activity(self, store):
+        self._make_item(store)
+        store.create_integration_review(**self._review_kwargs(level="needs_review"))
+
+        events = [a["event"] for a in store.fetch_activity(work_item_id="wi1")]
+        assert "review_generated" in events
+        assert "integration_recommended" not in events  # only logged when level == "ready"
+
+    def test_create_review_logs_integration_recommended_when_ready(self, store):
+        self._make_item(store)
+        store.create_integration_review(**self._review_kwargs(level="ready"))
+
+        events = [a["event"] for a in store.fetch_activity(work_item_id="wi1")]
+        assert "integration_recommended" in events
+
+    def test_reviews_scoped_to_their_own_work_item(self, store):
+        self._make_item(store)
+        store.create_work_item(item_id="wi2", title="Other item")
+        store.create_integration_review(**self._review_kwargs(review_id="rev1", work_item_id="wi1"))
+        store.create_integration_review(**self._review_kwargs(review_id="rev2", work_item_id="wi2"))
+
+        assert [r["id"] for r in store.fetch_integration_reviews("wi1")] == ["rev1"]
+        assert [r["id"] for r in store.fetch_integration_reviews("wi2")] == ["rev2"]
+
+
 class TestWorkersConcurrency:
     """Mirrors `claim_work_item`'s two-thread regression test -- heartbeat
     races are benign (last-write-wins is correct semantics for "who's
@@ -496,4 +622,46 @@ class TestWorkersConcurrency:
         assert errors == []
         final_store = CollaborationStore(store_path)
         assert len(final_store.fetch_workers()) == 20
+        final_store.close()
+
+
+class TestIntegrationReviewsConcurrency:
+    """SIL Phase 6 Milestone 2 reliability pass -- concurrent review
+    generation for the same work item must never crash or lose a row
+    (append-only inserts, no shared mutable state to race on, unlike
+    `claim_work_item`'s guarded UPDATE)."""
+
+    def test_concurrent_review_creation_never_crashes_or_loses_rows(self, tmp_path):
+        import threading
+
+        from futures_bot.collaboration.store import CollaborationStore
+
+        store_path = tmp_path / "concurrent_reviews.db"
+        setup_store = CollaborationStore(store_path)
+        setup_store.create_work_item(item_id="wi1", title="Test item")
+        setup_store.close()
+        errors = []
+
+        def _create_review(n):
+            try:
+                s = CollaborationStore(store_path)
+                s.create_integration_review(
+                    review_id=f"rev-{n}", work_item_id="wi1", worker_id=None, branch=None,
+                    status_at_review="testing", confidence_score=50, risk_level="low", level="needs_review",
+                    related_work_item_ids=[], affected_subsystems=[], conflict_resolutions=[],
+                    validation_recommendation={}, readiness_note=None, summary="s", recommendation="r",
+                )
+                s.close()
+            except Exception as exc:  # noqa: BLE001 -- captured for the assertion below, not swallowed silently
+                errors.append((n, exc))
+
+        threads = [threading.Thread(target=_create_review, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert errors == []
+        final_store = CollaborationStore(store_path)
+        assert len(final_store.fetch_integration_reviews("wi1", limit=100)) == 20
         final_store.close()

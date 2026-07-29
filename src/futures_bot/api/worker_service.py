@@ -11,31 +11,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from ..collaboration import parse_db_timestamp
+from ..collaboration import is_worker_stale
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from .schemas import WorkerOut
 from .services import ApiError
 
-#: A worker not heard from in this many seconds is reported `is_stale=True`.
-#: Deliberately generous relative to the recommended 30-60s+ heartbeat
-#: interval (KNOWN_ISSUES.md ISSUE-038's measured SQLite concurrent-writer
-#: ceiling favors an infrequent heartbeat) -- a worker should survive
-#: missing one or two heartbeats (a slow cycle, a brief network blip)
-#: without flapping to "stale."
-_STALE_AFTER_SECONDS = 180.0
-
-
-def _is_worker_stale(worker: dict, now: datetime) -> tuple[bool, float]:
-    """Returns `(is_stale, seconds_since_heartbeat)` -- always computed
-    fresh, never stored on the row (see this module's own docstring)."""
-    heartbeat_at = parse_db_timestamp(worker["last_heartbeat_at"])
-    seconds = (now - heartbeat_at).total_seconds()
-    return seconds >= _STALE_AFTER_SECONDS, seconds
-
 
 def _worker_out(worker: dict, now: Optional[datetime] = None) -> WorkerOut:
     now = now or datetime.now(timezone.utc)
-    is_stale, seconds = _is_worker_stale(worker, now)
+    is_stale, seconds = is_worker_stale(worker, now)
     return WorkerOut(**worker, is_stale=is_stale, seconds_since_heartbeat=seconds)
 
 

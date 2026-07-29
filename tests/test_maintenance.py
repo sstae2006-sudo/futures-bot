@@ -165,10 +165,80 @@ class TestOrphanedOrganizations:
         assert store.fetch_organization("org1") is not None
 
 
+class TestStaleWorkerCleanup:
+    """SIL Phase 6 Milestone 2 -- deliberately deferred in Milestone 1
+    (staleness was read-only, computed live), added now because a
+    worker's *stored* status should reflect reality for anything that
+    snapshots it (e.g. a persisted Integration Review) -- see this
+    module's own docstring for the full rationale."""
+
+    def test_a_worker_within_the_stale_window_is_left_alone(self):
+        store = get_collaboration_store()
+        store.heartbeat_worker(worker_id="w1", display_name="Fresh")
+        scheduler = MaintenanceScheduler()
+
+        count = scheduler._mark_stale_workers_offline(datetime.now(timezone.utc))
+
+        assert count == 0
+        assert store.fetch_worker("w1")["status"] == "online"
+
+    def test_a_worker_past_the_stale_window_is_marked_offline(self):
+        from futures_bot.collaboration import WORKER_STALE_AFTER_SECONDS
+
+        store = get_collaboration_store()
+        store.heartbeat_worker(worker_id="w1", display_name="Stale")
+        far_future = datetime.now(timezone.utc) + timedelta(seconds=WORKER_STALE_AFTER_SECONDS + 60)
+        scheduler = MaintenanceScheduler()
+
+        count = scheduler._mark_stale_workers_offline(far_future)
+
+        assert count == 1
+        assert store.fetch_worker("w1")["status"] == "offline"
+
+    def test_marking_offline_does_not_touch_last_heartbeat_at(self):
+        from futures_bot.collaboration import WORKER_STALE_AFTER_SECONDS
+
+        store = get_collaboration_store()
+        worker = store.heartbeat_worker(worker_id="w1", display_name="Stale")
+        far_future = datetime.now(timezone.utc) + timedelta(seconds=WORKER_STALE_AFTER_SECONDS + 60)
+        scheduler = MaintenanceScheduler()
+
+        scheduler._mark_stale_workers_offline(far_future)
+
+        assert store.fetch_worker("w1")["last_heartbeat_at"] == worker["last_heartbeat_at"]
+
+    def test_an_already_offline_worker_is_not_recounted(self):
+        from futures_bot.collaboration import WORKER_STALE_AFTER_SECONDS
+
+        store = get_collaboration_store()
+        store.heartbeat_worker(worker_id="w1", display_name="Already Offline", status="offline")
+        far_future = datetime.now(timezone.utc) + timedelta(seconds=WORKER_STALE_AFTER_SECONDS + 60)
+        scheduler = MaintenanceScheduler()
+
+        count = scheduler._mark_stale_workers_offline(far_future)
+
+        assert count == 0
+
+    def test_running_twice_is_idempotent(self):
+        from futures_bot.collaboration import WORKER_STALE_AFTER_SECONDS
+
+        store = get_collaboration_store()
+        store.heartbeat_worker(worker_id="w1", display_name="Stale")
+        far_future = datetime.now(timezone.utc) + timedelta(seconds=WORKER_STALE_AFTER_SECONDS + 60)
+        scheduler = MaintenanceScheduler()
+
+        first = scheduler._mark_stale_workers_offline(far_future)
+        second = scheduler._mark_stale_workers_offline(far_future)
+
+        assert first == 1
+        assert second == 0
+
+
 class TestRunCycle:
     def test_updates_status_with_discard_count_and_db_health(self, monkeypatch):
         store = get_collaboration_store()
         store.create_work_item(item_id="w1", title="Old draft", is_draft=True)
+        store.heartbeat_worker(worker_id="w-stale", display_name="Stale")
         scheduler = MaintenanceScheduler()
         far_future = datetime.now(timezone.utc) + timedelta(days=10)
 
@@ -176,10 +246,13 @@ class TestRunCycle:
 
         status = scheduler.status()
         assert status["stale_drafts_discarded_count"] == 1
+        assert status["stale_workers_marked_offline_count"] == 1
         assert status["cycles_completed"] == 1
         assert status["last_error"] is None
         assert "discarded 1 stale draft" in status["last_result"]
         assert "orphaned org" in status["last_result"]
+        assert "stale worker" in status["last_result"]
+        assert store.fetch_worker("w-stale")["status"] == "offline"
 
     def test_a_bad_cycle_records_last_error_without_raising(self, monkeypatch):
         scheduler = MaintenanceScheduler()

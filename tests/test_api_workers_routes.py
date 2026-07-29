@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from futures_bot.api.app import create_app
-from futures_bot.api.worker_service import _STALE_AFTER_SECONDS, _is_worker_stale
+from futures_bot.collaboration import WORKER_STALE_AFTER_SECONDS as _STALE_AFTER_SECONDS
+from futures_bot.collaboration import is_worker_stale as _is_worker_stale
 
 
 def _client(tmp_path, monkeypatch):

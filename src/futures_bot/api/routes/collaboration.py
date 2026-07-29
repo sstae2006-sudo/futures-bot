@@ -13,10 +13,11 @@ from fastapi import APIRouter
 from .. import collaboration_service as services
 from ..schemas import (
     AutomationStatusOut, BranchInfoOut, ClaimWorkItemRequest, ConflictPairOut, ContextBundleOut, ContextBundleRequest,
-    GitSyncStatusOut, GitWatcherStatusOut, IntegrationQueueEntryOut, MergeReadinessOut, MergeReadinessRequest,
-    MergeSummaryOut, MergeSummaryRequest, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut,
-    PreWorkCheckRequest, ReassignWorkItemRequest, TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut,
-    WorkItemCreatedOut, WorkItemCreateRequest, WorkItemOut, WorkItemReviewOut,
+    GenerateIntegrationReviewRequest, GitSyncStatusOut, GitWatcherStatusOut, IntegrationQueueEntryOut,
+    IntegrationReviewOut, MergeReadinessOut, MergeReadinessRequest, MergeSummaryOut, MergeSummaryRequest,
+    OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, PreWorkCheckRequest, ReassignWorkItemRequest,
+    TimelineEntryOut, UpdateWorkItemStatusRequest, WorkItemActivityOut, WorkItemCreatedOut, WorkItemCreateRequest,
+    WorkItemOut, WorkItemReviewOut,
 )
 
 router = APIRouter(tags=["collaboration"])
@@ -83,6 +84,24 @@ def get_work_item_review(item_id: str) -> WorkItemReviewOut:
     includes overlap warnings and branch info), never new intelligence.
     See `docs/ARCHITECTURE.md`'s "SIL Phase 6" section."""
     return services.get_work_item_review(item_id)
+
+
+@router.post("/api/work-items/{item_id}/reviews", response_model=IntegrationReviewOut)
+def generate_integration_review(item_id: str, req: GenerateIntegrationReviewRequest) -> IntegrationReviewOut:
+    """SIL Phase 6 Milestone 2's Intelligent Review Pipeline -- generates
+    and PERMANENTLY stores a new Integration Review (never overwrites a
+    prior one; see `collaboration/store.py::create_integration_review`'s
+    docstring). Unlike `GET .../review` above (Milestone 1's live,
+    ephemeral single-item check), this is the persistent historical
+    record Milestone 2's Phase 1 asks for."""
+    return services.generate_integration_review(item_id, worker_id=req.worker_id)
+
+
+@router.get("/api/work-items/{item_id}/reviews", response_model=list[IntegrationReviewOut])
+def list_integration_reviews(item_id: str, limit: int = 50) -> list[IntegrationReviewOut]:
+    """The full historical Integration Review trail for one work item,
+    newest first."""
+    return services.list_integration_reviews(item_id, limit=limit)
 
 
 @router.post("/api/work-items/{item_id}/claim", response_model=WorkItemOut)

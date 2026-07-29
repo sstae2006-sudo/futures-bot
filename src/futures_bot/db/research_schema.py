@@ -445,3 +445,32 @@ workers = Table(
     Index("idx_workers_org_id", "org_id"),
     Index("idx_workers_status", "status"),
 )
+
+# SIL Phase 6 "Integration Coordinator" Milestone 2 -- see
+# collaboration/store.py's matching SQLite schema comment for the full
+# rationale: append-only (no update/delete path anywhere in this
+# codebase), work_item_id a soft reference (no ForeignKey -- matching
+# work_item_activity's own Postgres definition above, even though the
+# SQLite side declares a real FK for that table), four JSONB columns
+# mirroring workers.capabilities' existing precedent.
+integration_reviews = Table(
+    "integration_reviews",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("work_item_id", String, nullable=False),
+    Column("worker_id", String),
+    Column("branch", String),
+    Column("status_at_review", String, nullable=False),
+    Column("confidence_score", Integer, nullable=False),
+    Column("risk_level", String, nullable=False),
+    Column("level", String, nullable=False),
+    Column("related_work_item_ids", JSONB, nullable=False, server_default="[]"),
+    Column("affected_subsystems", JSONB, nullable=False, server_default="[]"),
+    Column("conflict_resolutions", JSONB, nullable=False, server_default="[]"),
+    Column("validation_recommendation", JSONB, nullable=False, server_default="{}"),
+    Column("readiness_note", String),
+    Column("summary", String, nullable=False),
+    Column("recommendation", String, nullable=False),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    Index("idx_integration_reviews_work_item", "work_item_id", "created_at"),
+)

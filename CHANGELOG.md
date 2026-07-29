@@ -4,6 +4,107 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — SIL Phase 6 "Integration Coordinator" Milestone 2: Intelligent Review Pipeline
+
+Builds directly on Milestone 1 (below) without redesigning the Worker
+Registry or Integration Queue. Full design in `docs/ARCHITECTURE.md`'s
+"SIL Phase 6" section (Milestone 2 subsection); this is the summary.
+
+**Added — persistent Integration Reviews.** A new `integration_reviews`
+table (`collaboration/store.py`/`pg_store.py`, Alembic `b91531ca7583`),
+generated via `POST`/`GET /api/work-items/{id}/reviews`. APPEND-ONLY --
+`create_integration_review` is the only writer, no update/delete path
+exists -- a deliberate, one-off exception to this package's usual
+"compute live, never persist" rule (`merge_readiness`/`overlap_v2`/
+`context_bundle`/worker staleness are all still computed fresh, never
+cached): the point of a review is a permanent historical record so
+confidence can be seen trending over time, not just its current value.
+Wires together only existing primitives, no new scoring model:
+`merge_readiness.py` (overlap + branch info), a new Conflict Resolution
+Assistant (`collaboration/conflict_resolution.py` -- subsystem impact +
+a templated suggested resolution/integration order layered on Overlap
+Engine V2's existing scoring, never an automated merge action), a
+minimal subsystem lookup (`collaboration/architecture_map.py` -- a
+hand-curated path-prefix table, explicitly NOT a real architecture/
+dependency graph; SIL Phase 5's "Trading Intelligence Layer" was
+proposed, never built, and this milestone is honest about that gap
+rather than pretending otherwise), and a shared Validation Planning
+heuristic (`collaboration/validation_planning.py`, extracted unchanged
+from `tools/local_validate.py` so the CLI and this new feature share one
+file->test mapping instead of two independently-drifting copies). Every
+generated review also logs `review_generated` (and
+`integration_recommended` when `level == "ready"`) into the existing
+`work_item_activity` log -- reuses the existing timeline, no second
+mechanism.
+
+**Added — stale-worker cleanup.** `collaboration/maintenance.py::_mark_stale_workers_offline`
+closes the one write path Milestone 1 deliberately deferred (staleness
+was read-only, computed live at request time) -- a worker whose
+`last_heartbeat_at` has gone stale is now flipped to `status='offline'`
+via a new `store.set_worker_status`, which deliberately does NOT touch
+`last_heartbeat_at` (marking a worker offline must not itself look like
+a fresh heartbeat, or it would immediately un-stale itself on the next
+cycle). Fully reversible -- a worker's row is never deleted, and its
+very next real heartbeat brings it back online. `WORKER_STALE_AFTER_SECONDS`/
+`is_worker_stale` moved from `api/worker_service.py` into
+`collaboration/__init__.py` so both the API layer and `maintenance.py`
+read one shared definition (`collaboration/` must not import from
+`api/`, so the shared home has to live in `collaboration/`).
+
+**Added — Mission Control.** `IntegrationQueuePanel.tsx`'s existing row
+expansion (not a new panel -- "avoid duplicate dashboards" was explicit
+in this milestone's own spec) gained a "Generate Integration Review"
+button, plus, once at least one review exists: its summary,
+recommendation, affected subsystems, validation recommendation, each
+conflict's suggested resolution, and a bare confidence-trend string
+across review history.
+
+**Fixed as part of this work (not a separate bug-hunt finding, an
+in-flight refactor):** `tools/local_validate.py`'s file->test mapping
+logic (`_candidate_test_globs`/`_matching_tests`/`_plan`) is now
+`collaboration/validation_planning.py`'s `candidate_test_globs`/
+`matching_tests`/`plan_validation`, imported by `local_validate.py`
+rather than duplicated -- behavior is unchanged, this is purely so the
+Integration Review's "Validation Planning" phase reuses the same
+heuristic instead of a second, independently-drifting copy.
+
+**Reliability pass** (Milestone 2's own required bug hunt): concurrent
+review creation (20 threads, one work item, append-only inserts --
+verified no crash/lost row), duplicate/concurrent worker registration
+(already covered by Milestone 1's existing test, re-verified), stale
+worker cleanup (idempotent across repeated runs, never re-triggers for
+an already-`offline` worker, never touches `last_heartbeat_at`, fully
+recoverable on the next real heartbeat), activity-timeline ordering
+(`review_generated` appears correctly in `GET /api/activity/timeline`),
+architecture reporting and validation recommendations (unit-tested
+directly against the new modules). No new bugs found requiring a
+`KNOWN_ISSUES.md` entry -- every piece behaved as designed on first
+correct implementation, unlike Milestone 1's mid-implementation
+worker-type correction.
+
+**Explicitly deferred, documented in `ROADMAP.md`'s Future section as
+Milestone 3+, not built now**: a real, trend-based Confidence Dashboard
+(M3 -- Milestone 2's bare confidence-trend string is the seed, not the
+full version); a Conflict Heat Map + Pending Approvals rollup (M4);
+Coordinator Memory (M5, still not enough accumulated review history to
+build from yet); an Integration Branch git workflow (M6, needs separate
+explicit human sign-off); Rollback Intelligence (M7, likely depends on
+M6); a real Architecture Model/Trading Intelligence Layer replacing
+`architecture_map.py`'s static lookup with a genuine dependency graph
+(a distinct, larger, not-yet-scoped effort). Folding worker staleness
+into `merge_readiness.py`'s own factor list (from Milestone 1's original
+M2 sketch) also remains undone -- Milestone 2's actual spec didn't
+separately call for it; noted in `ROADMAP.md` as still open.
+
+60 new tests (55 backend -- three new-module unit-test files
+(`test_architecture_map.py`, `test_conflict_resolution.py`,
+`test_validation_planning.py`), store/API/maintenance additions
+including a concurrent-review-creation test and five
+stale-worker-cleanup tests; 5 frontend). Full suite verified: 1654
+backend tests (1599 -> 1654 passed, 51 skipped, 0 failed), 134 frontend
+tests (129 -> 134, 0 failed), `tsc -b`/`oxlint` both clean (no new
+warnings).
+
 ## 2026-07-29 — SIL Phase 6 "Integration Coordinator" Milestone 1: Worker Registry + Integration Queue
 
 A large, multi-part spec asking to "transform SIL into a centralized

@@ -22,6 +22,11 @@ invocation -- correctness over speed, same as everywhere else in this
 codebase (CLAUDE.md section 2). Pass `--fast` to skip that fallback and
 just run whatever direct matches were found (or nothing, printed
 clearly) when you deliberately want the quick path.
+
+The mapping logic itself lives in `collaboration/validation_planning.py`
+(extracted there in SIL Phase 6 Milestone 2) so the Integration Review's
+"Validation Planning" feature can recommend the same thing for a work
+item's `estimated_files`, without a second, independently-drifting copy.
 """
 
 from __future__ import annotations
@@ -32,63 +37,9 @@ import sys
 from pathlib import Path
 
 from futures_bot.collaboration import git_info
+from futures_bot.collaboration.validation_planning import plan_validation
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_SRC_PREFIX = "src/futures_bot/"
-_TESTS_DIR = "tests"
-
-
-def _candidate_test_globs(changed_file: str) -> list[str]:
-    """`src/futures_bot/collaboration/git_watcher.py` ->
-    `["test_git_watcher*.py", "test_collaboration_git_watcher*.py"]` --
-    tried in this order (module-stem alone, then package-qualified) since
-    real examples in this repo use both conventions inconsistently (see
-    this module's own docstring)."""
-    if not changed_file.startswith(_SRC_PREFIX) or not changed_file.endswith(".py"):
-        return []
-    rel = changed_file[len(_SRC_PREFIX):]
-    parts = rel[:-3].split("/")  # strip ".py", split package path
-    stem = parts[-1]
-    if stem in ("__init__",):
-        return []
-    globs = [f"test_{stem}*.py"]
-    if len(parts) > 1:
-        qualified = "_".join(parts)
-        globs.append(f"test_{qualified}*.py")
-    return globs
-
-
-def _matching_tests(changed_file: str) -> list[str]:
-    tests_dir = _REPO_ROOT / _TESTS_DIR
-    matches: set[str] = set()
-    for pattern in _candidate_test_globs(changed_file):
-        for path in tests_dir.glob(pattern):
-            matches.add(f"{_TESTS_DIR}/{path.name}")
-    return sorted(matches)
-
-
-def _plan(changed_files: list[str]) -> tuple[list[str], list[str], bool]:
-    """Returns (matched_test_files, unmapped_source_files, frontend_changed)."""
-    matched: set[str] = set()
-    unmapped: list[str] = []
-    frontend_changed = False
-
-    for f in changed_files:
-        if f.startswith(f"{_TESTS_DIR}/") and f.endswith(".py"):
-            matched.add(f)  # a test file itself changed -- always run it
-            continue
-        if f.startswith("frontend/src/"):
-            frontend_changed = True
-            continue
-        if not f.startswith(_SRC_PREFIX):
-            continue  # tools/, docs/, config files, etc. -- nothing to run
-        tests = _matching_tests(f)
-        if tests:
-            matched.update(tests)
-        else:
-            unmapped.append(f)
-
-    return sorted(matched), unmapped, frontend_changed
 
 
 def _run(cmd: list[str], cwd: Path) -> bool:
@@ -113,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     for f in changed:
         print(f"  {f}")
 
-    matched, unmapped, frontend_changed = _plan(changed)
+    plan = plan_validation(changed, _REPO_ROOT)
+    matched, unmapped, frontend_changed = plan.matched_tests, plan.unmapped_files, plan.frontend_changed
 
     run_full_backend = args.full
     if unmapped and not args.fast and not args.full:

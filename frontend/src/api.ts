@@ -22,6 +22,7 @@ import type {
   Infrastructure,
   InsightOut,
   IntegrationQueueEntry,
+  IntegrationReview,
   JobOut,
   LiveSessionStatus,
   LogEntry,
@@ -716,3 +717,16 @@ export const getIntegrationQueue = (orgId?: string) =>
   request<IntegrationQueueEntry[]>(orgId ? `/api/integration/queue?org_id=${encodeURIComponent(orgId)}` : '/api/integration/queue')
 
 export const getWorkItemReview = (itemId: string) => request<WorkItemReview>(`/api/work-items/${itemId}/review`)
+
+// SIL Phase 6 "Integration Coordinator" Milestone 2: Intelligent Review Pipeline.
+// Distinct from getWorkItemReview above (Milestone 1's live, ephemeral check) --
+// these generate/list PERMANENT historical Integration Review records.
+
+export const generateIntegrationReview = (itemId: string, workerId?: string) =>
+  request<IntegrationReview>(`/api/work-items/${itemId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify({ worker_id: workerId }),
+  })
+
+export const getIntegrationReviews = (itemId: string, limit?: number) =>
+  request<IntegrationReview[]>(`/api/work-items/${itemId}/reviews${limit ? `?limit=${limit}` : ''}`)

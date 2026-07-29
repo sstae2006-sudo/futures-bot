@@ -20,7 +20,23 @@ step one is permanently committed with no users and no admin visibility.
 This only ever *counts and logs* -- an organization is real user data,
 not ephemeral draft metadata, so unlike stale drafts this is never
 auto-deleted (see KNOWN_ISSUES.md for the finding this responds to).
-"""
+
+SIL Phase 6 Milestone 2 (2026-07-29) added a second write path: workers
+(the Worker Registry, Milestone 1) whose `last_heartbeat_at` has gone
+stale are flipped to `status='offline'`. Milestone 1 deliberately left
+staleness "read-only, computed live at request time" (see
+`collaboration/__init__.py::is_worker_stale`'s docstring) -- there was no
+real coherence problem a background write would solve yet. This cycle
+adds one anyway, for a different, concrete reason: `GET /api/workers`'s
+`is_stale` flag is correct only for a caller who actually polls it,
+whereas a worker's *stored* `status` (`online`/`idle`/`offline`) is what
+persisted Integration Reviews and any other point-in-time snapshot
+capture -- a review generated hours after a worker went silent
+should not show `status='online'` from a heartbeat that's long since
+gone cold. This is still never destructive (a worker's row is never
+deleted, only its status column, itself reversible on the very next
+heartbeat) and mirrors `_discard_stale_drafts`'s existing shape closely
+enough to reuse the same cycle rather than adding a second thread."""
 
 from __future__ import annotations
 
@@ -30,7 +46,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from . import parse_db_timestamp
+from . import is_worker_stale, parse_db_timestamp
 from .store import CollaborationError, get_collaboration_store
 from ..journal import LOGGER_NAME
 
@@ -47,6 +63,7 @@ class _Status:
     stale_drafts_discarded_count: int = 0
     last_db_health_ok: Optional[bool] = None
     orphaned_orgs_detected_count: int = 0
+    stale_workers_marked_offline_count: int = 0
 
 
 class MaintenanceScheduler:
@@ -98,6 +115,7 @@ class MaintenanceScheduler:
                 "stale_drafts_discarded_count": self._status.stale_drafts_discarded_count,
                 "last_db_health_ok": self._status.last_db_health_ok,
                 "orphaned_orgs_detected_count": self._status.orphaned_orgs_detected_count,
+                "stale_workers_marked_offline_count": self._status.stale_workers_marked_offline_count,
             }
 
     def _run(
@@ -112,6 +130,7 @@ class MaintenanceScheduler:
         try:
             discarded = self._discard_stale_drafts(now, stale_draft_days)
             orphaned = self._detect_orphaned_organizations(now, orphaned_org_grace_hours)
+            offlined = self._mark_stale_workers_offline(now)
             db_health = self._check_database_health()
             db_summary = (
                 "not configured (SQLite mode)" if not db_health.configured
@@ -121,12 +140,14 @@ class MaintenanceScheduler:
             with self._lock:
                 self._status.last_cycle_at = now.isoformat()
                 self._status.last_result = (
-                    f"discarded {discarded} stale draft(s); {orphaned} orphaned org(s) detected; DB: {db_summary}"
+                    f"discarded {discarded} stale draft(s); {orphaned} orphaned org(s) detected; "
+                    f"{offlined} stale worker(s) marked offline; DB: {db_summary}"
                 )
                 self._status.last_error = None
                 self._status.cycles_completed += 1
                 self._status.stale_drafts_discarded_count += discarded
                 self._status.orphaned_orgs_detected_count = orphaned
+                self._status.stale_workers_marked_offline_count += offlined
                 self._status.last_db_health_ok = db_health.ok if db_health.configured else None
         except Exception as exc:  # noqa: BLE001 -- one bad cycle must not kill the thread
             log.error("maintenance cycle failed: %s", exc, exc_info=True)
@@ -180,6 +201,30 @@ class MaintenanceScheduler:
                 continue  # still within the grace period -- registration may simply be mid-flight
             if not store.fetch_users(org_id=org["id"]):
                 count += 1
+        return count
+
+    def _mark_stale_workers_offline(self, now: datetime) -> int:
+        """Flips every non-`offline` worker whose `last_heartbeat_at` has
+        passed `WORKER_STALE_AFTER_SECONDS` (the same threshold `GET
+        /api/workers`'s `is_stale` field already reads live) to
+        `status='offline'` -- see this module's own docstring for why
+        Milestone 2 adds this write path where Milestone 1 deliberately
+        didn't. Uses `set_worker_status`, which does NOT touch
+        `last_heartbeat_at` -- marking a worker offline must not look
+        like a fresh heartbeat (see that method's docstring)."""
+        store = get_collaboration_store()
+        count = 0
+        for worker in store.fetch_workers():
+            if worker["status"] == "offline":
+                continue
+            stale, _ = is_worker_stale(worker, now)
+            if not stale:
+                continue
+            try:
+                store.set_worker_status(worker["id"], "offline")
+                count += 1
+            except CollaborationError:
+                pass  # heartbeated (no longer stale) or removed concurrently -- fine, ignore
         return count
 
     def _discard_stale_drafts(self, now: datetime, stale_draft_days: float) -> int:

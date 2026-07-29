@@ -776,3 +776,108 @@ class TestWorkItemReviewRoute:
         resp = client.get("/api/work-items/does-not-exist/review")
 
         assert resp.status_code == 400
+
+
+class TestIntegrationReviewRoutes:
+    """SIL Phase 6 Milestone 2 -- the PERSISTENT Integration Review
+    (`POST`/`GET /api/work-items/{id}/reviews`), distinct from
+    `TestWorkItemReviewRoute` above (Milestone 1's live, ephemeral
+    single-item check, `.../review` singular)."""
+
+    def test_generate_review_returns_full_shape(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post(
+            "/api/work-items", json={"title": "Fix risk manager", "estimated_files": ["src/futures_bot/risk/manager.py"]},
+        ).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/reviews", json={"worker_id": "w1"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["work_item_id"] == item["id"]
+        assert body["worker_id"] == "w1"
+        assert 0 <= body["confidence_score"] <= 100
+        assert body["risk_level"] in ("no_risk", "low", "medium", "high", "critical")
+        assert "Risk Management" in body["affected_subsystems"]
+        assert isinstance(body["conflict_resolutions"], list)
+        assert "recommended_tests" in body["validation_recommendation"]
+        assert body["summary"]
+        assert body["recommendation"]
+
+    def test_generate_review_without_worker_id_is_allowed(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/reviews", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["worker_id"] is None
+
+    def test_generate_review_unknown_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.post("/api/work-items/does-not-exist/reviews", json={})
+
+        assert resp.status_code == 400
+
+    def test_two_reviews_are_both_kept_never_overwritten(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+
+        first = client.post(f"/api/work-items/{item['id']}/reviews", json={}).json()
+        second = client.post(f"/api/work-items/{item['id']}/reviews", json={}).json()
+
+        assert first["id"] != second["id"]
+        history = client.get(f"/api/work-items/{item['id']}/reviews").json()
+        assert {r["id"] for r in history} == {first["id"], second["id"]}
+
+    def test_review_history_newest_first(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+        first = client.post(f"/api/work-items/{item['id']}/reviews", json={}).json()
+        second = client.post(f"/api/work-items/{item['id']}/reviews", json={}).json()
+
+        history = client.get(f"/api/work-items/{item['id']}/reviews").json()
+
+        assert history[0]["id"] == second["id"]
+        assert history[1]["id"] == first["id"]
+
+    def test_review_history_empty_for_item_with_no_reviews(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+
+        assert client.get(f"/api/work-items/{item['id']}/reviews").json() == []
+
+    def test_review_history_unknown_item_is_400(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+
+        resp = client.get("/api/work-items/does-not-exist/reviews")
+
+        assert resp.status_code == 400
+
+    def test_generate_review_logs_review_generated_into_timeline(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        item = client.post("/api/work-items", json={"title": "Task"}).json()["work_item"]
+
+        client.post(f"/api/work-items/{item['id']}/reviews", json={})
+
+        timeline = client.get("/api/activity/timeline", params={"work_item_id": item["id"]}).json()
+        assert any(e["title"] == "review_generated" for e in timeline)
+
+    def test_conflict_resolution_includes_suggested_resolution_when_overlapping(self, tmp_path, monkeypatch):
+        client = _client(tmp_path, monkeypatch)
+        client.post("/api/work-items", json={
+            "title": "Other work", "estimated_files": ["src/futures_bot/risk/manager.py"],
+            "priority": "high",
+        })
+        item = client.post("/api/work-items", json={
+            "title": "This work", "estimated_files": ["src/futures_bot/risk/manager.py"],
+        }).json()["work_item"]
+
+        resp = client.post(f"/api/work-items/{item['id']}/reviews", json={})
+
+        body = resp.json()
+        assert len(body["conflict_resolutions"]) >= 1
+        resolution = body["conflict_resolutions"][0]
+        assert resolution["suggested_resolution"]
+        assert "Risk Management" in resolution["architecture_components_affected"]

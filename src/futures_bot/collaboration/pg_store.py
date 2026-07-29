@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 from . import MANUAL_STATUSES, OWNER_TYPES, PRIORITIES, WORKER_STATUSES, WORKER_TYPES
 from .store import CollaborationError
 from ..db.engine import get_engine
-from ..db.research_schema import metadata, work_item_activity, work_items, workers
+from ..db.research_schema import integration_reviews, metadata, work_item_activity, work_items, workers
 
 
 def _isoformat_datetimes(d: dict) -> dict:
@@ -271,3 +271,65 @@ class PgCollaborationStore:
         if capability is not None:
             result = [w for w in result if capability in (w["capabilities"] or [])]
         return result
+
+    def set_worker_status(self, worker_id: str, status: str) -> dict:
+        """Mirrors `CollaborationStore.set_worker_status` -- see that
+        docstring for why this deliberately does not touch
+        `last_heartbeat_at`."""
+        if status not in WORKER_STATUSES:
+            raise CollaborationError(f"Unknown status {status!r} -- must be one of {WORKER_STATUSES}.")
+        if self.fetch_worker(worker_id) is None:
+            raise CollaborationError(f"No such worker: {worker_id!r}.")
+        with self._engine.begin() as conn:
+            conn.execute(workers.update().where(workers.c.id == worker_id).values(
+                status=status, updated_at=func.now(),
+            ))
+        return self.fetch_worker(worker_id)  # type: ignore[return-value]
+
+    # --- Integration Reviews (SIL Phase 6 "Integration Coordinator" Milestone 2) ---
+
+    def create_integration_review(
+        self, *, review_id: str, work_item_id: str, worker_id: Optional[str] = None, branch: Optional[str] = None,
+        status_at_review: str, confidence_score: int, risk_level: str, level: str,
+        related_work_item_ids: list[str], affected_subsystems: list[str],
+        conflict_resolutions: list[dict], validation_recommendation: dict,
+        readiness_note: Optional[str], summary: str, recommendation: str,
+    ) -> dict:
+        """Mirrors `CollaborationStore.create_integration_review` -- see
+        that docstring for why this is append-only and what it logs into
+        `work_item_activity`."""
+        with self._engine.begin() as conn:
+            conn.execute(integration_reviews.insert().values(
+                id=review_id, work_item_id=work_item_id, worker_id=worker_id, branch=branch,
+                status_at_review=status_at_review, confidence_score=confidence_score, risk_level=risk_level,
+                level=level, related_work_item_ids=related_work_item_ids, affected_subsystems=affected_subsystems,
+                conflict_resolutions=conflict_resolutions, validation_recommendation=validation_recommendation,
+                readiness_note=readiness_note, summary=summary, recommendation=recommendation,
+            ))
+            self._log_activity(
+                conn, work_item_id, "review_generated", worker_id,
+                f"review_id={review_id} score={confidence_score} level={level} risk={risk_level}",
+            )
+            if level == "ready":
+                self._log_activity(conn, work_item_id, "integration_recommended", worker_id, f"review_id={review_id}")
+        return self.fetch_integration_review(review_id)  # type: ignore[return-value]
+
+    def fetch_integration_review(self, review_id: str) -> Optional[dict]:
+        with self._engine.connect() as conn:
+            row = conn.execute(select(integration_reviews).where(integration_reviews.c.id == review_id)).first()
+        return _row_dict(row)
+
+    def fetch_integration_reviews(self, work_item_id: str, *, limit: int = 50) -> list[dict]:
+        stmt = (
+            select(integration_reviews)
+            .where(integration_reviews.c.work_item_id == work_item_id)
+            .order_by(integration_reviews.c.created_at.desc())
+            .limit(limit)
+        )
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).fetchall()
+        return [_row_dict(r) for r in rows]
+
+    def fetch_latest_integration_review(self, work_item_id: str) -> Optional[dict]:
+        reviews = self.fetch_integration_reviews(work_item_id, limit=1)
+        return reviews[0] if reviews else None

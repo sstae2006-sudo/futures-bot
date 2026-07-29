@@ -6,9 +6,12 @@ feature area modular rather than growing the already-large `services.py`.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from ..collaboration import PRIORITIES, git_info
+from ..collaboration.architecture_map import affected_subsystems
+from ..collaboration.conflict_resolution import ConflictResolution, build_conflict_resolutions
 from ..collaboration.context_bundle import build_context_bundle
 from ..collaboration.git_info import BranchInfo, Commit
 from ..collaboration.git_sync import get_git_sync_scheduler
@@ -19,13 +22,27 @@ from ..collaboration.merge_readiness import ReadinessFactor, compute_merge_readi
 from ..collaboration.overlap_v2 import compute_all_conflicts, compute_overlap_v2
 from ..collaboration.store import CollaborationError, get_collaboration_store
 from ..collaboration.timeline import build_timeline
+from ..collaboration.validation_planning import ValidationPlan, plan_validation
 from .schemas import (
-    AutomationStatusOut, BranchInfoOut, CommitOut, ConflictPairOut, ContextBundleOut, DocExcerptOut,
-    GitSyncStatusOut, GitWatcherStatusOut, IntegrationQueueEntryOut, MaintenanceStatusOut, MergeReadinessOut,
-    MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out, PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut,
-    WorkItemActivityOut, WorkItemOut, WorkItemReviewOut,
+    AutomationStatusOut, BranchInfoOut, CommitOut, ConflictPairOut, ConflictResolutionOut, ContextBundleOut,
+    DocExcerptOut, GitSyncStatusOut, GitWatcherStatusOut, IntegrationQueueEntryOut, IntegrationReviewOut,
+    MaintenanceStatusOut, MergeReadinessOut, MergeSummaryOut, OverlapWarningOut, OverlapWarningV2Out,
+    PreWorkCheckOut, ReadinessFactorOut, TimelineEntryOut, ValidationRecommendationOut, WorkItemActivityOut,
+    WorkItemOut, WorkItemReviewOut,
 )
 from .services import ApiError
+
+#: Templated recommendation text keyed by `MergeReadiness.level` -- SIL
+#: Phase 6 Milestone 2's Integration Review recommendation field. Plain
+#: advice, not an action this package ever takes on its own (see
+#: ROADMAP.md's "Future" section for why autonomous merging stays out of
+#: scope).
+_RECOMMENDATION_BY_LEVEL = {
+    "ready": "Recommend proceeding to integration -- no significant blockers detected.",
+    "needs_review": "Recommend a human review before integrating -- some risk factors are present.",
+    "risky": "Recommend addressing the flagged risk factors before integrating.",
+    "not_ready": "Not recommended for integration yet -- significant risk factors are present.",
+}
 
 #: Work item lifecycle stages the Integration Queue surfaces -- see
 #: `docs/ARCHITECTURE.md`'s "SIL Phase 6" section for why this is a
@@ -424,6 +441,115 @@ def get_automation_status() -> AutomationStatusOut:
 
 def get_git_sync_status() -> GitSyncStatusOut:
     return GitSyncStatusOut(**get_git_sync_scheduler().status())
+
+
+def _conflict_resolution_out(resolution: ConflictResolution) -> ConflictResolutionOut:
+    w = resolution.warning
+    return ConflictResolutionOut(
+        work_item_id=w.work_item_id, title=w.title, risk=w.risk, confidence=w.confidence, reason=w.reason,
+        architecture_components_affected=resolution.architecture_components_affected,
+        suggested_resolution=resolution.suggested_resolution,
+    )
+
+
+def _validation_recommendation_out(plan: ValidationPlan) -> ValidationRecommendationOut:
+    return ValidationRecommendationOut(
+        recommended_tests=plan.matched_tests, unmapped_files=plan.unmapped_files,
+        recommend_full_suite=plan.recommend_full_suite, frontend_validation_recommended=plan.frontend_changed,
+    )
+
+
+def _integration_review_summary(
+    item: dict, readiness: MergeReadinessOut, subsystems: list[str], validation: ValidationRecommendationOut,
+) -> str:
+    parts = [
+        f"'{item['title']}' is currently {item['status']} with a merge-readiness score of "
+        f"{readiness.score}/100 ({readiness.level})."
+    ]
+    if readiness.overlap_warnings:
+        top = readiness.overlap_warnings[0]
+        parts.append(f"Highest overlap risk is {top.risk} against '{top.title}' (confidence {top.confidence}/100).")
+    else:
+        parts.append("No overlap detected against other active work.")
+    if subsystems:
+        parts.append(f"Affects: {', '.join(subsystems)}.")
+    if validation.recommend_full_suite:
+        parts.append("Recommends the full backend suite (some changed files have no direct test mapping).")
+    elif validation.recommended_tests:
+        parts.append(f"Recommends running {len(validation.recommended_tests)} mapped test file(s).")
+    else:
+        parts.append("No backend test files mapped to these changes.")
+    return " ".join(parts)
+
+
+def _integration_review_out(row: dict) -> IntegrationReviewOut:
+    return IntegrationReviewOut(
+        id=row["id"], work_item_id=row["work_item_id"], worker_id=row.get("worker_id"), branch=row.get("branch"),
+        status_at_review=row["status_at_review"], confidence_score=row["confidence_score"],
+        risk_level=row["risk_level"], level=row["level"], related_work_item_ids=row["related_work_item_ids"],
+        affected_subsystems=row["affected_subsystems"],
+        conflict_resolutions=[ConflictResolutionOut(**c) for c in row["conflict_resolutions"]],
+        validation_recommendation=ValidationRecommendationOut(**row["validation_recommendation"]),
+        readiness_note=row.get("readiness_note"), summary=row["summary"], recommendation=row["recommendation"],
+        created_at=row["created_at"],
+    )
+
+
+def generate_integration_review(item_id: str, worker_id: Optional[str] = None) -> IntegrationReviewOut:
+    """SIL Phase 6 Milestone 2's Intelligent Review Pipeline -- generates
+    and PERMANENTLY stores a new Integration Review for `item_id`. Unlike
+    `get_work_item_review` above (Milestone 1's live, ephemeral
+    single-item check), every call here inserts a new, immutable row
+    (see `collaboration/store.py::create_integration_review`'s
+    docstring for why persistence is a deliberate exception to this
+    package's usual "compute live, never cache" rule). Wires together
+    existing primitives only: `merge_readiness` (overlap + branch info),
+    the Conflict Resolution Assistant, the minimal subsystem lookup, and
+    the shared validation-planning heuristic -- no new scoring model."""
+    store = get_collaboration_store()
+    item = store.fetch_work_item(item_id)
+    if item is None:
+        raise ApiError(f"No such work item: {item_id!r}")
+
+    readiness = merge_readiness(
+        item["estimated_files"], branch=item.get("branch"), work_item_id=item_id, org_id=item.get("org_id"),
+    )
+    other_items_by_id = {
+        i["id"]: i for i in store.fetch_active_work_items(exclude_id=item_id, org_id=item.get("org_id"))
+    }
+    warnings_v2 = compute_overlap_v2(
+        item["estimated_files"], list(other_items_by_id.values()),
+        proposed_title=item.get("title"), proposed_description=item.get("description"),
+    )
+    resolutions = build_conflict_resolutions(item, warnings_v2, other_items_by_id)
+    subsystems = affected_subsystems(item["estimated_files"])
+    plan = plan_validation(item["estimated_files"], git_info.repo_root() or Path("."))
+    validation_out = _validation_recommendation_out(plan)
+    note = _readiness_note(item)
+    risk_level = warnings_v2[0].risk if warnings_v2 else "no_risk"
+    summary = _integration_review_summary(item, readiness, subsystems, validation_out)
+    recommendation = _RECOMMENDATION_BY_LEVEL[readiness.level]
+
+    row = store.create_integration_review(
+        review_id=uuid.uuid4().hex[:12], work_item_id=item_id, worker_id=worker_id, branch=item.get("branch"),
+        status_at_review=item["status"], confidence_score=readiness.score, risk_level=risk_level,
+        level=readiness.level, related_work_item_ids=[w.work_item_id for w in warnings_v2],
+        affected_subsystems=subsystems,
+        conflict_resolutions=[_conflict_resolution_out(r).model_dump() for r in resolutions],
+        validation_recommendation=validation_out.model_dump(),
+        readiness_note=note, summary=summary, recommendation=recommendation,
+    )
+    return _integration_review_out(row)
+
+
+def list_integration_reviews(item_id: str, limit: int = 50) -> list[IntegrationReviewOut]:
+    """The full historical review trail for one work item, newest first
+    -- Milestone 2's "complete historical review trail" success
+    criterion."""
+    store = get_collaboration_store()
+    if store.fetch_work_item(item_id) is None:
+        raise ApiError(f"No such work item: {item_id!r}")
+    return [_integration_review_out(r) for r in store.fetch_integration_reviews(item_id, limit=limit)]
 
 
 def get_context_bundle(

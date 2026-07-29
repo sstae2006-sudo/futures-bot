@@ -89,6 +89,39 @@ CREATE TABLE IF NOT EXISTS workers (
 );
 CREATE INDEX IF NOT EXISTS idx_workers_org_id ON workers(org_id);
 CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
+
+-- SIL Phase 6 "Integration Coordinator" Milestone 2. Append-only --
+-- unlike every other collaboration/ table's "compute live, never
+-- persist" precedent (merge_readiness, overlap_v2, worker staleness),
+-- an Integration Review is a deliberate, permanent historical snapshot:
+-- the whole point is to see how confidence trended over time, not just
+-- its current value. `create_integration_review` is the only writer;
+-- there is no update/delete path, matching `work_item_activity`'s own
+-- immutable-log precedent (real FK to work_items for the same reason
+-- that table has one -- a review only ever gets created for a work item
+-- that still exists). `related_work_item_ids`/`affected_subsystems`/
+-- `conflict_resolutions`/`validation_recommendation` are JSON-as-TEXT,
+-- same pattern `estimated_files`/`capabilities` already establish.
+CREATE TABLE IF NOT EXISTS integration_reviews (
+    id                          TEXT PRIMARY KEY,
+    work_item_id                TEXT NOT NULL,
+    worker_id                   TEXT,
+    branch                      TEXT,
+    status_at_review            TEXT NOT NULL,
+    confidence_score            INTEGER NOT NULL,
+    risk_level                  TEXT NOT NULL,
+    level                       TEXT NOT NULL,
+    related_work_item_ids       TEXT NOT NULL DEFAULT '[]',
+    affected_subsystems         TEXT NOT NULL DEFAULT '[]',
+    conflict_resolutions        TEXT NOT NULL DEFAULT '[]',
+    validation_recommendation   TEXT NOT NULL DEFAULT '{}',
+    readiness_note               TEXT,
+    summary                      TEXT NOT NULL,
+    recommendation                TEXT NOT NULL,
+    created_at                  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id)
+);
+CREATE INDEX IF NOT EXISTS idx_integration_reviews_work_item ON integration_reviews(work_item_id, created_at);
 """
 
 
@@ -116,6 +149,19 @@ def _row_with_capabilities(row: dict) -> dict:
         row["capabilities"] = json.loads(row["capabilities"])
     except (TypeError, json.JSONDecodeError):
         row["capabilities"] = []
+    return row
+
+
+def _row_with_review_json(row: dict) -> dict:
+    row = dict(row)
+    for field, default in (
+        ("related_work_item_ids", []), ("affected_subsystems", []),
+        ("conflict_resolutions", []), ("validation_recommendation", {}),
+    ):
+        try:
+            row[field] = json.loads(row[field])
+        except (TypeError, json.JSONDecodeError):
+            row[field] = default
     return row
 
 
@@ -485,6 +531,93 @@ class CollaborationStore:
         if capability is not None:
             workers = [w for w in workers if capability in w["capabilities"]]
         return workers
+
+    def set_worker_status(self, worker_id: str, status: str) -> dict:
+        """Marks a worker's status directly, WITHOUT touching
+        `last_heartbeat_at` -- deliberately separate from `heartbeat_worker`,
+        whose entire point is recording that a worker is alive *right now*
+        (it bumps the heartbeat timestamp). Flipping a stale worker to
+        `offline` must not itself look like a fresh heartbeat -- that
+        would make the row un-stale again on every maintenance cycle,
+        defeating the purpose. Used only by
+        `maintenance.py`'s stale-worker cleanup (SIL Phase 6 Milestone 2;
+        deliberately deferred in Milestone 1 -- see that module's
+        docstring for why this write path exists now)."""
+        if status not in WORKER_STATUSES:
+            raise CollaborationError(f"Unknown status {status!r} -- must be one of {WORKER_STATUSES}.")
+        if self.fetch_worker(worker_id) is None:
+            raise CollaborationError(f"No such worker: {worker_id!r}.")
+        self._conn.execute(
+            "UPDATE workers SET status=?, updated_at=datetime('now') WHERE id = ?", (status, worker_id),
+        )
+        self._conn.commit()
+        return self.fetch_worker(worker_id)  # type: ignore[return-value]
+
+    # --- Integration Reviews (SIL Phase 6 "Integration Coordinator" Milestone 2) ---
+
+    def create_integration_review(
+        self, *, review_id: str, work_item_id: str, worker_id: Optional[str] = None, branch: Optional[str] = None,
+        status_at_review: str, confidence_score: int, risk_level: str, level: str,
+        related_work_item_ids: list[str], affected_subsystems: list[str],
+        conflict_resolutions: list[dict], validation_recommendation: dict,
+        readiness_note: Optional[str], summary: str, recommendation: str,
+    ) -> dict:
+        """Inserts a new, permanent Integration Review row -- never
+        updates or overwrites a prior one (see this table's schema
+        comment in `_SCHEMA` for why persistence is a deliberate exception
+        to this package's usual "compute live" rule). Also logs
+        `review_generated` into the existing `work_item_activity` log
+        (SIL Phase 6 Milestone 2's "Activity Timeline Integration"
+        requirement) -- reuses `_log_activity` rather than a second
+        timeline mechanism. An additional `integration_recommended` event
+        is logged when `level == 'ready'`, matching the spec's own event
+        vocabulary; `work started/completed`/`validation completed` are
+        already covered by the existing `created`/`status_changed`/
+        `completed` events this store logs elsewhere."""
+        self._conn.execute(
+            """
+            INSERT INTO integration_reviews (
+                id, work_item_id, worker_id, branch, status_at_review, confidence_score, risk_level, level,
+                related_work_item_ids, affected_subsystems, conflict_resolutions, validation_recommendation,
+                readiness_note, summary, recommendation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                review_id, work_item_id, worker_id, branch, status_at_review, confidence_score, risk_level, level,
+                json.dumps(related_work_item_ids), json.dumps(affected_subsystems), json.dumps(conflict_resolutions),
+                json.dumps(validation_recommendation), readiness_note, summary, recommendation,
+            ),
+        )
+        self._log_activity(
+            work_item_id, "review_generated", worker_id,
+            f"review_id={review_id} score={confidence_score} level={level} risk={risk_level}",
+        )
+        if level == "ready":
+            self._log_activity(work_item_id, "integration_recommended", worker_id, f"review_id={review_id}")
+        self._conn.commit()
+        return self.fetch_integration_review(review_id)  # type: ignore[return-value]
+
+    def fetch_integration_review(self, review_id: str) -> Optional[dict]:
+        self._conn.row_factory = sqlite3.Row
+        row = self._conn.execute("SELECT * FROM integration_reviews WHERE id = ?", (review_id,)).fetchone()
+        self._conn.row_factory = None
+        return _row_with_review_json(dict(row)) if row is not None else None
+
+    def fetch_integration_reviews(self, work_item_id: str, *, limit: int = 50) -> list[dict]:
+        """Full historical review trail for one work item, newest first --
+        same `rowid` tiebreak `fetch_activity` uses, for the same reason
+        (SQLite's `datetime('now')` is only second-resolution)."""
+        self._conn.row_factory = sqlite3.Row
+        rows = self._conn.execute(
+            "SELECT * FROM integration_reviews WHERE work_item_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (work_item_id, limit),
+        ).fetchall()
+        self._conn.row_factory = None
+        return [_row_with_review_json(dict(r)) for r in rows]
+
+    def fetch_latest_integration_review(self, work_item_id: str) -> Optional[dict]:
+        reviews = self.fetch_integration_reviews(work_item_id, limit=1)
+        return reviews[0] if reviews else None
 
 
 def get_collaboration_store():

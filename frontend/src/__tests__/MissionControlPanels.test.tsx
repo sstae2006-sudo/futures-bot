@@ -8,7 +8,7 @@ import WorkforcePanel from '../components/mission-control/WorkforcePanel'
 import { SessionProvider } from '../session'
 import * as api from '../api'
 import type {
-  AutomationStatus, Infrastructure, IntegrationQueueEntry, SystemHealth, User, Worker, WorkItem,
+  AutomationStatus, Infrastructure, IntegrationQueueEntry, IntegrationReview, SystemHealth, User, Worker, WorkItem,
 } from '../types'
 
 vi.mock('../api', async () => {
@@ -26,6 +26,8 @@ vi.mock('../api', async () => {
     discardDraftWorkItem: vi.fn(),
     getWorkers: vi.fn(),
     getIntegrationQueue: vi.fn(),
+    getIntegrationReviews: vi.fn(),
+    generateIntegrationReview: vi.fn(),
   }
 })
 
@@ -290,6 +292,20 @@ function makeIntegrationQueueEntry(overrides: Partial<IntegrationQueueEntry> = {
   }
 }
 
+function makeIntegrationReview(overrides: Partial<IntegrationReview> = {}): IntegrationReview {
+  return {
+    id: 'rev1', work_item_id: 'w1', worker_id: null, branch: 'main', status_at_review: 'ready_for_review',
+    confidence_score: 90, risk_level: 'no_risk', level: 'ready', related_work_item_ids: [],
+    affected_subsystems: ['Risk Management'],
+    conflict_resolutions: [],
+    validation_recommendation: { recommended_tests: ['tests/test_risk.py'], unmapped_files: [], recommend_full_suite: false, frontend_validation_recommended: false },
+    readiness_note: null, summary: "'Ready item' is currently ready_for_review with a merge-readiness score of 90/100 (ready).",
+    recommendation: 'Recommend proceeding to integration -- no significant blockers detected.',
+    created_at: '2026-07-29T00:00:00+00:00',
+    ...overrides,
+  }
+}
+
 describe('WorkforcePanel', () => {
   it('lists workers with their status and capabilities', async () => {
     vi.mocked(api.getWorkers).mockResolvedValue([makeWorker({ capabilities: ['backend', 'testing'] })])
@@ -350,6 +366,7 @@ describe('IntegrationQueuePanel', () => {
 
   it('expands to show the merge-readiness factor breakdown on click', async () => {
     vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([])
 
     render(<IntegrationQueuePanel />)
     await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
@@ -358,5 +375,82 @@ describe('IntegrationQueuePanel', () => {
     screen.getByText('Ready item').click()
 
     await waitFor(() => expect(screen.getByText(/No conflicts\./)).toBeInTheDocument())
+  })
+
+  it('expanding loads and shows no-reviews-yet when none exist', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([])
+
+    render(<IntegrationQueuePanel />)
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    screen.getByText('Ready item').click()
+
+    await waitFor(() => expect(screen.getByText('No Integration Reviews generated yet.')).toBeInTheDocument())
+    expect(screen.getByText('Generate Integration Review')).toBeInTheDocument()
+  })
+
+  it('expanding shows the latest review\'s summary, recommendation, and affected subsystems', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([makeIntegrationReview()])
+
+    render(<IntegrationQueuePanel />)
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    screen.getByText('Ready item').click()
+
+    await waitFor(() => expect(screen.getByText(/Recommend proceeding to integration/)).toBeInTheDocument())
+    expect(screen.getByText(/Risk Management/)).toBeInTheDocument()
+    expect(screen.getByText(/tests\/test_risk\.py/)).toBeInTheDocument()
+  })
+
+  it('shows a suggested resolution for each conflict resolution', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([
+      makeIntegrationReview({
+        conflict_resolutions: [{
+          work_item_id: 'w2', title: 'Other work', risk: 'high', confidence: 60,
+          reason: '1 file(s) shared.', architecture_components_affected: ['Risk Management'],
+          suggested_resolution: 'High conflict risk -- recommend integrating first.',
+        }],
+      }),
+    ])
+
+    render(<IntegrationQueuePanel />)
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    screen.getByText('Ready item').click()
+
+    await waitFor(() => expect(screen.getByText(/recommend integrating first/)).toBeInTheDocument())
+    expect(screen.getByText('high')).toBeInTheDocument()
+  })
+
+  it('shows the confidence trend when more than one review exists', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([
+      makeIntegrationReview({ id: 'rev2', confidence_score: 90 }),
+      makeIntegrationReview({ id: 'rev1', confidence_score: 50 }),
+    ])
+
+    render(<IntegrationQueuePanel />)
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    screen.getByText('Ready item').click()
+
+    await waitFor(() => expect(screen.getByText(/Confidence trend/)).toBeInTheDocument())
+    expect(screen.getByText(/50 → 90/)).toBeInTheDocument()
+  })
+
+  it('clicking "Generate Integration Review" calls the API and refreshes history', async () => {
+    vi.mocked(api.getIntegrationQueue).mockResolvedValue([makeIntegrationQueueEntry()])
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([])
+    vi.mocked(api.generateIntegrationReview).mockResolvedValue(makeIntegrationReview())
+
+    render(<IntegrationQueuePanel />)
+    await waitFor(() => expect(screen.getByText('Ready item')).toBeInTheDocument())
+    screen.getByText('Ready item').click()
+    await waitFor(() => expect(screen.getByText('Generate Integration Review')).toBeInTheDocument())
+
+    vi.mocked(api.getIntegrationReviews).mockResolvedValue([makeIntegrationReview()])
+    screen.getByText('Generate Integration Review').click()
+
+    await waitFor(() => expect(api.generateIntegrationReview).toHaveBeenCalledWith('w1'))
+    await waitFor(() => expect(screen.getByText(/Recommend proceeding to integration/)).toBeInTheDocument())
   })
 })

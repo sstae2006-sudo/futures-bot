@@ -854,7 +854,7 @@ before shipping (three via the very tests being written, one via
 under an interpreter lacking the `db` extra) -- see KNOWN_ISSUES.md
 ISSUE-029 through ISSUE-033 for full detail on each.
 
-## SIL Phase 6 "Integration Coordinator" (2026-07-29, Milestone 1)
+## SIL Phase 6 "Integration Coordinator" (2026-07-29, Milestones 1-2)
 
 A large, multi-part spec ("transform SIL into a centralized engineering
 coordination platform capable of managing multiple humans, multiple AI
@@ -984,16 +984,153 @@ scoring) was renamed to "Testing / Ready for Review" in the same change
 been exactly the "duplicate systems" confusion the audit itself flagged.
 
 **Deliberately not built in Milestone 1** (see ROADMAP.md's Future
-section for the fuller list and reasoning): a background scheduler
-mutating worker `status` on staleness (live computation at read time
-already answers this; adding a write path would be the "unnecessary
-complexity" the audit warns against -- revisit only if a real coherence
-gap shows up in practice); an "Integration Branch" git workflow (changes
-actual day-to-day git usage -- needs explicit, separate human sign-off,
-never silently bundled into another milestone); "Coordinator Memory"
-(historical intelligence -- no usage data exists yet to build it from);
-"Rollback Intelligence" (same reason, and likely depends on the
-Integration Branch workflow existing first).
+section for the fuller list and reasoning): an "Integration Branch" git
+workflow (changes actual day-to-day git usage -- needs explicit,
+separate human sign-off, never silently bundled into another milestone);
+"Coordinator Memory" (historical intelligence -- no usage data exists
+yet to build it from); "Rollback Intelligence" (same reason, and likely
+depends on the Integration Branch workflow existing first). Milestone 1
+also left worker staleness read-only (a background scheduler mutating
+`status` would have been "unnecessary complexity" with no real coherence
+problem to solve yet) -- Milestone 2 revisits and builds that one piece,
+see below.
+
+### Milestone 2: Intelligent Review Pipeline (2026-07-29)
+
+Adds a PERSISTENT Integration Review on top of Milestone 1's Worker
+Registry/Integration Queue, without redesigning either. This is a
+genuine, deliberate exception to this package's usual "compute live,
+never persist" rule (`merge_readiness`/`overlap_v2`/`context_bundle`/
+worker staleness are all still computed fresh, never cached) --
+Milestone 2's whole point is a permanent historical record of what the
+coordinator concluded at a given moment, so confidence can be seen
+trending over time, not just its current value.
+
+```
+collaboration/store.py                A fourth table, `integration_reviews`
+  |                                    -- APPEND-ONLY: create_integration_
+  v                                    review() is the only writer, no
+integration_reviews                    update/delete path exists anywhere
+                                       in this codebase for it (mirrors
+                                       work_item_activity's own immutable-
+                                       log precedent, including a real FK
+                                       to work_items on the SQLite side --
+                                       Postgres, like work_item_activity,
+                                       leaves it a soft reference).
+                                       related_work_item_ids/affected_
+                                       subsystems/conflict_resolutions/
+                                       validation_recommendation are
+                                       JSONB (SQLite: JSON-as-TEXT),
+                                       mirroring workers.capabilities'
+                                       existing precedent. Every insert
+                                       also logs `review_generated` (and
+                                       `integration_recommended` when
+                                       level == "ready") into the
+                                       EXISTING work_item_activity log --
+                                       Milestone 2's "Activity Timeline
+                                       Integration" requirement, met by
+                                       reuse rather than a second
+                                       timeline mechanism.
+
+collaboration/architecture_map.py     A minimal, hand-curated path-prefix
+                                       -> subsystem lookup -- NOT a real
+                                       architecture/dependency graph. SIL
+                                       Phase 5's "Trading Intelligence
+                                       Layer" (a real import-graph/
+                                       architecture model) was proposed,
+                                       never built; this module is an
+                                       honest, explicitly-labeled stand-in
+                                       so Milestone 2's "Architecture
+                                       Impact Reports" can report
+                                       something real (which subsystems a
+                                       work item's estimated_files touch)
+                                       without silently overstating what
+                                       this platform actually knows about
+                                       its own structure.
+
+collaboration/conflict_resolution.py  The Conflict Resolution Assistant --
+                                       wraps each Overlap Engine V2
+                                       warning with affected subsystems
+                                       (via architecture_map.py) and a
+                                       templated suggested resolution/
+                                       integration order (whichever item
+                                       is further along the STATUSES
+                                       pipeline integrates first; ties
+                                       break on created_at ascending).
+                                       Still an explainable heuristic
+                                       layered on overlap_v2.py's existing
+                                       scoring, never a new conflict-
+                                       detection algorithm, and never an
+                                       automated merge action -- only
+                                       advice for a human or AI worker.
+
+collaboration/validation_planning.py  The file->test mapping heuristic
+                                       extracted, unchanged, from
+                                       tools/local_validate.py (SIL Phase
+                                       4) so both the CLI and the
+                                       Integration Review's "Validation
+                                       Planning" share one definition
+                                       instead of two independently-
+                                       drifting copies. local_validate.py
+                                       now imports plan_validation() from
+                                       here.
+
+collaboration/__init__.py             WORKER_STALE_AFTER_SECONDS/
+                                       is_worker_stale() moved here from
+                                       api/worker_service.py so
+                                       collaboration/maintenance.py's new
+                                       stale-worker cleanup and the API
+                                       layer's read-time is_stale
+                                       computation share one definition
+                                       -- collaboration/ must not import
+                                       from api/, so the shared home has
+                                       to live in collaboration/, not
+                                       api/.
+
+collaboration/maintenance.py           _mark_stale_workers_offline() --
+                                       the write path Milestone 1
+                                       deliberately deferred. Uses the new
+                                       store.set_worker_status(), which
+                                       does NOT touch last_heartbeat_at
+                                       (flipping a stale worker offline
+                                       must not itself look like a fresh
+                                       heartbeat). Reversible on the very
+                                       next real heartbeat -- never
+                                       destructive, a worker's row is
+                                       never deleted.
+
+api/collaboration_service.py          generate_integration_review()/
+                                       list_integration_reviews() -- wires
+                                       together merge_readiness (overlap +
+                                       branch info), the Conflict
+                                       Resolution Assistant, the subsystem
+                                       lookup, and the shared validation-
+                                       planning heuristic. No new scoring
+                                       model; every number in a review
+                                       traces back to an existing
+                                       primitive.
+```
+
+**API**: `POST /api/work-items/{id}/reviews` generates and permanently
+stores a new review (never overwrites a prior one); `GET` on the same
+path returns the full historical trail, newest first. Distinct from
+Milestone 1's `GET /api/work-items/{id}/review` (singular -- the live,
+ephemeral check), which is unchanged.
+
+**Mission Control**: `IntegrationQueuePanel.tsx`'s existing row expansion
+(not a new panel -- "avoid duplicate dashboards" is explicit in the
+Milestone 2 spec itself) gained a "Generate Integration Review" button
+plus, once at least one review exists, its summary/recommendation/
+affected subsystems/validation recommendation/conflict resolutions and a
+confidence trend across history.
+
+**Deliberately not built in Milestone 2** (same reasoning as Milestone
+1's own deferral list): an "Integration Branch" git workflow; "Coordinator
+Memory"; "Rollback Intelligence"; autonomous merging or a semantic merge
+engine; distributed worker scheduling; autonomous AI orchestration. A
+real Architecture Model/Trading Intelligence Layer (replacing
+`architecture_map.py`'s static lookup with a genuine dependency graph)
+remains a distinct, larger, not-yet-scoped future milestone.
 
 ## Why strategies cannot execute trades directly
 

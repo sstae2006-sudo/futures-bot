@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1650 tests as of 2026-07-29** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1599 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1705 tests as of 2026-07-29** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1654 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1650 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1705 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,52 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-29: **SIL Phase 6 "Integration Coordinator" Milestone 2 —
+Intelligent Review Pipeline.** Builds directly on Milestone 1 (below) —
+neither the Worker Registry nor the Integration Queue were redesigned.
+Adds a PERSISTENT Integration Review: a new `integration_reviews` table
+(`collaboration/store.py`/`pg_store.py`, Alembic `b91531ca7583`),
+append-only (no update/delete path anywhere — a deliberate, one-off
+exception to this package's "compute live, never persist" rule, since
+the point is a historical trail, not a fresher live number), generated
+via `POST`/`GET /api/work-items/{id}/reviews`
+(`api/collaboration_service.py::generate_integration_review`/
+`list_integration_reviews`). Wires together only existing primitives —
+no new scoring model: `merge_readiness.py` (overlap + branch info), a
+new Conflict Resolution Assistant (`collaboration/conflict_resolution.py`
+— suggested resolution + integration order layered on Overlap Engine
+V2's existing scoring), a minimal, explicitly-honest subsystem lookup
+(`collaboration/architecture_map.py` — a hand-curated path-prefix table,
+NOT a real architecture/dependency graph; SIL Phase 5's "Trading
+Intelligence Layer" was proposed, never built, and this milestone does
+not pretend otherwise), and a shared Validation Planning heuristic
+(`collaboration/validation_planning.py`, extracted unchanged from
+`tools/local_validate.py` so the CLI and the API share one file→test
+mapping instead of two). Every review also logs `review_generated`
+(and `integration_recommended` when `level == "ready"`) into the
+existing `work_item_activity` timeline — reuse, not a second timeline
+mechanism. Also closed the one write path Milestone 1 deliberately
+deferred: `collaboration/maintenance.py::_mark_stale_workers_offline`
+flips a stale worker's `status` to `offline` (via a new
+`store.set_worker_status`, which never touches `last_heartbeat_at` — a
+worker's next real heartbeat recovers it). `WORKER_STALE_AFTER_SECONDS`/
+`is_worker_stale` moved from `api/worker_service.py` into
+`collaboration/__init__.py` so both the API layer and `maintenance.py`
+share one definition (`collaboration/` must not import from `api/`).
+Mission Control: `IntegrationQueuePanel.tsx`'s existing row expansion
+(not a new panel — "avoid duplicate dashboards" was explicit in this
+milestone's own spec) gained a "Generate Integration Review" button plus
+the latest review's summary/recommendation/affected subsystems/
+validation recommendation/conflict resolutions and a bare
+confidence-trend string across history. 60 new tests this milestone (55
+backend: three new-module unit-test files — `test_architecture_map.py`,
+`test_conflict_resolution.py`, `test_validation_planning.py` — plus
+store/API/maintenance additions including a concurrent-review-creation
+test and five stale-worker-cleanup tests; 5 frontend). Full backend
+suite verified green after every logical chunk; see
+`docs/ARCHITECTURE.md`'s "SIL Phase 6" section (Milestone 2 subsection)
+for the full design.
 
 2026-07-29: **SIL Phase 6 "Integration Coordinator" Milestone 1 — Worker
 Registry + Integration Queue.** Scoped deliberately (a design-review

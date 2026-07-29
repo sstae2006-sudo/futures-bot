@@ -83,3 +83,28 @@ WORKER_TYPES = (
     "background_service",        # this process's own schedulers (git_watcher/maintenance/git_sync) self-reporting, if ever wired in
     "distributed_compute_worker", # a future networked compute contributor (see ROADMAP.md's "Future" section)
 )
+
+#: A worker not heard from in this many seconds is considered stale.
+#: Originally defined only in `api/worker_service.py` (Milestone 1, where
+#: staleness was only ever *read*); moved here in SIL Phase 6 Milestone 2
+#: so `collaboration/maintenance.py`'s new stale-worker cleanup and the
+#: API layer's read-time `is_stale` computation share one definition
+#: instead of two independently-tunable copies. `maintenance.py` living in
+#: this package (not `api/`) means the shared definition has to live here
+#: too, not in `api/worker_service.py` -- `collaboration/` must not import
+#: from `api/` (see docs/ARCHITECTURE.md's dependency-direction rules).
+#: Deliberately generous relative to the recommended 30-60s+ heartbeat
+#: interval (KNOWN_ISSUES.md ISSUE-038's measured SQLite concurrent-writer
+#: ceiling favors an infrequent heartbeat) -- a worker should survive
+#: missing one or two heartbeats (a slow cycle, a brief network blip)
+#: without flapping to "stale."
+WORKER_STALE_AFTER_SECONDS = 180.0
+
+
+def is_worker_stale(worker: dict, now: datetime) -> tuple[bool, float]:
+    """Returns `(is_stale, seconds_since_heartbeat)` -- always computed
+    fresh from `last_heartbeat_at`, never stored on the row itself (see
+    `store.py::heartbeat_worker`'s docstring)."""
+    heartbeat_at = parse_db_timestamp(worker["last_heartbeat_at"])
+    seconds = (now - heartbeat_at).total_seconds()
+    return seconds >= WORKER_STALE_AFTER_SECONDS, seconds

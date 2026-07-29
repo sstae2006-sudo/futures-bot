@@ -410,6 +410,36 @@ into git history):
   primitive it wraps, a tiebreak test; 7 frontend panel tests). See
   `docs/ARCHITECTURE.md`'s "SIL Phase 6" section for the full design and
   the explicit Milestone 2+ deferral list below.
+- **SIL Phase 6 "Integration Coordinator" Milestone 2: Intelligent
+  Review Pipeline** (2026-07-29): a PERSISTENT Integration Review
+  (`integration_reviews` table, append-only -- a deliberate exception to
+  this package's "compute live, never cache" rule, since the point is a
+  historical trail, not a fresher live number) generated via
+  `POST`/`GET /api/work-items/{id}/reviews`, wiring together
+  `merge_readiness.py`, a new Conflict Resolution Assistant
+  (`conflict_resolution.py` -- suggested resolution + integration order
+  over Overlap Engine V2's existing scoring), a minimal, explicitly
+  honest subsystem lookup (`architecture_map.py` -- NOT a real
+  architecture/dependency graph; SIL Phase 5's "Trading Intelligence
+  Layer" was proposed, never built) for Architecture Impact Reports, and
+  a shared Validation Planning heuristic (`validation_planning.py`,
+  extracted from `tools/local_validate.py` so both share one definition
+  instead of two). Every review is also logged into the existing
+  `work_item_activity` timeline (`review_generated`/
+  `integration_recommended`) -- no second timeline mechanism. Also
+  closed the one write path Milestone 1 deliberately deferred: stale
+  workers are now flipped to `offline` by `maintenance.py` (via a new
+  `store.set_worker_status`, which never touches `last_heartbeat_at`, so
+  the very next real heartbeat recovers the worker). Mission Control:
+  `IntegrationQueuePanel.tsx`'s existing row expansion (not a new panel)
+  gained a "Generate Integration Review" button, the latest review's
+  summary/affected subsystems/validation recommendation/conflict
+  resolutions, and a confidence trend across history. 46 new tests (39
+  backend: store/API/module-level unit tests for the three new modules,
+  a concurrent-review-creation test, five stale-worker-cleanup tests; 7
+  frontend). This supersedes the smaller "M2" sketch originally written
+  at the end of Milestone 1 below -- see the Future section's note on
+  what that sketch got right/wrong.
 
 ### Future: Collaboration Platform, beyond what's built so far
 
@@ -449,24 +479,30 @@ actually prioritized:
   (backtesting, optimization, model training, inference) that Mission
   Control monitors and assigns compatible jobs to.
 
-**SIL Phase 6 "Integration Coordinator" Milestone 2+** (Milestone 1 —
-Worker Registry + Integration Queue — done 2026-07-29, see Completed
-above and `docs/ARCHITECTURE.md`'s "SIL Phase 6" section):
+**SIL Phase 6 "Integration Coordinator" Milestone 3+** (Milestones 1 —
+Worker Registry + Integration Queue — and 2 — Intelligent Review
+Pipeline — both done 2026-07-29, see Completed above and
+`docs/ARCHITECTURE.md`'s "SIL Phase 6" section):
 
-- **M2**: wire the review pipeline onto the `ready_for_review` transition
-  (log the computed review into `work_item_activity`); fold worker
-  staleness into `merge_readiness`'s own factor list (a claimed item
-  whose worker has gone stale is itself a merge-risk signal) — cheap
-  once both Milestone 1 pieces exist.
-- **M3**: a real, trend-based Confidence Dashboard, once M2's logging has
-  accumulated real history to show a trend from.
+- A small, still-open piece from the original (pre-spec) M2 sketch that
+  Milestone 2's actual, larger spec didn't separately call for: folding
+  worker staleness into `merge_readiness`'s own factor list (a claimed
+  item whose worker has gone stale is itself a merge-risk signal, not
+  just a Workforce panel concern) — cheap now that both the Worker
+  Registry and worker-staleness cleanup exist; pick up whenever
+  `merge_readiness.py` is next touched.
+- **M3**: a real, trend-based Confidence Dashboard, now that Milestone
+  2's persisted reviews give it real history to show a trend from
+  (`IntegrationQueuePanel.tsx` already shows a bare confidence-trend
+  string per item; a dedicated dashboard/chart is the fuller version).
 - **M4**: a Conflict Heat Map (a visual layer over the existing
   `compute_all_conflicts`, no new backend) and a Pending Approvals
   rollup (drafts + queue in one panel).
 - **M5**: Coordinator Memory (historical intelligence — previous merge
-  failures, common conflict locations, subsystem stability) — only once
-  M1/M2 have produced real usage data to build it from; re-confirm the
-  "no data yet" premise before starting, don't assume it still holds.
+  failures, common conflict locations, subsystem stability) — Milestone
+  2's `integration_reviews` table is real usage data this could now draw
+  on, but accumulating enough of it to be meaningful still hasn't
+  happened; re-confirm before starting.
 - **M6**: an Integration Branch git workflow (worker branches → an
   integration branch → validation → review → recommendation → main,
   instead of integrating directly into main) — needs explicit, separate
@@ -476,3 +512,8 @@ above and `docs/ARCHITECTURE.md`'s "SIL Phase 6" section):
   item/subsystem/commit/dependency and recommending, never performing,
   a rollback) — likely depends on M6's Integration Branch existing
   first, since a rollback is an operation against that workflow.
+- **A real Architecture Model / Trading Intelligence Layer.**
+  `architecture_map.py` (Milestone 2) is a deliberately minimal, static
+  path-prefix lookup, explicitly not a real dependency/import graph --
+  replacing it with one is the larger, not-yet-scoped SIL Phase 5 effort
+  the "true architecture/dependency graph" item above already names.
