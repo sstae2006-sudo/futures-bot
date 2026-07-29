@@ -288,6 +288,12 @@ class AutomationSettings(BaseModel):
     stale_draft_days: float = Field(
         default=3.0, ge=0.0, description="A draft work item untouched (updated_at) for this many days is discarded by the maintenance job."
     )
+    orphaned_org_grace_hours: float = Field(
+        default=1.0, ge=0.0,
+        description="An organization with zero users, older than this many hours, is COUNTED (never deleted -- "
+                     "an organization is real user data) by the maintenance job -- see KNOWN_ISSUES.md's SIL "
+                     "Phase 6 audit finding on registration's two-call non-atomicity.",
+    )
     git_sync_enabled: bool = Field(
         default=False,
         description="Background pull-only git sync (collaboration/git_sync.py) -- fast-forwards this checkout's "

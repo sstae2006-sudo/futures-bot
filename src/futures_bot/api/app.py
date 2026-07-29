@@ -116,6 +116,7 @@ def _maybe_start_automation() -> None:
             get_maintenance_scheduler().start(
                 interval_seconds=settings.automation.maintenance_interval_seconds,
                 stale_draft_days=settings.automation.stale_draft_days,
+                orphaned_org_grace_hours=settings.automation.orphaned_org_grace_hours,
             )
             log.info(
                 "SIL Phase 4 maintenance scheduler started on boot (interval=%ss, stale_draft_days=%s).",

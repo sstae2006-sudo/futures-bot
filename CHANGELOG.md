@@ -4,6 +4,66 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — SIL Phase 6 collaboration audit: 5 findings, 2 fixed
+
+User asked for a complete audit of the collaboration architecture (Team
+Mode, Active Work Registry, automation, accounts, git integration, DB/
+API sync) before building any new "Integration Coordinator" feature.
+Audited via a parallel research fork (accounts/Team Mode/DB, less
+firsthand-known this session) plus direct review (collaboration/
+automation, built this session). Full detail in `KNOWN_ISSUES.md`
+ISSUE-034 through ISSUE-038; this is the summary.
+
+**Fixed, with regression tests:**
+- **ISSUE-034 (Medium)**: registration's two-call non-atomicity
+  (`POST /api/organizations` then `POST /api/users`) can permanently
+  orphan a zero-user organization with no admin visibility. Root cause
+  needs a combined API contract (a schema/route decision, out of scope
+  for an audit pass) -- fixed the *visibility* gap instead: the
+  maintenance scheduler now counts (never deletes -- an org is real
+  data) orphaned organizations past a grace period, surfaced in
+  `GET /api/automation/status`. 4 new tests.
+- **ISSUE-035 (Low)**: `GET /api/activity/timeline`'s global path had no
+  usable index (a full table scan + sort) -- the existing composite
+  index only helps once `work_item_id` is constrained. Added
+  `idx_work_item_activity_created_at` in both backends (SQLite +
+  Alembic migration `bb0017abe70b` for Postgres) -- purely additive.
+
+**Documented, deliberately not fixed (see each entry for why):**
+- **ISSUE-036 (High as a primitive)**: `GET /api/users` +
+  `GET /api/users/{id}/me` together let anyone harvest every user's
+  `api_key` -- a direct, faithful consequence of this platform having no
+  authentication layer yet, not a coding mistake. No superficial fix is
+  safe without breaking the Profile page or providing false security;
+  flagged as exactly what "real authentication" (already on
+  `ROADMAP.md`) needs to close.
+- **ISSUE-037 (Low)**: `git_watcher.py`'s draft-dedup logic has no
+  cross-process protection -- safe today (only an in-process lock exists),
+  a real but low-severity gap if multiple machines ever run
+  `automation.enabled` simultaneously under Team Mode. Worst case is a
+  duplicate, clearly-labeled draft a human dismisses in one click.
+- **ISSUE-038 (informational)**: measured, not estimated -- 400
+  concurrent SQLite writes succeed cleanly; 5,000 across 100 threads
+  produces `database is locked` on ~4% of them. Directly relevant to any
+  future multi-worker design: that load profile needs Team Mode's
+  Postgres backend, not SQLite mode.
+
+**Also verified NOT bugs** (audited, confirmed safe, no action needed):
+org/user creation already uses DB-level `UNIQUE` constraints + caught
+`IntegrityError` (no TOCTOU race, unlike the earlier `claim_work_item`
+fix); `frontend/src/session.tsx`'s stale-user handling.
+
+**Design note carried into the Integration Coordinator scoping
+discussion** (not a bug): Mission Control's existing "Merge Queue" tab
+is a client-side filter over the work-items list
+(`status === 'testing' || 'ready_for_review'`), not a real queue --
+naming collision with the actual Integration Queue the next feature
+needs; `merge_readiness.py`'s explainable score and
+`overlap_v2.compute_all_conflicts` already exist and should be reused
+directly, not rebuilt.
+
+Full suite verified: 1564 backend tests (0 failed, 51 skipped).
+
 ## 2026-07-29 — Pull-only auto-sync (git-sync scheduler)
 
 User asked whether a teammate on their own machine could edit/commit

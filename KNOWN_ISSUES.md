@@ -1152,3 +1152,174 @@ verified fixed — instead mark it Resolved with a date and commit.
 - **Current status:** **Resolved 2026-07-29**, same commit it was
   introduced in. Added `is_draft: false` to each fixture's default
   object.
+
+---
+
+### ISSUE-034 — Registration's two-call non-atomicity can leave a permanently orphaned, zero-user organization (RESOLVED: detection; root cause still open)
+
+- **Severity:** Medium (real data-integrity gap, not destructive; no
+  admin visibility into it previously)
+- **Description:** Found 2026-07-29 during the SIL Phase 6 collaboration
+  audit. `Register.tsx`'s registration flow is two separate,
+  non-transactional API calls -- `POST /api/organizations` then
+  `POST /api/users` with the returned `org_id`. If the second call never
+  completes (browser closed mid-flow, a network error, any failure mode
+  ISSUE-024's client-side org-id-caching retry logic doesn't cover), the
+  organization from the first call is permanently committed with zero
+  users and no way for an admin to even notice it exists.
+- **Files involved:** `src/futures_bot/api/accounts_service.py`,
+  `frontend/src/pages/Register.tsx`.
+- **Possible cause:** No single transactional
+  "create-organization-with-owner" operation exists -- the two inserts
+  happen in two separate HTTP round-trips, which can't be made atomic
+  without either combining them into one request (a new API route,
+  needing the explicit approval CLAUDE.md section 8 requires) or
+  accepting the gap and adding visibility/cleanup around it.
+- **Current status:** **Detection resolved 2026-07-29** --
+  `collaboration/maintenance.py`'s scheduler now counts (never deletes --
+  an organization is real user data, not disposable draft metadata)
+  organizations with zero users older than `automation.orphaned_org_grace_hours`
+  (default 1 hour), surfaced as `orphaned_orgs_detected_count` in
+  `GET /api/automation/status` and Mission Control's `AutomationPanel`.
+  4 new regression tests (`tests/test_maintenance.py::TestOrphanedOrganizations`).
+  **Root cause (the two-call non-atomicity itself) remains open** --
+  fixing it properly needs either a combined create-org-with-owner API
+  contract or an explicit decision to accept detect-and-notify as the
+  permanent posture; flagged for whoever scopes real authentication
+  (ROADMAP.md's "Future" section), since that work will likely touch
+  this same registration flow anyway.
+
+---
+
+### ISSUE-035 — `GET /api/activity/timeline`'s global path had no usable index (RESOLVED)
+
+- **Severity:** Low (a forward-looking scalability gap, not a current
+  slowdown at today's data volume)
+- **Description:** Found 2026-07-29 during the SIL Phase 6 collaboration
+  audit. `fetch_activity(work_item_id=None)` -- the global timeline
+  `GET /api/activity/timeline` uses when no `work_item_id` filter is
+  given -- runs `SELECT * FROM work_item_activity ORDER BY created_at
+  DESC, rowid DESC LIMIT ?` with no `WHERE` clause. The only existing
+  index, `idx_work_item_activity_item (work_item_id, created_at)`, only
+  helps once `work_item_id` is constrained to a specific value -- this
+  query was an unindexed full-table scan + sort.
+- **Files involved:** `src/futures_bot/collaboration/store.py`,
+  `src/futures_bot/db/research_schema.py`.
+- **Possible cause:** The composite index was added for the
+  per-work-item timeline view (`fetch_activity(work_item_id=...)`);
+  the global path's different access pattern (sort-only, no filter) was
+  never separately indexed.
+- **Current status:** **Resolved 2026-07-29.** Added
+  `idx_work_item_activity_created_at (created_at)` -- purely additive
+  (a new index only, no column/schema-shape change) in both backends:
+  `CREATE INDEX IF NOT EXISTS` in `collaboration/store.py`'s SQLite
+  schema script (retroactive and idempotent -- no `ALTER TABLE`-if-
+  missing dance needed the way a new *column* requires), plus Alembic
+  migration `bb0017abe70b` for Postgres/TimescaleDB.
+
+---
+
+### ISSUE-036 — `GET /api/users` + `GET /api/users/{id}/me` together let anyone harvest every user's `api_key` (OPEN, not fixed)
+
+- **Severity:** High as a primitive, currently low real-world impact
+  (`api_key` isn't checked against anything yet anywhere in this
+  codebase -- confirmed by grep across every route file)
+- **Description:** Found 2026-07-29 during the SIL Phase 6 collaboration
+  audit. `GET /api/users` (no auth) returns every user's `id`
+  (`UserOut`, no key). `GET /api/users/{user_id}/me` (no auth, no
+  ownership check -- `user_id` is a raw, unvalidated path parameter)
+  returns that user's `api_key` (`UserMeOut`). Chained: anyone who can
+  reach this API can enumerate every user and harvest every `api_key` in
+  two calls per user. `/me`'s own docstring already states its intent
+  ("the profile page's own fetch") but nothing enforces that only the
+  matching user can call it, because there is no request-level identity
+  to check against yet (`accounts/permissions.py`'s entire premise).
+- **Files involved:** `src/futures_bot/api/routes/accounts.py` (`GET
+  /api/users`, `GET /api/users/{user_id}/me`).
+- **Possible cause:** Not a coding mistake -- a direct, faithful
+  consequence of this platform deliberately having no authentication
+  layer yet (see `accounts/`'s own module docstring and ROADMAP.md's
+  "Future: Real authentication" entry). No superficial fix is safe here:
+  hiding `api_key` from `/me` would break the Profile page's ability to
+  ever re-display a user's own key after initial registration, without
+  meaningfully improving security (every route, including
+  `/regenerate-api-key`, is equally unauthenticated -- an attacker could
+  just mint themselves a fresh valid key for any user id instead of
+  reading an existing one).
+- **Current status:** **OPEN, not fixed** -- deliberately. Documented
+  here as a concrete, load-bearing example of what "no auth yet" means
+  in practice, specifically so whoever eventually builds real
+  authentication (the already-planned next step: validating the
+  existing `api_key` as a bearer token) closes this exact chain as part
+  of that work, rather than treating "add auth" as a purely additive
+  feature layered on top of routes that are currently fine to leave
+  as-is.
+
+---
+
+### ISSUE-037 — `git_watcher.py`'s draft dedup logic has no cross-process protection under Team Mode (OPEN, not fixed)
+
+- **Severity:** Low (non-destructive -- worst case is a short-lived
+  duplicate draft, not data loss or corruption)
+- **Description:** Found 2026-07-29 during the SIL Phase 6 collaboration
+  audit. `GitWatcherScheduler` runs independently per machine (each has
+  its own git working tree), but under Team Mode all machines share one
+  `work_items` table via the same Postgres/TimescaleDB instance.
+  `_reconcile()`'s "check for an existing exact-match draft, discard any
+  stale one, then create" sequence (`git_watcher.py:164-176`) is
+  protected by an in-process `threading.Lock` against two cycles of the
+  *same* scheduler instance racing each other, but that lock does
+  nothing across two separate OS processes (two machines, or even two
+  local processes) writing to the same shared database. If two
+  machines' schedulers happen to compute the same uncovered-file set in
+  the same narrow window, both could pass the "no existing exact match"
+  check before either commits its create, producing two near-duplicate
+  drafts.
+- **Files involved:** `src/futures_bot/collaboration/git_watcher.py`.
+- **Possible cause:** The dedup logic was designed and tested (Milestone
+  B, 2026-07-29) against a single in-process SQLite store -- no test
+  exercised two independent processes/connections racing on the same
+  shared table, which is only a real scenario under Team Mode with
+  `automation.enabled=true` on more than one machine simultaneously (not
+  yet a configuration this project has actually run).
+- **Current status:** **OPEN, not fixed** -- a deliberate cost/benefit
+  call, not an oversight: closing this properly needs either a
+  Postgres advisory lock or a unique constraint keyed on the drafted
+  file set, and the failure mode it guards against (a duplicate,
+  clearly-labeled `is_draft` item a human dismisses in one click, or
+  that `maintenance.py`'s own stale-draft cleanup eventually removes) is
+  low-severity enough that the added complexity isn't justified today.
+  Revisit if/when multiple machines actually run `automation.enabled`
+  simultaneously in practice.
+
+---
+
+### ISSUE-038 — SQLite-mode has a real, measured concurrent-writer ceiling relevant to any future multi-worker design (OPEN, informational)
+
+- **Severity:** Informational / forward-looking (not a bug in shipped
+  behavior -- `busy_timeout=5000` already makes failures graceful rather
+  than silent corruption)
+- **Description:** Found 2026-07-29 during the SIL Phase 6 collaboration
+  audit, in response to that audit's explicit call to identify
+  "scalability limitations." Measured directly (not estimated): 20
+  concurrent threads x 20 writes each (400 total) against a fresh
+  `CollaborationStore()` per thread completed with zero errors in
+  ~0.6s. Pushed to 100 concurrent threads x 50 writes each (5,000
+  total), 4 of 100 threads hit `sqlite3.OperationalError: database is
+  locked` -- `busy_timeout=5000`'s 5-second retry window was actually
+  exceeded under that much contention.
+- **Files involved:** `src/futures_bot/collaboration/store.py` (and, by
+  the same "one connection per call" architecture, `accounts/store.py`,
+  `research/trade_store.py`).
+- **Possible cause:** Not a bug -- a known, documented tradeoff
+  (`store.py`'s own docstring) correct for today's single-developer/
+  small-team load. Directly relevant to any future design (e.g. an
+  "Integration Coordinator" continuously ingesting heartbeats/status
+  from many simultaneous workers) that assumes dozens of frequent
+  concurrent writers: that load profile crosses the measured threshold
+  above in SQLite mode. Team Mode's Postgres backend (pooled
+  connections, no single-file writer lock) does not have this ceiling.
+- **Current status:** **OPEN, informational** -- no code change
+  proposed; this finding exists to inform, not block, any future
+  multi-worker feature design. Any such design should either require
+  Team Mode (Postgres) or explicitly document the SQLite-mode ceiling.

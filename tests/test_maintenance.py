@@ -111,6 +111,60 @@ class TestDiscardStaleDrafts:
         assert discarded == 1
 
 
+class TestOrphanedOrganizations:
+    """SIL Phase 6 audit finding: registration is two separate,
+    non-transactional API calls -- if the second (create the first user)
+    never happens, the organization from the first call is permanently
+    committed with zero users. This only ever counts, never deletes --
+    an organization is real user data, unlike a disposable draft."""
+
+    def _account_store(self):
+        from futures_bot.accounts.store import AccountStore
+
+        return AccountStore()
+
+    def test_a_fresh_orphaned_org_within_the_grace_period_is_not_counted(self):
+        store = self._account_store()
+        store.create_organization(org_id="org1", name="Brand New Co")
+        scheduler = MaintenanceScheduler()
+
+        count = scheduler._detect_orphaned_organizations(datetime.now(timezone.utc), grace_hours=1.0)
+
+        assert count == 0
+
+    def test_an_orphaned_org_past_the_grace_period_is_counted(self):
+        store = self._account_store()
+        store.create_organization(org_id="org1", name="Abandoned Co")
+        far_future = datetime.now(timezone.utc) + timedelta(hours=10)
+        scheduler = MaintenanceScheduler()
+
+        count = scheduler._detect_orphaned_organizations(far_future, grace_hours=1.0)
+
+        assert count == 1
+
+    def test_an_org_with_a_user_is_never_counted_regardless_of_age(self):
+        store = self._account_store()
+        org = store.create_organization(org_id="org1", name="Real Co")
+        store.create_user(user_id="u1", display_name="Alice", username="alice", org_id=org["id"], role="owner")
+        far_future = datetime.now(timezone.utc) + timedelta(hours=10)
+        scheduler = MaintenanceScheduler()
+
+        count = scheduler._detect_orphaned_organizations(far_future, grace_hours=1.0)
+
+        assert count == 0
+
+    def test_never_deletes_the_orphaned_organization(self):
+        """The whole point of this being a count, not a discard."""
+        store = self._account_store()
+        store.create_organization(org_id="org1", name="Abandoned Co")
+        far_future = datetime.now(timezone.utc) + timedelta(hours=10)
+        scheduler = MaintenanceScheduler()
+
+        scheduler._detect_orphaned_organizations(far_future, grace_hours=1.0)
+
+        assert store.fetch_organization("org1") is not None
+
+
 class TestRunCycle:
     def test_updates_status_with_discard_count_and_db_health(self, monkeypatch):
         store = get_collaboration_store()
@@ -118,13 +172,14 @@ class TestRunCycle:
         scheduler = MaintenanceScheduler()
         far_future = datetime.now(timezone.utc) + timedelta(days=10)
 
-        scheduler._run_cycle(far_future, stale_draft_days=3.0)
+        scheduler._run_cycle(far_future, stale_draft_days=3.0, orphaned_org_grace_hours=1.0)
 
         status = scheduler.status()
         assert status["stale_drafts_discarded_count"] == 1
         assert status["cycles_completed"] == 1
         assert status["last_error"] is None
         assert "discarded 1 stale draft" in status["last_result"]
+        assert "orphaned org" in status["last_result"]
 
     def test_a_bad_cycle_records_last_error_without_raising(self, monkeypatch):
         scheduler = MaintenanceScheduler()
@@ -132,7 +187,7 @@ class TestRunCycle:
             scheduler, "_discard_stale_drafts", lambda now, stale_draft_days: (_ for _ in ()).throw(RuntimeError("boom")),
         )
 
-        scheduler._run_cycle(datetime.now(timezone.utc), stale_draft_days=3.0)  # must not raise
+        scheduler._run_cycle(datetime.now(timezone.utc), stale_draft_days=3.0, orphaned_org_grace_hours=1.0)  # must not raise
 
         assert scheduler.status()["last_error"] == "boom"
 

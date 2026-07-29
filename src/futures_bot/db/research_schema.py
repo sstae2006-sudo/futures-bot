@@ -420,4 +420,5 @@ work_item_activity = Table(
     Column("detail", String),
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Index("idx_work_item_activity_item", "work_item_id", "created_at"),
+    Index("idx_work_item_activity_created_at", "created_at"),
 )

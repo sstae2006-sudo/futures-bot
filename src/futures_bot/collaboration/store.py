@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS work_item_activity (
     FOREIGN KEY (work_item_id) REFERENCES work_items(id)
 );
 CREATE INDEX IF NOT EXISTS idx_work_item_activity_item ON work_item_activity(work_item_id, created_at);
+-- SIL Phase 6 audit finding: fetch_activity(work_item_id=None) (the
+-- global-timeline path GET /api/activity/timeline uses) filters on
+-- nothing but sorts by created_at -- the composite index above only
+-- helps once work_item_id is constrained, so this query was a full
+-- table scan + sort with no index to lean on. CREATE INDEX IF NOT
+-- EXISTS is itself idempotent/retroactive, unlike a new column -- no
+-- ALTER-TABLE-if-missing dance needed the way _WORK_ITEM_COLLABORATION_
+-- COLUMNS requires for columns.
+CREATE INDEX IF NOT EXISTS idx_work_item_activity_created_at ON work_item_activity(created_at);
 """
 
 

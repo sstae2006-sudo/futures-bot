@@ -375,6 +375,22 @@ into git history):
   against a real git repo. Five real bugs found and fixed during
   development, all caught before shipping -- see KNOWN_ISSUES.md
   ISSUE-029 through ISSUE-033.
+- **Pull-only auto-sync** (2026-07-29): a third opt-in scheduler
+  (`collaboration/git_sync.py`), same shape as the two above --
+  fast-forwards this checkout from its remote on an interval, never
+  pushes, never touches a dirty tree or a diverged history. Separate
+  toggle (`automation.git_sync_enabled`) from the two above, since this
+  one writes to the real working tree.
+- **SIL Phase 6 collaboration audit** (2026-07-29): a requested audit of
+  every collaboration/automation/accounts/Team Mode subsystem before any
+  further "Integration Coordinator" feature work. 5 findings, 2 fixed
+  with regression tests (orphaned zero-user organizations now detected,
+  not deleted; a missing index on the global activity timeline), 3
+  documented and deliberately deferred (an `api_key` harvest chain that
+  needs real auth to close properly; a low-severity cross-process draft
+  dedup race under multi-machine Team Mode; a measured SQLite
+  concurrent-writer ceiling relevant to the next feature's design). See
+  KNOWN_ISSUES.md ISSUE-034 through ISSUE-038.
 
 ### Future: Collaboration Platform, beyond what's built so far
 

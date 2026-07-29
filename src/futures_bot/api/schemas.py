@@ -1116,7 +1116,10 @@ class MaintenanceStatusOut(BaseModel):
     -- stale-draft cleanup + a DB health check. `last_db_health_ok` is
     `None` when this process isn't in team-deployment mode (SQLite has no
     "connectivity" to check), matching `db.health.DatabaseHealth.configured`
-    semantics elsewhere."""
+    semantics elsewhere. `orphaned_orgs_detected_count` (SIL Phase 6
+    audit) is a current-count snapshot, not a cumulative total like
+    `stale_drafts_discarded_count` -- orgs are never auto-deleted, only
+    counted for a human to act on."""
     running: bool
     last_cycle_at: Optional[str] = None
     last_result: Optional[str] = None
@@ -1124,6 +1127,7 @@ class MaintenanceStatusOut(BaseModel):
     cycles_completed: int
     stale_drafts_discarded_count: int
     last_db_health_ok: Optional[bool] = None
+    orphaned_orgs_detected_count: int = 0
 
 
 class GitSyncStatusOut(BaseModel):

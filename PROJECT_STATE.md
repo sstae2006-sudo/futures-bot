@@ -178,6 +178,22 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
+2026-07-29: **SIL Phase 6 collaboration audit — 5 findings, 2 fixed with
+regression tests, 3 documented and deliberately deferred.** Requested
+before any new "Integration Coordinator" feature work, per that
+feature's own spec ("fix all legitimate bugs before introducing major
+new functionality"). Fixed: orphaned zero-user organizations from
+registration's two-call non-atomicity (now counted, never deleted, in
+`GET /api/automation/status`); a missing index on
+`work_item_activity.created_at` (Alembic `bb0017abe70b`). Documented,
+not fixed: an `api_key`-harvesting endpoint chain (needs real auth to
+close properly, not a superficial patch); `git_watcher.py`'s
+cross-process dedup race under multi-machine Team Mode (low severity);
+a measured SQLite concurrent-writer ceiling (~100 threads) directly
+relevant to the next feature's design. See `CHANGELOG.md`'s matching
+entry and `KNOWN_ISSUES.md` ISSUE-034 through ISSUE-038. 1564 backend
+tests, 0 failed.
+
 2026-07-29: **Pull-only auto-sync (`collaboration/git_sync.py`).** A
 third opt-in scheduler alongside SIL Phase 4's git-watcher/maintenance
 (same daemon-thread shape) that fast-forwards this checkout from its
