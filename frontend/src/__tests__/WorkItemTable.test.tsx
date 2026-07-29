@@ -19,7 +19,7 @@ vi.mock('../api', async () => {
 function makeItem(overrides: Partial<WorkItem> = {}): WorkItem {
   return {
     id: 'w1', title: 'Task', description: null, owner_user_id: null, owner_type: 'human', branch: null,
-    status: 'open', estimated_files: [], priority: 'medium', org_id: null,
+    status: 'open', estimated_files: [], priority: 'medium', org_id: null, is_draft: false,
     created_at: '2026-07-28T00:00:00+00:00', updated_at: '2026-07-28T00:00:00+00:00',
     ...overrides,
   }
