@@ -348,6 +348,33 @@ into git history):
   confirmed against a regression test shown to fail on the pre-fix code.
   See KNOWN_ISSUES.md ISSUE-022 through ISSUE-024 and `CHANGELOG.md`'s
   2026-07-28 entry.
+- **SIL Phase 4 "Intelligent Automation Layer"** (2026-07-29), built on
+  the Collaboration Platform/Overlap V2/git introspection above with no
+  redesign: an AI context bundle (`collaboration/context_bundle.py`,
+  `POST /api/collaboration/context-bundle`, `work_item_cli.py context`
+  -- aggregates active/similar-past work, overlap warnings, recent
+  commits, branch info, and relevant KNOWN_ISSUES/ROADMAP excerpts in
+  one call); draft work items (`work_items.is_draft`) plus a background
+  git-watcher (`collaboration/git_watcher.py`) that drafts exactly one
+  work item for uncommitted changes not covered by any active item,
+  self-healing/idempotent, never touching a real item, approve/discard
+  via API or CLI; `tools/local_validate.py` (maps changed files to
+  their likely tests, falls back to the full suite when the mapping is
+  incomplete rather than silently under-testing, also runs
+  tsc-b/lint/vitest for frontend changes); `tools/draft_changelog.py`
+  (drafts a CHANGELOG.md-style entry from commits + completed/merged
+  work items since CHANGELOG.md's own last commit, writes to a
+  gitignored scratch file, never edits the real file); a maintenance
+  scheduler (`collaboration/maintenance.py` -- discards stale drafts,
+  checks DB health); `GET /api/automation/status` +
+  `AutomationPanel.tsx`. Both schedulers default to **disabled**
+  (`automation.enabled` in config.yaml) -- same "zero behavior change
+  unless deliberately opted into" convention `research_server.enabled`
+  already established, and specifically why: the existing test suite's
+  `create_app()` calls must never start a real background thread
+  against a real git repo. Five real bugs found and fixed during
+  development, all caught before shipping -- see KNOWN_ISSUES.md
+  ISSUE-029 through ISSUE-033.
 
 ### Future: Collaboration Platform, beyond what's built so far
 
@@ -378,7 +405,11 @@ actually prioritized:
   work from the registry, work independently, report progress, and open
   their own PRs — today's registry is claim/track only (an "AI worker" is
   a Claude Code session following CLAUDE.md section 6's step 7, not a
-  daemon claiming work autonomously), not an execution layer.
+  daemon claiming work autonomously), not an execution layer. SIL Phase 4
+  (2026-07-29) added automatic *detection* of unregistered work
+  (the git-watcher drafts a work item for it) — still nothing runs the
+  work itself; a draft is only ever approved/discarded by a human or an
+  AI-assisted session, never auto-approved.
 - **Distributed worker network.** Trusted machines contributing compute
   (backtesting, optimization, model training, inference) that Mission
   Control monitors and assigns compatible jobs to.

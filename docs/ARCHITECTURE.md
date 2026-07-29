@@ -720,6 +720,117 @@ today is a Claude Code session following CLAUDE.md section 6's step 7, not
 a daemon claiming work on its own); a distributed worker network. See
 ROADMAP.md's "Future" section for the fuller list.
 
+## SIL Phase 4 "Intelligent Automation Layer" (2026-07-29)
+
+Built directly on the Collaboration Platform above -- no redesign, no new
+schema pattern beyond one additive column. Two pieces: aggregation (the
+context bundle, the local validation command, the documentation draft
+assistant -- read existing systems, never write) and two background
+schedulers (the git-watcher, the maintenance job -- write, but narrowly:
+only ever create/discard their own `is_draft=True` work items).
+
+```
+collaboration/context_bundle.py       build_context_bundle() -- one call
+                                       aggregating active work items,
+                                       similar past work (keyword-matched
+                                       against every work item ever, not
+                                       just active ones), recent commits,
+                                       branch info, Overlap V2 warnings,
+                                       and relevant KNOWN_ISSUES/ROADMAP
+                                       excerpts (plain substring search,
+                                       not semantic). Pure aggregation of
+                                       systems above -- no new persisted
+                                       index, no architecture graph.
+                                       POST /api/collaboration/context-
+                                       bundle, `work_item_cli.py context`.
+
+collaboration/git_watcher.py          GitWatcherScheduler -- same daemon-
+  |                                   thread shape (threading.Lock+Event)
+  |                                   market_data/scheduler.py::
+  |                                   MarketDataScheduler already
+  |                                   establishes. Every cycle: reads
+  |                                   git_info.changed_files() (git status
+  |                                   --porcelain --untracked-files=all),
+  |                                   subtracts files covered by any
+  v                                   REAL (non-draft) active work item,
+work_items.is_draft                   and drafts exactly one work item for
+                                       what's left -- self-healing (a
+                                       changed file set that grows/shrinks
+                                       discards the old draft and creates
+                                       a fresh one) and idempotent (an
+                                       unchanged set is a no-op). Never
+                                       touches a non-draft item; never
+                                       auto-approves. approve_draft_work_
+                                       item/discard_draft_work_item are
+                                       the only ways a draft's `is_draft`
+                                       flag changes.
+
+collaboration/maintenance.py          MaintenanceScheduler -- same shape,
+                                       longer interval. Discards drafts
+                                       untouched for
+                                       automation.stale_draft_days
+                                       (inclusive at the cutoff) and
+                                       checks DB connectivity via
+                                       db.health.check_database_health()
+                                       (imported lazily -- see
+                                       KNOWN_ISSUES.md ISSUE-032 for why
+                                       that matters here specifically).
+                                       Only ever reads
+                                       fetch_draft_work_items() as discard
+                                       candidates -- a real item's age is
+                                       never relevant.
+
+tools/local_validate.py               Maps uncommitted changes (git_info.
+                                       changed_files(), reused) to their
+                                       likely test files -- most follow
+                                       test_<module>.py or
+                                       test_<package>_<module>.py, but not
+                                       all do. Falls back to the FULL
+                                       backend suite when the mapping is
+                                       incomplete, rather than silently
+                                       under-testing. Also runs
+                                       tsc-b/oxlint/vitest when
+                                       frontend/src changed.
+
+tools/draft_changelog.py              Drafts a CHANGELOG.md-style entry
+                                       from every commit + completed/
+                                       merged work item since CHANGELOG.md's
+                                       own last commit (git_info.
+                                       last_commit_touching/commits_since).
+                                       Writes to .changelog_draft.md
+                                       (gitignored) for a human to review
+                                       and rewrite into this repo's
+                                       narrative prose style -- never
+                                       edits CHANGELOG.md itself.
+```
+
+**Why both schedulers default to disabled.** `automation.enabled` in
+`config.yaml` defaults `False` -- same "zero behavior change unless
+deliberately opted into" convention `research_server.enabled`/`live_feed`
+already establish, and for a concrete, specific reason here: this
+codebase's test suite calls `create_app()` (directly, or via `TestClient`)
+well over a thousand times across its ~1500 tests. If either scheduler
+defaulted to running, every one of those calls would start a real daemon
+thread hitting this repo's own real `git status` and writing real
+`is_draft` rows into whatever SQLite/Postgres database that test happened
+to be pointed at -- nondeterministic test pollution, not a hypothetical.
+
+**Why a draft is never auto-approved.** SIL Phase 4's own automation
+rules (safe, reversible, logged, explainable, configurable, never
+destructive) rule it out by design -- a draft is inert until a human or
+an AI-assisted session explicitly reviews it via
+`approve_draft_work_item`/`discard_draft_work_item` (API or
+`work_item_cli.py approve-draft`/`discard-draft`). The dedup/supersede
+logic in `git_watcher.py::_reconcile` only ever operates on
+`is_draft=True` items for exactly this reason -- a real, approved work
+item is structurally unreachable from that code path.
+
+**Five real bugs found and fixed while building this**, all caught
+before shipping (three via the very tests being written, one via
+`local_validate.py`'s own first real use, one via running the suite
+under an interpreter lacking the `db` extra) -- see KNOWN_ISSUES.md
+ISSUE-029 through ISSUE-033 for full detail on each.
+
 ## Why strategies cannot execute trades directly
 
 `Strategy.on_bar` returns a `Signal` — a decision, not an order. The engine

@@ -4,6 +4,118 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — SIL Phase 4 "Intelligent Automation Layer"
+
+Six milestones, built directly on the existing Collaboration Platform
+(Active Work Registry, Overlap V2, git introspection) with no redesign.
+Full detail in `docs/ARCHITECTURE.md`'s "SIL Phase 4" section,
+`KNOWN_ISSUES.md` ISSUE-029 through ISSUE-033, and `PROJECT_STATE.md`'s
+matching "Last Completed Work" entry.
+
+**Added — Milestone A, AI context bundle.** `collaboration/context_bundle.py`'s
+`build_context_bundle()`, `POST /api/collaboration/context-bundle`, and
+`work_item_cli.py context` -- one call gathering active work items,
+similar past work (keyword-matched against every work item ever
+created), recent commits, branch info, Overlap V2 warnings, and relevant
+`KNOWN_ISSUES.md`/`ROADMAP.md` excerpts (plain substring search, not
+semantic). Pure aggregation of systems that already existed and were
+already tested -- no new persisted index, no architecture graph.
+
+**Added — Milestone B, draft work items + background git-watcher.**
+`work_items.is_draft` (Alembic `7a3f9c2e1b0d`, mirrored in both SQLite
+and Postgres stores). `collaboration/git_watcher.py`'s
+`GitWatcherScheduler` -- same `threading.Lock`+`Event` daemon-thread
+shape `MarketDataScheduler` already established -- periodically checks
+`git status --porcelain` for uncommitted changes not covered by any
+active (non-draft) work item's `estimated_files`, and drafts exactly one
+work item covering them: self-healing (a growing/shrinking change set
+discards the stale draft and creates a fresh one) and idempotent (an
+unchanged set is a no-op, confirmed by a dedicated regression test).
+Never touches a non-draft item; never auto-approves. New endpoints
+(`GET /api/work-items/drafts`, `{id}/approve-draft`, `DELETE {id}/draft`)
+and CLI subcommands (`drafts`/`approve-draft`/`discard-draft`).
+
+**Added — Milestone C, local validation command.** `tools/local_validate.py`
+maps uncommitted changes to their likely test files (most follow
+`test_<module>.py` or `test_<package>_<module>.py`, confirmed against
+real examples in this repo -- but not all modules have one, e.g.
+`strategy/base.py`), runs just those, and falls back to the full backend
+suite when the mapping is incomplete rather than silently under-testing.
+Also runs `tsc -b`/`oxlint`/`vitest` when `frontend/src` changed.
+
+**Added — Milestone D, documentation draft assistant.**
+`tools/draft_changelog.py` drafts a `CHANGELOG.md`-style entry from
+every commit and completed/merged work item since `CHANGELOG.md`'s own
+last commit, writes it to `.changelog_draft.md` (gitignored) for a human
+to review and rewrite into this repo's narrative prose style -- never
+edits `CHANGELOG.md` itself; what actually matters and what's a breaking
+change stays a human/session judgment call.
+
+**Added — Milestones E+F, automation status panel + maintenance job.**
+`collaboration/maintenance.py`'s `MaintenanceScheduler` -- same
+daemon-thread shape, longer interval -- discards drafts untouched for
+`automation.stale_draft_days` (inclusive at the cutoff) and checks DB
+connectivity via `db.health.check_database_health()` (imported lazily,
+see ISSUE-032 below). `GET /api/automation/status` combines both
+schedulers' status; Mission Control's new `AutomationPanel.tsx` shows
+both and lets a human approve/discard drafts inline, 15s poll.
+
+**Changed.** Both schedulers are wired into `api/app.py`'s lifespan
+alongside the research server, gated on a new `automation.enabled` in
+`config.yaml` (default **`False`** -- same "zero behavior change unless
+deliberately opted into" convention `research_server.enabled`/`live_feed`
+already establish, and specifically necessary here: this codebase's test
+suite calls `create_app()` well over a thousand times, and either
+scheduler defaulting to running would have started a real background
+thread hitting this repo's own real `git status` and writing real
+`is_draft` rows into whatever database each test happened to be pointed
+at). `WorkItemOut`/`frontend/src/types.ts`'s `WorkItem` both gained
+`is_draft: bool`.
+
+**Fixed — 5 real bugs found during development, all caught before
+shipping** (see `KNOWN_ISSUES.md` for full detail on each):
+- **ISSUE-029** (High): `git_info._git()`'s whole-string `.strip()` ate
+  the leading space off the first line of `git status --porcelain`
+  output (a legitimate part of the two-column status code), truncating
+  the first changed file's path by one character.
+  `changed_files()` no longer goes through that shared helper.
+- **ISSUE-030** (Medium): the git-watcher's own drafts counted as
+  "covered," self-suppressing their files from the next cycle's
+  uncovered-file calculation and breaking the supersede logic for a
+  growing change set. Fixed: only real (non-draft) items count as
+  covered.
+- **ISSUE-031** (Low): the maintenance scheduler's staleness check used
+  `>=` where the config docstring's "untouched for N days" implies
+  inclusive-at-exactly-N. Fixed to `>`.
+- **ISSUE-032** (Medium): `maintenance.py`'s first draft imported
+  `db.health` eagerly, which would have made `sqlalchemy` a hard runtime
+  dependency for every SQLite-only install (it's imported unconditionally
+  by `app.py`). Fixed with the same lazy-import + `ModuleNotFoundError`
+  fallback `api/routes/system.py`'s health route already established.
+- **ISSUE-033** (Low): adding `WorkItem.is_draft` broke three existing
+  frontend test fixtures (`CollaborationWorkspace`/`WorkItemTable`/
+  `WorkRegistryPanel`'s `.test.tsx` files) -- caught by
+  `tools/local_validate.py`, the tool being built in the very next
+  milestone, on its first real use.
+
+**DB changes.** `work_items.is_draft BOOLEAN NOT NULL DEFAULT false`
+(additive, backfills to `false`).
+
+**API changes.** New: `POST /api/collaboration/context-bundle`,
+`GET/POST /api/work-items/drafts`, `{id}/approve-draft`,
+`DELETE {id}/draft`, `GET /api/collaboration/git-watcher/status`,
+`GET /api/automation/status`. `WorkItemOut` gained `is_draft`.
+
+**Frontend changes.** New `AutomationPanel.tsx`, registered into Mission
+Control. `WorkItem` gained `is_draft: boolean`.
+
+**Breaking changes.** None -- `automation.enabled` defaults `False`,
+`is_draft` defaults `false`/backfills on every existing row.
+
+Full suite verified green after every milestone: 1593 backend tests
+(1542 passed, 51 skipped, 0 failed), 121 frontend tests (21 files, 0
+failed).
+
 ## 2026-07-28 — Live incident response: Team Mode boot, registration, Team Members, and Live Session all broken end-to-end
 
 Not a planned pass -- a live "boot Team Mode and use it" session that hit

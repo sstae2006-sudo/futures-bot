@@ -1008,3 +1008,147 @@ verified fixed — instead mark it Resolved with a date and commit.
   code right by hand -- flagged rather than built now (a new API route
   needs the explicit approval CLAUDE.md section 8 requires for that
   protected category, not something to add on a live-debugging pass).
+
+---
+
+### ISSUE-029 — `git_info._git()`'s whole-string `.strip()` truncated the first line of `git status --porcelain` output (RESOLVED)
+
+- **Severity:** High (would have silently mis-mapped the first changed
+  file on every SIL Phase 4 git-watcher cycle and every
+  `tools/local_validate.py` run -- caught in development, never shipped)
+- **Description:** Found 2026-07-29 while building
+  `collaboration.git_info.changed_files()` (SIL Phase 4 Milestone B).
+  `git status --porcelain`'s two-column status code can legitimately
+  start with a literal space (e.g. `" M"` = "modified, not staged") --
+  `_git()`'s shared `result.stdout.strip()` (used by every other
+  function in this module for single/multi-line output where leading
+  whitespace isn't meaningful) strips that leading space off the
+  *first* line only, since `.strip()` operates on the whole string, not
+  per-line. `" M src/foo.py\n M src/bar.py"` became
+  `"M src/foo.py\n M src/bar.py"` after stripping, and `changed_files()`'s
+  fixed-offset `line[3:]` parsing then read `"rc/foo.py"` instead of
+  `"src/foo.py"` for the first file only -- confirmed directly against
+  this repo's own real uncommitted changes.
+- **Files involved:** `src/futures_bot/collaboration/git_info.py`.
+- **Possible cause:** `_git()`'s `.strip()` is correct for every
+  existing caller (branch names, commit metadata) where leading
+  whitespace is never meaningful; `changed_files()` was the first
+  caller whose output format uses a meaningful leading space.
+- **Current status:** **Resolved 2026-07-29**, same commit it was
+  introduced in (caught before shipping). `changed_files()` no longer
+  goes through `_git()` -- it runs its own `subprocess.run` and only
+  strips trailing newlines, never leading whitespace. Regression tests
+  added: `tests/test_collaboration_git_info.py::TestChangedFiles`,
+  including one asserting the first file's path is never truncated.
+
+---
+
+### ISSUE-030 — SIL Phase 4 git-watcher's own drafts suppressed their own files from the next cycle's "uncovered" calculation (RESOLVED)
+
+- **Severity:** Medium (broke the git-watcher's self-healing/supersede
+  behavior for a growing change set -- caught by its own regression
+  test suite before shipping, never observed live)
+- **Description:** Found 2026-07-29 while writing
+  `tests/test_git_watcher.py`. `GitWatcherScheduler._reconcile()`
+  computed "uncovered files" as `changed - covered`, where `covered`
+  was built from every active work item's `estimated_files` --
+  including the watcher's *own* previously-created draft. On the next
+  cycle, a file already listed in that draft was wrongly excluded from
+  `uncovered`, so a growing change set (e.g. `["a.py"]` -> `["a.py",
+  "b.py"]`) produced a new draft covering only `["b.py"]` instead of
+  both files once the old draft was discarded and replaced --
+  `test_growing_change_set_supersedes_the_old_draft` failed against the
+  pre-fix code with exactly this symptom.
+- **Files involved:** `src/futures_bot/collaboration/git_watcher.py`.
+- **Possible cause:** `covered` was built from every active item without
+  distinguishing "a real work item genuinely resolves this file" from
+  "this is the watcher's own pending, not-yet-reviewed draft" -- the
+  two look identical in `fetch_active_work_items()`'s result.
+- **Current status:** **Resolved 2026-07-29**, same commit it was
+  introduced in. `_reconcile()` now skips `is_draft=True` items when
+  building `covered`. Regression tests:
+  `test_growing_change_set_supersedes_the_old_draft`,
+  `test_shrinking_change_set_creates_a_new_draft_alongside_discarding_the_old`.
+
+---
+
+### ISSUE-031 — SIL Phase 4 maintenance scheduler's staleness check was off-by-one at the exact cutoff (RESOLVED)
+
+- **Severity:** Low (a draft exactly `stale_draft_days` old would have
+  survived one extra maintenance cycle instead of being discarded --
+  caught by its own regression test before shipping)
+- **Description:** Found 2026-07-29 while writing
+  `tests/test_maintenance.py::test_boundary_is_inclusive_of_stale_draft_days`.
+  `MaintenanceScheduler._discard_stale_drafts` used `if updated_at >=
+  cutoff: continue` (skip, not stale), which excludes a draft exactly at
+  the cutoff -- `config.py::AutomationSettings.stale_draft_days`'s own
+  docstring says "untouched for this many days," which reads as
+  inclusive at exactly N days.
+- **Files involved:** `src/futures_bot/collaboration/maintenance.py`.
+- **Possible cause:** An unexamined `>=` vs `>` choice when translating
+  "stale after N days" into a comparison.
+- **Current status:** **Resolved 2026-07-29**, same commit it was
+  introduced in. Changed to `if updated_at > cutoff: continue`, making
+  the cutoff itself count as stale.
+
+---
+
+### ISSUE-032 — SIL Phase 4's `collaboration/maintenance.py` imported `db.health` eagerly, breaking the "SQLite-only never needs the `db` extra" guarantee (RESOLVED)
+
+- **Severity:** Medium (would have made `sqlalchemy` a hard runtime
+  dependency for every single-developer/local-SQLite install, since
+  `maintenance.py` is imported unconditionally by `api/app.py` -- caught
+  before shipping, running the test suite under the system Python that
+  lacks the `db` extra)
+- **Description:** Found 2026-07-29. `db/engine.py`'s own module
+  docstring and `api/routes/system.py`'s existing lazy-import pattern
+  both establish that anything importing from `futures_bot.db` must do
+  so lazily (inside a function, with a `try/except ModuleNotFoundError`
+  fallback) specifically so a SQLite-only setup is never required to
+  install `sqlalchemy`. `maintenance.py`'s first draft imported
+  `check_database_health` at module level -- harmless when `sqlalchemy`
+  happens to be installed, but a hard `ModuleNotFoundError` on
+  `import futures_bot.api.app` otherwise, since `app.py` imports
+  `collaboration.maintenance` unconditionally at startup (not gated
+  behind team-deployment mode the way `pg_store.py` modules are, which
+  are only ever imported from inside `get_*_store()`'s conditional
+  branch).
+- **Files involved:** `src/futures_bot/collaboration/maintenance.py`.
+- **Possible cause:** `pg_store.py` files across this codebase import
+  `db.engine` at module level safely, because *they* are only ever
+  imported lazily by their own package's factory function -- easy to
+  miss that `maintenance.py` doesn't have that same protection, since it
+  itself is imported unconditionally.
+- **Current status:** **Resolved 2026-07-29**, same commit it was
+  introduced in. `check_database_health` is now imported inside a new
+  `_check_database_health` method, with the same
+  `try/except ModuleNotFoundError` fallback `system.py`'s health route
+  already established.
+
+---
+
+### ISSUE-033 — `frontend/src/types.ts`'s new `WorkItem.is_draft` field broke three existing test fixtures (RESOLVED)
+
+- **Severity:** Low (a `tsc -b` type error, not a runtime bug -- caught
+  by `tools/local_validate.py`, the very tool being built in the same
+  milestone sequence, on its first real use)
+- **Description:** Found 2026-07-29. Adding `is_draft: boolean` to the
+  `WorkItem` interface (SIL Phase 4 Milestone B) correctly requires
+  every `WorkItem` object literal to supply it -- three existing test
+  fixture builders
+  (`CollaborationWorkspace.test.tsx`/`WorkItemTable.test.tsx`/
+  `WorkRegistryPanel.test.tsx`'s `makeItem()` helpers) predated the
+  field and didn't. Running `tools/local_validate.py` (Milestone C,
+  built immediately after) against its own preceding commit's
+  `frontend/src/types.ts` change caught this via `tsc -b` before it was
+  ever an issue in CI.
+- **Files involved:**
+  `frontend/src/__tests__/CollaborationWorkspace.test.tsx`,
+  `frontend/src/__tests__/WorkItemTable.test.tsx`,
+  `frontend/src/__tests__/WorkRegistryPanel.test.tsx`.
+- **Possible cause:** Adding a required field to a widely-used shared
+  type without a repo-wide type-check pass immediately after -- exactly
+  the gap `tools/local_validate.py` exists to close going forward.
+- **Current status:** **Resolved 2026-07-29**, same commit it was
+  introduced in. Added `is_draft: false` to each fixture's default
+  object.

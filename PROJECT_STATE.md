@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1518 tests as of 2026-07-28** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1468 passed, 50 skipped, 0 failed). The 50
+- Test suite: **1593 tests as of 2026-07-29** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1542 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1518 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1593 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,52 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-29: **SIL Phase 4 "Intelligent Automation Layer" — 6 milestones,
+built on the existing Collaboration Platform with no redesign.** Full
+detail in `docs/ARCHITECTURE.md`'s "SIL Phase 4" section and
+`KNOWN_ISSUES.md` ISSUE-029 through ISSUE-033; this is the summary.
+
+- **Milestone A — AI context bundle**: `collaboration/context_bundle.py`,
+  `POST /api/collaboration/context-bundle`, `work_item_cli.py context` —
+  one call aggregating active/similar-past work, overlap warnings,
+  recent commits, branch info, and relevant KNOWN_ISSUES/ROADMAP
+  excerpts. Pure aggregation of existing systems, no new persisted index.
+- **Milestone B — draft work items + background git-watcher**:
+  `work_items.is_draft` (Alembic `7a3f9c2e1b0d`), `collaboration/git_watcher.py`
+  (same daemon-thread shape as `MarketDataScheduler`) — periodically
+  drafts exactly one work item covering uncommitted changes not covered
+  by any active item, self-healing and idempotent, never touching a real
+  item. Approve/discard via API or CLI.
+- **Milestone C — local validation**: `tools/local_validate.py` maps
+  changed files to their likely tests (confirmed against real examples;
+  not every module has a same-named test file), falls back to the full
+  suite rather than silently under-testing, also runs tsc-b/lint/vitest
+  for frontend changes.
+- **Milestone D — documentation draft assistant**: `tools/draft_changelog.py`
+  drafts a CHANGELOG.md-style entry from commits + completed/merged work
+  items since CHANGELOG.md's own last commit, writes to a gitignored
+  scratch file, never edits the real file.
+- **Milestones E+F — automation status panel + maintenance job**:
+  `collaboration/maintenance.py` discards stale drafts and checks DB
+  health; `GET /api/automation/status` + Mission Control's new
+  `AutomationPanel.tsx` show both schedulers' state and let a human
+  approve/discard drafts inline.
+- Both schedulers default to **disabled** (`automation.enabled` in
+  config.yaml) — same convention `research_server.enabled` already
+  established, specifically so the existing ~1500-test suite's
+  `create_app()` calls never start a real background thread.
+- **5 real bugs found and fixed during development**, all caught before
+  shipping: `git_info._git()`'s whole-string `.strip()` truncating the
+  first line of `git status --porcelain` output (ISSUE-029); the
+  git-watcher's own drafts self-suppressing their files from the next
+  cycle (ISSUE-030); an off-by-one at the exact staleness cutoff
+  (ISSUE-031); `maintenance.py` eagerly importing `db.health`, breaking
+  the "SQLite-only never needs the `db` extra" guarantee (ISSUE-032);
+  three frontend test fixtures missing the new `is_draft` field, caught
+  by `local_validate.py` on its own first real use (ISSUE-033).
+- Full suite verified green after every milestone: 1593 tests (1542
+  passed, 51 skipped) backend, 121 passed frontend (21 files).
 
 2026-07-28: **Live incident response — Team Mode boot through Live
 Session, four real bugs found and fixed while actually using it.** Not a
@@ -1217,12 +1263,16 @@ bug is fixed, and the Team Collaboration Platform now covers the MVP
 (accounts + Active Work Registry), SIL Phase 2 "Workflow Integration"**
 (lifecycle, Overlap Engine V2, live git branch info, merge readiness,
 activity timeline, the work-item CLI, and Mission Control's
-`CollaborationWorkspace`), **and User Registration & Organization
+`CollaborationWorkspace`), **User Registration & Organization
 Management** (api_key, profile fields, permissions table, org-scoped
 work items, the Welcome/Register/Profile/Organization Settings/Team
-Members pages, and a frontend-only session concept) — see "Last
-Completed Work" above. What's left is a mix of genuine operator/human
-actions and real follow-on feature work:
+Members pages, and a frontend-only session concept), **and SIL Phase 4
+"Intelligent Automation Layer"** (AI context bundle, draft work items +
+background git-watcher, local validation command, documentation draft
+assistant, automation status + Mission Control panel, maintenance job —
+opt-in via `automation.enabled`, default off) — see "Last Completed
+Work" above. What's left is a mix of genuine operator/human actions and
+real follow-on feature work:
 
 1. **Create the Windows Firewall rule for real** (or click the UAC prompt
    next time `scripts\start-team.ps1` runs unelevated). One-time, from an
@@ -1239,13 +1289,16 @@ actions and real follow-on feature work:
    is) for both the API and the built dashboard.
 3. **Visually verify Mission Control and the new onboarding flow in a
    browser** — Claude in Chrome was unavailable all session (connection
-   failed/disabled); typecheck/lint/vitest are all clean (107 frontend
+   failed/disabled); typecheck/lint/vitest are all clean (121 frontend
    tests passing) and the underlying API data was verified directly, but
    the actual rendered pages (Welcome, Register's 3 steps,
    `CollaborationWorkspace`'s 7 tabs, Profile, Organization Settings,
-   Team Members) haven't been looked at. Run `/chrome` to reconnect, or
-   look yourself at `http://127.0.0.1:5173` (local mode) — a fresh
-   browser profile (no `localStorage`) will land on `/welcome` first.
+   Team Members, and — new — Mission Control's `AutomationPanel`)
+   haven't been looked at. Run `/chrome` to reconnect, or look yourself
+   at `http://127.0.0.1:5173` (local mode) — a fresh browser profile (no
+   `localStorage`) will land on `/welcome` first. To actually see
+   `AutomationPanel` doing something (not just "not enabled"), set
+   `automation.enabled: true` in `config.yaml` first.
 4. **Decide whether/how real authentication gets built.** Accounts
    (`accounts/`), the Active Work Registry (`collaboration/`), and the
    frontend's `session.tsx` are all deliberately built with no login/
@@ -1261,12 +1314,15 @@ actions and real follow-on feature work:
    impact), semantic merge assistance beyond a risk score
    (duplicate-implementation detection, AI-assisted conflict
    resolution), real CI integration (`merge_readiness.py`'s `test_status`
-   is deliberately always `"unknown"`), persistent AI worker processes,
-   and a distributed compute cluster — each substantially larger than
-   what exists now, deliberately not started; `collaboration/` is built
-   so they can layer on without a redesign. See `docs/ARCHITECTURE.md`'s
-   "Team Collaboration Platform" section and `ROADMAP.md`'s "Future"
-   section.
+   is deliberately always `"unknown"`), persistent AI worker processes
+   (SIL Phase 4's git-watcher added automatic *detection* of
+   unregistered work — nothing yet runs the work itself, a draft is only
+   ever approved/discarded by a human or an AI-assisted session), and a
+   distributed compute cluster — each substantially larger than what
+   exists now, deliberately not started; `collaboration/` is built so
+   they can layer on without a redesign. See `docs/ARCHITECTURE.md`'s
+   "Team Collaboration Platform"/"SIL Phase 4" sections and
+   `ROADMAP.md`'s "Future" section.
 6. **Fix `frontend/src/format.ts::dateTime()`'s timestamp-parsing bug**
    (KNOWN_ISSUES.md ISSUE-021) — affects every page rendering a
    local-mode (SQLite) timestamp, deferred because it touches many call
