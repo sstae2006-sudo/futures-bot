@@ -178,6 +178,44 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
+2026-07-28: **Live incident response — Team Mode boot through Live
+Session, four real bugs found and fixed while actually using it.** Not a
+planned pass — a live "boot Team Mode and use it" session. Full detail in
+`CHANGELOG.md`'s matching dated entry and `KNOWN_ISSUES.md` ISSUE-025
+through ISSUE-028; this is the summary.
+
+- **ISSUE-025 (Critical)**: Team Mode's production frontend build
+  silently kept the local-dev loopback API URL (`http://127.0.0.1:8000`)
+  baked in — `start-team.ps1`'s empty-string `VITE_API_BASE_URL` trick
+  doesn't survive Windows' PowerShell → npm.cmd → cmd.exe → vite
+  child-process chain. Broke every teammate's API calls. Fixed by basing
+  the default on `import.meta.env.DEV`/`PROD` instead.
+- **ISSUE-026 (Critical)**: `PgAccountStore` returned `None` for
+  `notification_preferences`, crashing every response containing a user
+  (including registration's own response) with a Pydantic
+  `ValidationError` → 500. Fixed by normalizing `None` → `{}`, matching
+  the SQLite store. Verifying this fix's live-Postgres regression test
+  accidentally wiped a teammate's just-registered account via the test
+  fixture's `TRUNCATE` cleanup — documented as an incident/lesson in
+  ISSUE-026, damage limited to accounts data, re-registration succeeded.
+- **ISSUE-027 (High)**: a sole org owner who demoted themselves via Team
+  Members lost `manage_members` on the next refresh, locking themselves
+  out of fixing anyone's role including their own (permissions are
+  advisory-only, not enforced server-side). Fixed: you can no longer
+  edit your own role from that page, ever.
+- **ISSUE-028 (High)**: the Live Session start form defaulted to a
+  hardcoded, months-expired contract ticker (`MESH6`) — the session
+  reported "running" forever with zero bars, no error surfaced (an empty
+  feed result isn't a feed error). Fixed: the field now starts empty
+  with guidance on picking the current quarterly contract code.
+- Also found and fixed the local docker-compose TimescaleDB running 3
+  Alembic migrations behind (brought current via `alembic upgrade
+  head`), and cleaned up leftover debug `print()` statements in
+  `feeds/massive.py` (converted to `log.debug()`).
+- 4 new regression tests, each confirmed to fail against its bug's
+  pre-fix code before the fix landed. Full backend and frontend suites
+  verified passing after every change.
+
 2026-07-28: **Stabilization Mode: concurrency and edge-case sweep.** A
 ~1-hour skeptical bug hunt across the same day's two preceding entries
 (SIL Phase 2, User Registration & Organization Management). Full detail

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -9,8 +10,11 @@ from typing import Optional
 
 import requests
 
+from ..journal import LOGGER_NAME
 from ..models import Bar
 from .base import BarFeed
+
+log = logging.getLogger(LOGGER_NAME)
 
 BASE_URL = "https://api.massive.com/futures/v1/aggs/{symbol}"
 
@@ -55,25 +59,11 @@ class MassiveBarFeed(BarFeed):
         )
 
         raw = self._fetch(window_start, now)
-
-        print(
-            "LIVE REQUEST:",
-            window_start,
-            "to",
-            now,
-            "raw bars:",
-            len(raw),
-        )
+        log.debug("%s: requested %s to %s, got %d raw bar(s)", self.symbol, window_start, now, len(raw))
 
         bars = [_parse_bar(item) for item in raw]
         bars.sort(key=lambda b: b.timestamp)
-
-        print(
-            "PARSED:",
-            len(bars),
-            "LATEST:",
-            bars[-1].timestamp if bars else None,
-        )
+        log.debug("%s: parsed %d bar(s), latest=%s", self.symbol, len(bars), bars[-1].timestamp if bars else None)
 
         new_bars = [
             b
@@ -84,11 +74,7 @@ class MassiveBarFeed(BarFeed):
             )
             and self._is_closed(b, now)
         ]
-
-        print(
-            "CLOSED NEW BARS:",
-            len(new_bars),
-        )
+        log.debug("%s: %d new closed bar(s)", self.symbol, len(new_bars))
 
         if new_bars:
             self._last_returned = new_bars[-1].timestamp
@@ -171,13 +157,7 @@ def _parse_bar(raw: dict) -> Bar:
         raw_ts / 1e9,
         tz=timezone.utc,
     )
-
-    print(
-        "RAW TIMESTAMP:",
-        raw_ts,
-        "CONVERTED:",
-        ts,
-    )
+    log.debug("Parsed raw window_start=%s as %s", raw_ts, ts)
 
     return Bar(
         timestamp=ts,

@@ -63,7 +63,35 @@ import type {
   WorkItemPriority,
 } from './types'
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
+// Local Mode (scripts/start.ps1) runs the frontend as a separate Vite dev
+// server on :5173 with the API on :8000 -- a genuinely different origin,
+// so it needs an absolute fallback. Team Mode (scripts/start-team.ps1)
+// builds the frontend once and serves it as static files from the same
+// FastAPI process/origin as the API, so a relative path is always
+// correct there and must be the default for a production build -- it
+// must NOT depend on VITE_API_BASE_URL having been set to an empty
+// string at build time. That was the previous approach (`??
+// 'http://127.0.0.1:8000'`, relying on start-team.ps1 setting
+// `$env:VITE_API_BASE_URL = ""` before `npm run build`) and it doesn't
+// reliably survive the PowerShell -> npm.cmd -> cmd.exe -> vite child-
+// process chain on Windows: an empty-string env var can come out the
+// other end looking unset, silently falling back to the loopback
+// default in a production build and breaking every teammate's API calls
+// (confirmed directly -- inspecting the built bundle showed the literal
+// `http://127.0.0.1:8000` baked in despite the empty-string env var
+// having been set). `import.meta.env.DEV`/`PROD` are compiled in by
+// Vite itself (true booleans, not a round-tripped string), so basing the
+// default on that instead is immune to the same class of bug. An
+// explicit `VITE_API_BASE_URL` still overrides either default when
+// actually present. Extracted as a pure function (rather than inlined
+// into the constant below) purely so a test can exercise both branches
+// directly instead of fighting with re-stubbing `import.meta.env` and
+// re-importing this module for each case.
+export function resolveApiBase(explicitBaseUrl: string | undefined, isDev: boolean): string {
+  return explicitBaseUrl ?? (isDev ? 'http://127.0.0.1:8000' : '')
+}
+
+export const API_BASE = resolveApiBase(import.meta.env.VITE_API_BASE_URL, import.meta.env.DEV)
 
 export class ApiRequestError extends Error {
   status: number

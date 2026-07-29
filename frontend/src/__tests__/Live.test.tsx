@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import Live from '../pages/Live'
 import * as api from '../api'
@@ -109,16 +109,25 @@ describe('Live', () => {
     await waitFor(() => expect(screen.getByText('daily max loss hit')).toBeInTheDocument())
   })
 
-  it('submits the start form', async () => {
+  it('submits the start form with whatever symbol the user types -- no stale default', async () => {
+    // Regression test (2026-07-28): the live symbol field used to default
+    // to a hardcoded 'MESH6' -- a contract ticker that expires every
+    // quarter, so it silently went stale. A session started with an
+    // expired ticker still reports "running" but never receives a single
+    // bar (the feed genuinely has no data for that symbol). The field
+    // now starts empty and requires the user to type the real, current
+    // contract themselves.
     vi.mocked(api.startLiveSession).mockResolvedValue(stoppedStatus({ status: 'starting' }))
     renderLive()
     FakeEventSource.instances[0].emit(stoppedStatus())
     await waitFor(() => expect(screen.getByRole('button', { name: /Start session/ })).toBeInTheDocument())
 
+    expect(screen.getByLabelText('Live symbol')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('Live symbol'), { target: { value: 'MESU6' } })
     screen.getByRole('button', { name: /Start session/ }).closest('form')?.requestSubmit()
 
     await waitFor(() => expect(api.startLiveSession).toHaveBeenCalledWith({
-      live_symbol: 'MESH6', resolution: '5min', poll_seconds: 30,
+      live_symbol: 'MESU6', resolution: '5min', poll_seconds: 30,
     }))
   })
 
@@ -128,6 +137,7 @@ describe('Live', () => {
     FakeEventSource.instances[0].emit(stoppedStatus())
     await waitFor(() => expect(screen.getByRole('button', { name: /Start session/ })).toBeInTheDocument())
 
+    fireEvent.change(screen.getByLabelText('Live symbol'), { target: { value: 'MESU6' } })
     screen.getByRole('button', { name: /Start session/ }).closest('form')?.requestSubmit()
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Refusing to start with a non-paper broker.'))

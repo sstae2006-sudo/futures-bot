@@ -846,3 +846,165 @@ verified fixed — instead mark it Resolved with a date and commit.
   asserts `createOrganization` was called exactly once across both
   attempts) -- confirmed failing against the pre-fix code by temporarily
   reverting the fix and re-running it.
+
+---
+
+### ISSUE-025 — Team Mode's production build silently kept the local-dev loopback API URL, breaking every teammate's requests (RESOLVED)
+
+- **Severity:** Critical (broke the entire dashboard for every user in
+  Team Mode, not a degraded feature -- every API call from a freshly
+  registered browser failed with "Could not reach the research API at
+  http://127.0.0.1:8000")
+- **Description:** Found 2026-07-28 (live, while a teammate was actually
+  blocked registering). `frontend/src/api.ts::API_BASE` was
+  `import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'`.
+  `scripts/start-team.ps1` tried to make its production build use
+  relative (same-origin) paths by setting `$env:VITE_API_BASE_URL = ""`
+  immediately before `npm run build`, matching the same convention
+  `Dockerfile.api`/`deploy/DEPLOYMENT.md` already use on Linux. An
+  empty-string environment variable doesn't reliably survive the
+  PowerShell -> npm.cmd -> cmd.exe -> vite child-process chain on
+  Windows, though -- confirmed directly by inspecting the actual built
+  `dist/assets/*.js` bundle, which had the literal string
+  `http://127.0.0.1:8000` baked in as `API_BASE` despite the env var
+  having been set. Every browser loading the built dashboard tried to
+  reach its own machine's loopback address instead of the real Tailscale
+  server.
+- **Files involved:** `frontend/src/api.ts` (`API_BASE`),
+  `scripts/start-team.ps1` (the frontend build step).
+- **Possible cause:** The empty-string round trip was never actually
+  verified against a real Windows build before this session -- it read
+  as correct (matches the Linux/Docker convention) without confirming
+  Windows' env-var-passing behavior across that specific process chain
+  matched.
+- **Current status:** **Resolved 2026-07-28.** `API_BASE`'s default is
+  now derived from `import.meta.env.DEV`/`PROD` (real booleans Vite
+  compiles in directly, not a value round-tripped through a child-process
+  environment) via a new pure `resolveApiBase()` function -- dev mode
+  (Local Mode's separate Vite dev server + API origin) still defaults to
+  the loopback address, a production build (Team Mode, one origin serves
+  both) now always defaults to a relative path regardless of whether any
+  env var was set at build time. `start-team.ps1` simplified to a plain
+  `npm run build`, no env var dance. Regression test added
+  (`resolveApiBase`'s dev/prod/explicit-override/explicit-empty-string
+  cases) -- confirmed failing against the pre-fix logic by temporarily
+  reverting it and re-running; confirmed the rebuilt bundle no longer
+  contains the loopback literal by inspecting it directly a second time.
+
+---
+
+### ISSUE-026 — `PgAccountStore` returned `None` for `notification_preferences`, crashing every response containing a user (RESOLVED)
+
+- **Severity:** Critical (broke registration, the roster, and profile
+  lookups for every Team Mode user with no notification preferences set
+  -- i.e. every user, since nothing sets this field yet)
+- **Description:** Found 2026-07-28 (live, immediately after fixing
+  ISSUE-025 unblocked registration -- the very next registration attempt
+  hit this). `notification_preferences` is a nullable JSONB column with
+  no `server_default`, so a freshly created user reads back as SQL
+  `NULL`/Python `None`. `UserOut`/`UserMeOut` (`api/schemas.py`) declare
+  the field as a non-nullable `dict`
+  (`Field(default_factory=dict)`) -- `default_factory` only applies when
+  a field is *omitted* from the constructor call, not when it's
+  explicitly passed as `None`, so `UserOut(**user)` raised a Pydantic
+  `ValidationError` -> 500 for `GET /api/users`, `GET /api/users/{id}/me`,
+  and even `POST /api/users`'s own response (the row itself had already
+  committed successfully -- the crash happened serializing the response
+  afterward, so registration *looked* like it failed even though the
+  account existed). `AccountStore`'s SQLite side already normalizes this
+  exact case (`_row_with_notification_preferences`); `PgAccountStore`
+  never got the matching fix.
+- **Files involved:** `src/futures_bot/accounts/pg_store.py` (`_row_dict`).
+- **Possible cause:** The live-Postgres test coverage added alongside
+  this field (`test_pg_account_store_live.py::test_profile_fields_round_trip`)
+  explicitly set `notification_preferences` via `update_user` before
+  reading it back, so it never exercised the NULL-default case a freshly
+  created user actually hits.
+- **Current status:** **Resolved 2026-07-28.** `_row_dict` now normalizes
+  `None` -> `{}` for this field, matching the SQLite store. Regression
+  test added directly against a live Postgres instance
+  (`test_notification_preferences_defaults_to_empty_dict_not_none`) --
+  confirmed failing against the pre-fix code by temporarily reverting it
+  and re-running against that same live database.
+- **Incident note:** Verifying this fix's regression test involved
+  running `test_pg_account_store_live.py` against the same live database
+  a teammate's real, just-created account lived in -- its cleanup fixture
+  runs `TRUNCATE users, organizations` after every test, which wiped that
+  account. The data loss was limited to those two tables (work items,
+  trades, and market data were untouched); the affected user re-registered
+  successfully once ISSUE-025 and this issue were both fixed. Lesson:
+  never run a test file with a `TRUNCATE`-based cleanup fixture against a
+  database someone is actively using for real work, even to verify a fix
+  live -- use a disposable database, or at minimum confirm with whoever
+  owns that data first.
+
+---
+
+### ISSUE-027 — A user who changed their own role via Team Members could permanently lock themselves out of managing anyone's role, including their own (RESOLVED)
+
+- **Severity:** High (a real, reproducible self-lockout with no recovery
+  path through the product itself -- happened live, to a sole
+  organization owner)
+- **Description:** Found 2026-07-28 (live -- a user demoted themselves
+  from Owner to Member via the Team Members role dropdown). The role
+  editor for *every* row (including your own) was gated only by
+  `can('manage_members')`, evaluated against the *current* session role.
+  After a self-demotion, the session refresh picked up the new, lower
+  role, `manage_members` became `false`, and the dropdown disappeared
+  for every row on the page -- including the user's own, with no other
+  Owner/Admin in the org to fix it for them. Permissions are advisory-
+  only, not enforced server-side (by design, documented in
+  `accounts/permissions.py`), so the only actual recovery was a direct
+  `PATCH /api/users/{id}` call bypassing the UI entirely.
+- **Files involved:** `frontend/src/pages/TeamMembers.tsx`.
+- **Possible cause:** The capability check only ever considered "can this
+  session manage members at all," never "is this row the session's own"
+  -- a self-service role change was never explicitly designed for or
+  against, just not excluded.
+- **Current status:** **Resolved 2026-07-28.** You can no longer edit
+  your own role from this page under any circumstances, even with
+  `manage_members` -- role changes always have to come from a teammate
+  now (the same restriction most real systems apply, for exactly this
+  reason). Regression test added -- confirmed failing against the pre-fix
+  code by temporarily reverting it and re-running.
+
+---
+
+### ISSUE-028 — The Live Session start form defaulted to a hardcoded, already-expired futures contract (RESOLVED)
+
+- **Severity:** High (a session silently reports "running" forever
+  without a single bar of real data -- no error, no obvious symptom
+  besides an empty dashboard, easy to miss)
+- **Description:** Found 2026-07-28 (live -- "the live session tab never
+  actually shows live data"). `frontend/src/pages/Live.tsx`'s start form
+  defaulted `liveSymbol` to the hardcoded literal `'MESH6'` (March 2026
+  expiry). Futures contract tickers roll every quarter; by the time
+  anyone actually used this default, it was months expired. Starting a
+  session with it succeeds (the API doesn't validate that a ticker has
+  any live data before marking the session "running"), but
+  `MassiveBarFeed.poll_new_bars()` then legitimately finds nothing --
+  confirmed directly by querying the Massive API for both tickers: the
+  expired one returned zero results, the actual current front-month
+  contract (`MESU6`) had bars streaming in through the current moment.
+  No exception is raised in this case (an empty result is a normal,
+  successful response, not a feed error), so `last_feed_error` stayed
+  `null` right alongside `last_bar_time` -- nothing about the session's
+  own status distinguished this from "briefly quiet market."
+- **Files involved:** `frontend/src/pages/Live.tsx`.
+- **Possible cause:** A plausible-looking placeholder ticker was used as
+  a form default during development and never revisited -- it was
+  correct once, silently wrong forever after, with no mechanism (there is
+  no active-contract-resolution endpoint exposed to the frontend yet,
+  only used internally by the CLI/research server) to catch the drift.
+- **Current status:** **Resolved 2026-07-28.** The field now starts
+  empty with a placeholder/help text explaining it must be the *current*
+  front-month contract, not a remembered one, plus the quarterly month-
+  code reference (H/M/U/Z = Mar/Jun/Sep/Dec) needed to pick the right one
+  by hand. Regression test updated to fill the field explicitly rather
+  than relying on a default value. **Not done, a real follow-on
+  improvement**: exposing the CLI/research-server's existing
+  `active_contract()` resolution as an API endpoint so this field could
+  auto-fill/validate instead of relying on the user to get a quarterly
+  code right by hand -- flagged rather than built now (a new API route
+  needs the explicit approval CLAUDE.md section 8 requires for that
+  protected category, not something to add on a live-debugging pass).

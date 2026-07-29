@@ -133,6 +133,32 @@ class TestOrganizationsAndUsers:
         usernames = {u["username"] for u in s.fetch_users(org_id=org_a)}
         assert usernames == {f"alice-{org_a}"}
 
+    def test_notification_preferences_defaults_to_empty_dict_not_none(self, store):
+        # Regression test for a real bug (found live, 2026-07-28):
+        # notification_preferences is a nullable JSONB column with no
+        # server_default, so a freshly created user reads back as SQL
+        # NULL/Python None -- but UserOut/UserMeOut declare the field as
+        # a non-nullable dict, so returning None from the store crashed
+        # every response containing a user (including create_user's own
+        # response) with a Pydantic ValidationError -> 500, even though
+        # the row itself had already committed successfully. Confirmed
+        # against this live server directly before the fix (GET
+        # /api/users, GET /api/users/{id}/me, and POST /api/users itself
+        # all failed this way).
+        s, _ = store
+        org_id = _org_id()
+        s.create_organization(org_id=org_id, name=f"Acme {org_id}")
+        user_id = _user_id()
+
+        user = s.create_user(
+            user_id=user_id, display_name="Seth", username=f"seth-{user_id}", org_id=org_id, role="owner",
+        )
+
+        assert user["notification_preferences"] == {}
+        assert s.fetch_user(user_id)["notification_preferences"] == {}
+        assert s.fetch_user_by_username(f"seth-{user_id}")["notification_preferences"] == {}
+        assert s.fetch_users(org_id=org_id)[0]["notification_preferences"] == {}
+
     def test_api_key_generated_and_regeneratable(self, store):
         s, _ = store
         org_id = _org_id()

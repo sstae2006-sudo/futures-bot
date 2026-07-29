@@ -15,7 +15,17 @@ const STATUS_TONE: Record<string, 'good' | 'bad' | 'warn' | 'neutral'> = {
 
 export default function Live() {
   const status = useLiveStream()
-  const [liveSymbol, setLiveSymbol] = useState('MESH6')
+  // No hardcoded default here on purpose (found the hard way, 2026-07-28:
+  // this used to default to 'MESH6' -- futures contract tickers expire
+  // every quarter, H6 = March 2026, long expired by the time anyone
+  // actually clicks "Start a session" -- the session started, showed
+  // "running," and silently never received a single bar, since the feed
+  // was polling a ticker with no live data at all. There's no
+  // active-contract-resolution endpoint exposed to the frontend yet
+  // (only used internally by the CLI/research server today) -- until
+  // there is, requiring the user to type the real, current front-month
+  // ticker themselves is safer than guessing wrong silently.
+  const [liveSymbol, setLiveSymbol] = useState('')
   const [resolution, setResolution] = useState('5min')
   const [pollSeconds, setPollSeconds] = useState('30')
   const [submitting, setSubmitting] = useState(false)
@@ -159,7 +169,15 @@ export default function Live() {
               <div className="field-row">
                 <div className="field">
                   <label htmlFor="live-symbol">Live symbol</label>
-                  <input id="live-symbol" value={liveSymbol} onChange={(e) => setLiveSymbol(e.target.value)} placeholder="e.g. MESH6" required />
+                  <input
+                    id="live-symbol" value={liveSymbol} onChange={(e) => setLiveSymbol(e.target.value)}
+                    placeholder="e.g. MESU6 -- the CURRENT front-month contract" required
+                  />
+                  <p style={{ fontSize: 11, opacity: 0.6, marginTop: 2, maxWidth: 260 }}>
+                    Must be the currently active contract, not a past/expired one -- an expired ticker
+                    starts the session fine but never receives any live data. Quarterly codes: H=Mar,
+                    M=Jun, U=Sep, Z=Dec (e.g. MESU6 = September 2026).
+                  </p>
                 </div>
                 <div className="field">
                   <label htmlFor="live-resolution">Resolution</label>

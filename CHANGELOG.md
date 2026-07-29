@@ -4,6 +4,77 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-28 — Live incident response: Team Mode boot, registration, Team Members, and Live Session all broken end-to-end
+
+Not a planned pass -- a live "boot Team Mode and use it" session that hit
+four separate, real, previously-undiscovered bugs in sequence, each
+blocking the next thing tried. Every fix confirmed by temporarily
+reverting it and re-running its regression test against the pre-fix
+code. Full detail in `KNOWN_ISSUES.md` ISSUE-025 through ISSUE-028; this
+is the summary, in the order they were hit.
+
+**ISSUE-025 (Critical) — Team Mode's production build silently kept the
+local-dev loopback API URL.** `api.ts`'s `API_BASE` fallback depended on
+`start-team.ps1` setting `VITE_API_BASE_URL=""` at build time, which
+doesn't reliably survive the PowerShell -> npm.cmd -> cmd.exe -> vite
+child-process chain on Windows -- confirmed directly by finding the
+literal `http://127.0.0.1:8000` baked into the actual built bundle. Every
+teammate's browser tried to reach its own machine instead of the real
+server. Fixed by basing the default on `import.meta.env.DEV`/`PROD`
+(real compiled-in booleans) instead.
+
+**ISSUE-026 (Critical) — `PgAccountStore` crashed every response
+containing a user with no `notification_preferences` set.** A nullable
+JSONB column read back as `None`, but `UserOut`/`UserMeOut` require a
+`dict` -- `default_factory` doesn't cover an explicitly-passed `None`.
+Broke `GET /api/users`, `GET /api/users/{id}/me`, and even
+`POST /api/users`'s own response (registration looked like it failed
+even though the row had committed). Fixed by normalizing `None` -> `{}`,
+matching the SQLite store's existing behavior. **Incident note**:
+verifying this fix's regression test against the live database used its
+`TRUNCATE`-based cleanup fixture, which wiped the org/account a teammate
+had just registered -- limited to those two tables, re-registration
+succeeded once both fixes landed. Documented in ISSUE-026 as a lesson for
+next time: never run a `TRUNCATE`-cleanup test file against a database
+someone's actively using.
+
+**ISSUE-027 (High) — self-role-edit lockout on Team Members.** A sole
+owner who demoted themselves lost `manage_members` on the next refresh,
+which hid the role editor for *every* row including their own -- no
+recovery path through the product (permissions are advisory-only, not
+enforced server-side). Fixed: you can no longer edit your own role from
+this page, ever -- only a teammate can change it for you.
+
+**ISSUE-028 (High) — Live Session defaulted to an expired contract.**
+The start form's hardcoded `'MESH6'` default was months expired by the
+time anyone used it; the session started and reported "running" forever
+without a single bar (an empty result is a successful response, not a
+feed error, so nothing about the session's own status revealed this).
+Confirmed directly by querying the Massive API for both tickers -- the
+expired one had zero data, the real current contract (`MESU6`) was
+streaming live. Fixed: the field now starts empty with guidance on
+picking the current quarterly code by hand. Flagged, not built: an
+active-contract-resolution API endpoint so this could auto-fill instead
+(a new route needs explicit approval per CLAUDE.md section 8's protected
+list).
+
+**Also cleaned up while diagnosing ISSUE-028**: `feeds/massive.py` had
+several leftover `print()` debug statements (ironically what made the
+diagnosis fast) -- converted to proper `log.debug()` calls instead of
+either leaving raw prints in production or deleting genuinely useful
+diagnostic signal.
+
+**Operationally**: the local docker-compose TimescaleDB was also found 3
+Alembic migrations behind (`owner_type`, `api_key`/profile fields,
+`org_id`) and brought current (`alembic upgrade head`) -- not a code bug,
+just a database nobody had migrated yet.
+
+**Testing**: 4 new regression tests (API_BASE resolution, `notification_
+preferences` normalization against a live Postgres, self-role-lockout
+prevention, Live Session symbol handling), each confirmed to fail against
+its bug's pre-fix code before the fix landed. Full backend and frontend
+suites verified passing after every change.
+
 ## 2026-07-28 — Stabilization Mode: concurrency and edge-case sweep of the Collaboration/Registration features
 
 A ~1-hour, skeptical bug hunt across everything added in the same day's

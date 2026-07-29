@@ -29,7 +29,27 @@ def _isoformat_datetimes(d: dict) -> dict:
 
 
 def _row_dict(row) -> Optional[dict]:
-    return _isoformat_datetimes(dict(row._mapping)) if row is not None else None
+    """`notification_preferences` is a nullable JSONB column (no
+    `server_default`) -- every user created before this field existed, or
+    simply never given a preference, reads back as SQL `NULL`/Python
+    `None`. `UserOut`/`UserMeOut` (`api/schemas.py`) declare it as a
+    non-nullable `dict` (`Field(default_factory=dict)`), matching
+    `AccountStore`'s SQLite side, which already normalizes `None` -> `{}`
+    in `_row_with_notification_preferences` -- this store must do the same
+    or every response containing a user fails Pydantic validation with a
+    500 (confirmed directly, 2026-07-28: `GET /api/users`,
+    `GET /api/users/{id}/me`, and even `POST /api/users`'s own response
+    all failed this way for a user with no `notification_preferences` set
+    -- registration itself appeared to fail even though the row had
+    already committed, since the crash happens serializing the response,
+    after the write). Harmless for rows with no such column (e.g.
+    `organizations`) -- the key is simply absent from `d` then."""
+    if row is None:
+        return None
+    d = _isoformat_datetimes(dict(row._mapping))
+    if "notification_preferences" in d and d["notification_preferences"] is None:
+        d["notification_preferences"] = {}
+    return d
 
 
 class PgAccountStore:

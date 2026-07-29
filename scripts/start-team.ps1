@@ -7,14 +7,18 @@
 .DESCRIPTION
   NOT a replacement for start.ps1 -- that script stays the single-
   developer path (local SQLite, separate Vite dev server, loopback-
-  only) completely unchanged. This script is the team-mode path:
-  builds the frontend once (VITE_API_BASE_URL= npm run build, same
-  convention deploy/DEPLOYMENT.md and Dockerfile.api already use for
-  the VPS/Docker deploy), then starts the backend with
-  --allow-network-exposure so it serves both the API and the built
-  dashboard from one process/port, bound to this machine's Tailscale
-  address instead of loopback. No separate Vite server, no new CORS
-  surface -- api/__main__.py's existing non-loopback guard is not
+  only) completely unchanged. This script is the team-mode path: builds
+  the frontend once (a production `npm run build`, which
+  frontend/src/api.ts's own API_BASE default now treats as "serve
+  relative to whatever origin loaded the page" -- no VITE_API_BASE_URL
+  env var needed at build time here; see that file's comment for why an
+  earlier version of this script tried setting one to an empty string
+  and why that didn't reliably survive the PowerShell -> npm.cmd ->
+  cmd.exe -> vite child-process chain on Windows), then starts the
+  backend with --allow-network-exposure so it serves both the API and
+  the built dashboard from one process/port, bound to this machine's
+  Tailscale address instead of loopback. No separate Vite server, no new
+  CORS surface -- api/__main__.py's existing non-loopback guard is not
   weakened, this script just satisfies it correctly (Tailscale is the
   "something in front of it" the guard's own help text asks for).
 
@@ -134,11 +138,19 @@ Write-Ok "Binding to $BindHost`:$Port"
 Write-Step "Checking Windows Firewall for an inbound rule on port $Port"
 Confirm-TailscaleFirewallRule -Port $Port | Out-Null
 
-# 6. Build the frontend once. VITE_API_BASE_URL= (empty) bakes in
-#    relative API paths, so the same build works from any Tailscale
-#    address without a rebuild -- same convention Dockerfile.api and
-#    deploy/DEPLOYMENT.md's manual VPS steps already use.
-Write-Step "Building frontend (npm ci && VITE_API_BASE_URL= npm run build)"
+# 6. Build the frontend once. A production build (`vite build`, what
+#    `npm run build` runs) defaults its API base URL to a relative path
+#    (frontend/src/api.ts's own `API_BASE`, based on `import.meta.env.DEV`)
+#    -- correct here because this same process serves both the API and
+#    these static files from one origin, and it works from any Tailscale
+#    address without a rebuild. No VITE_API_BASE_URL env var needed at
+#    build time: an earlier version of this script tried setting one to
+#    an empty string here, but that doesn't reliably survive the
+#    PowerShell -> npm.cmd -> cmd.exe -> vite child-process chain on
+#    Windows (confirmed directly: the built bundle still had the dev
+#    fallback baked in) -- api.ts's own default is what's actually
+#    trustworthy now, not this build step.
+Write-Step "Building frontend (npm ci && npm run build)"
 $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $npmCmd) {
     Write-Failure `
@@ -150,10 +162,8 @@ Push-Location $FrontendDir
 & $npmCmd.Source ci --no-fund --no-audit | Out-Null
 $npmInstallExit = $LASTEXITCODE
 if ($npmInstallExit -eq 0) {
-    $env:VITE_API_BASE_URL = ""
     & $npmCmd.Source run build | Out-Null
     $npmBuildExit = $LASTEXITCODE
-    Remove-Item Env:\VITE_API_BASE_URL -ErrorAction SilentlyContinue
 } else {
     $npmBuildExit = 1
 }
@@ -166,7 +176,7 @@ if ($npmInstallExit -ne 0) {
 if ($npmBuildExit -ne 0) {
     Write-Failure `
         "npm run build failed in frontend\ (exit code $npmBuildExit)" `
-        "Run manually to see the full error: cd frontend; `$env:VITE_API_BASE_URL=''; npm run build"
+        "Run manually to see the full error: cd frontend; npm run build"
 }
 $FrontendDist = Join-Path $FrontendDir "dist"
 if (-not (Test-Path (Join-Path $FrontendDist "index.html"))) {
