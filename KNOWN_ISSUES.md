@@ -1634,3 +1634,41 @@ verified fixed — instead mark it Resolved with a date and commit.
   out of scope for this fix. The broader API-inefficiency punch list
   from ISSUE-041 (`fetch_trades()`, ML feature-matrix rebuilds,
   `commit_client_import`'s N+1, `generate_insights()`) remains unfixed.
+
+---
+
+### ISSUE-043 — Every signed-in user showed "offline" within ~2 minutes, including themselves (RESOLVED)
+
+- **Severity:** High — user-reported, directly visible, affects every
+  team member on every page (`TeamPanel.tsx`'s roster).
+- **Description:** Found 2026-07-29, reported directly by the user
+  ("it says offline for me or anyone even if they are online").
+  `POST /api/users/{id}/heartbeat` (`accounts/store.py::touch_last_active`)
+  was a real, working backend route, and `frontend/src/api.ts::sendUserHeartbeat`
+  was a real, working frontend function to call it — but nothing in the
+  app ever actually called that function. `last_active_at` was set once,
+  at user creation, and never touched again. `format.ts::isOnline`'s
+  2-minute TTL window meant every user — including whoever was actively
+  looking at the page right now — showed "offline" a couple of minutes
+  after signing in, permanently, regardless of real activity.
+- **Files involved:** `frontend/src/session.tsx` (the fix),
+  `frontend/src/api.ts::sendUserHeartbeat` (already existed, unused),
+  `src/futures_bot/api/routes/accounts.py`'s `heartbeat` route and
+  `accounts/store.py`/`pg_store.py::touch_last_active` (already existed,
+  correct, unused).
+- **Possible cause:** The backend route and frontend API function were
+  both built (their own docstrings describe the intended "explicit
+  heartbeat from an active client session" design) but the actual
+  wiring — something in the frontend calling it periodically — was never
+  added to `SessionProvider`.
+- **Current status:** **Resolved 2026-07-29.** `SessionProvider` now
+  sends a heartbeat immediately on sign-in and every 60 seconds
+  thereafter (half `isOnline`'s 2-minute window, a conventional TTL
+  heartbeat cadence) for as long as a user is signed in; stops cleanly
+  when signed out. Failures are swallowed silently — a missed heartbeat
+  should degrade to "looks offline a bit early," never surface as a
+  user-facing session error. 9 new tests
+  (`frontend/src/__tests__/session.test.tsx`'s `SessionProvider heartbeat`
+  block): fires immediately, fires again after the interval elapses,
+  never fires with no signed-in user, and a failed heartbeat doesn't
+  surface as an error. Full frontend suite green.

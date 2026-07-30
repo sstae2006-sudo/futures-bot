@@ -178,6 +178,17 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
+2026-07-29: **Fix: every signed-in user showed "offline" within ~2
+minutes, including themselves (KNOWN_ISSUES.md ISSUE-043).**
+User-reported. `POST /api/users/{id}/heartbeat` and
+`frontend/src/api.ts::sendUserHeartbeat` both existed, correct and
+working — nothing in the app ever called the frontend function, so
+`last_active_at` was set once at registration and never refreshed.
+Fixed: `SessionProvider` now heartbeats immediately on sign-in and every
+60s thereafter, stops on sign-out, swallows failures silently. 9 new
+tests (`session.test.tsx`'s heartbeat block). Full frontend suite green
+(149 passed).
+
 2026-07-29: **Fix: `market_data_overview()` made ~2,800+ sequential DB
 round trips against real data (KNOWN_ISSUES.md ISSUE-042) — the
 confirmed real cause of "team mode never loads."** Found by directly

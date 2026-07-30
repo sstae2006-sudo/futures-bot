@@ -4,6 +4,23 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Fix: everyone showed "offline" within ~2 minutes (ISSUE-043)
+
+User-reported: "it says offline for me or anyone even if they are
+online." Root cause: `POST /api/users/{id}/heartbeat` and
+`frontend/src/api.ts::sendUserHeartbeat` both existed, correct and
+working, but nothing in the app ever called the frontend function --
+`last_active_at` was set once at user creation and never refreshed, so
+`isOnline`'s 2-minute TTL window meant every signed-in user (including
+whoever was actively looking at the page) showed offline within minutes,
+permanently.
+
+**Fixed:** `SessionProvider` now sends a heartbeat immediately on
+sign-in and every 60 seconds thereafter, for as long as a user stays
+signed in; stops cleanly on sign-out. Failures are swallowed silently --
+a missed heartbeat degrades to "looks offline a bit early," never a
+user-facing error. 9 new tests. Full frontend suite green (149 passed).
+
 ## 2026-07-29 — Found and fixed the real "team mode never loads" cause (ISSUE-042)
 
 Continuing the ISSUE-041 investigation with direct measurement against
