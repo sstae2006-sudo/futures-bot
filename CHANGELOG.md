@@ -4,6 +4,26 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Fix Team Mode boot failure + document PowerShell env-var setup
+
+Root cause of a recurring "`FUTURES_BOT_DATABASE_URL` is not set in this
+shell" failure on `scripts\start-team.ps1`: the variable was only ever
+being set transiently in whatever PowerShell window it was typed into
+(the running `futures-bot-timescaledb` Docker container itself was fine
+the whole time — verified via `check_database_health()`, 293ms latency).
+Fixed by setting it as a persistent Windows User environment variable
+(`[System.Environment]::SetEnvironmentVariable(..., 'User')`) so every
+future PowerShell window has it automatically, not just the one it was
+set in.
+
+`TEAM_DEPLOYMENT.md` updated: every bash `export FUTURES_BOT_DATABASE_URL=...`
+example now has a PowerShell equivalent alongside it (the doc was
+bash-only despite this project's own dev environment being Windows — a
+real, direct contributor to the confusion), a new "Setting
+`FUTURES_BOT_DATABASE_URL` on Windows" section explains the transient-
+vs-persistent distinction up front, and a new Troubleshooting entry
+covers this exact failure mode directly.
+
 ## 2026-07-29 — Fix: Integration Queue was O(N^2) in queue size (ISSUE-039)
 
 Prompted by a direct question about whether the newly-shipped Milestone

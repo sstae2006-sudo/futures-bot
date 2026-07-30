@@ -31,6 +31,47 @@ process bound to this machine's Tailscale address (`--allow-network-exposure`,
 serving the built dashboard from the same process/port — no separate Vite
 server, no new CORS surface).
 
+## Setting `FUTURES_BOT_DATABASE_URL` on Windows (PowerShell)
+
+Every command below is written as a bash `export` because that's the
+lowest-common-denominator syntax for a Linux server — but this project's
+own dev environment is Windows (`scripts\start-team.ps1` is PowerShell),
+so translate every `export VAR=value` you see below to one of these two
+PowerShell forms:
+
+```powershell
+# Transient -- only lasts for THIS PowerShell window. Fine for a
+# one-off command (e.g. running alembic by hand), but you'll hit
+# "FUTURES_BOT_DATABASE_URL is not set" again the moment you open a
+# new terminal, since this never touches anything outside the current
+# process.
+$env:FUTURES_BOT_DATABASE_URL = 'postgresql+psycopg://futures_bot:<password>@127.0.0.1:5432/futures_bot'
+
+# Persistent -- set once, and every NEW PowerShell window from then on
+# already has it (this is the actual fix for "team mode won't boot" if
+# that keeps happening in fresh terminals). Requires closing and
+# reopening PowerShell to take effect -- an already-open window (like
+# the one you just ran this in) will NOT pick it up; that window still
+# needs the transient form above, or just close/reopen it.
+[System.Environment]::SetEnvironmentVariable('FUTURES_BOT_DATABASE_URL', 'postgresql+psycopg://futures_bot:<password>@127.0.0.1:5432/futures_bot', 'User')
+# (equivalent: setx FUTURES_BOT_DATABASE_URL "postgresql+psycopg://futures_bot:<password>@127.0.0.1:5432/futures_bot")
+```
+
+If the server and the backend are the same Windows machine (the simplest
+setup, and the only one this project's own dev environment has actually
+verified — see "Server setup" below), the docker-compose default DSN is:
+
+```
+postgresql+psycopg://futures_bot:futures_bot_dev_only@127.0.0.1:5432/futures_bot
+```
+
+`futures_bot_dev_only` is the compose file's dev-only default password
+(`deploy/docker-compose.yml`'s `TIMESCALEDB_PASSWORD` default) — fine for
+a single-tailnet, no-external-exposure setup like this doc assumes
+throughout, but rotate it (set a real `TIMESCALEDB_PASSWORD` before first
+bringing the container up — see "Server setup" below) before this
+database is ever reachable from outside your own tailnet.
+
 ## Server setup
 
 One machine (a small VPS, or any always-on box on the tailnet) hosts the
@@ -78,6 +119,15 @@ pip install -e ".[db]"
 alembic upgrade head
 ```
 
+PowerShell (see "Setting `FUTURES_BOT_DATABASE_URL` on Windows" above for
+transient vs. persistent):
+
+```powershell
+$env:FUTURES_BOT_DATABASE_URL = "postgresql+psycopg://futures_bot:$env:TIMESCALEDB_PASSWORD@127.0.0.1:5432/futures_bot"
+pip install -e ".[db]"
+alembic upgrade head
+```
+
 This creates all of `market_data.db`'s and `research.db`'s tables and
 converts `bars` into a TimescaleDB hypertable. Safe to re-run — Alembic
 tracks the applied revision in its own `alembic_version` table and only
@@ -112,6 +162,15 @@ exists.
 ```bash
 export FUTURES_BOT_DATABASE_URL="postgresql+psycopg://futures_bot:${TIMESCALEDB_PASSWORD}@127.0.0.1:5432/futures_bot"
 pwsh scripts/start-team.ps1
+```
+
+On Windows, run this directly in PowerShell rather than through `pwsh`
+from bash — set the variable persistently first (see "Setting
+`FUTURES_BOT_DATABASE_URL` on Windows" above) so this works the same way
+in every future terminal, not just the one you set it in:
+
+```powershell
+scripts\start-team.ps1
 ```
 
 (`start-team.ps1` is PowerShell — on a Linux server, follow the same steps
@@ -185,6 +244,14 @@ export FUTURES_BOT_DATABASE_URL="postgresql+psycopg://futures_bot:<password>@<se
 pip install -e ".[db]"
 ```
 
+PowerShell — use the persistent form (see above) so this survives past
+the current window:
+
+```powershell
+[System.Environment]::SetEnvironmentVariable('FUTURES_BOT_DATABASE_URL', 'postgresql+psycopg://futures_bot:<password>@<server-tailscale-ip>:5432/futures_bot', 'User')
+pip install -e ".[db]"
+```
+
 This is the real, final check the approved plan for this feature flagged as
 unverifiable from a single-machine development sandbox: an actual second
 device joining the tailnet and reaching the shared backend from a different
@@ -216,6 +283,23 @@ Confirm `FUTURES_BOT_DATABASE_URL` is set and correct in the current shell
 (it's read by `alembic/env.py`, not `alembic.ini` — the DSN is never
 written to a tracked file). Confirm the `timescaledb` service is up and
 healthy: `docker compose -f deploy/docker-compose.yml ps timescaledb`.
+
+**`scripts\start-team.ps1` fails with "FUTURES_BOT_DATABASE_URL is not
+set in this shell" even though it worked before / was set previously.**
+This isn't the script breaking — a `$env:FUTURES_BOT_DATABASE_URL = ...`
+set in one PowerShell window only exists in that window's process; a
+fresh terminal (a new window, a reboot, a scheduled task) never inherits
+it. If this keeps happening, you set it transiently instead of
+persistently — see "Setting `FUTURES_BOT_DATABASE_URL` on Windows" near
+the top of this doc and use the `[System.Environment]::SetEnvironmentVariable(...,
+'User')` (or `setx`) form instead, then close and reopen PowerShell once
+so the new window actually picks it up. Confirm it's set as intended with
+`[System.Environment]::GetEnvironmentVariable('FUTURES_BOT_DATABASE_URL', 'User')`.
+Also confirm the `timescaledb` Docker container is actually still
+running (`docker ps`) — a machine reboot stops it unless it was started
+with `restart: unless-stopped` actually taking effect (the compose file
+sets this by default, but Docker Desktop itself needs to be running for
+`unless-stopped` to bring the container back up).
 
 **`scripts\start-team.ps1` fails at "Tailscale CLI not found."**
 Install Tailscale and make sure `tailscale` is on `PATH`, or pass
