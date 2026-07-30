@@ -1,17 +1,20 @@
 """Behavior verification for `PgAccountStore` against a *real* Postgres/
 TimescaleDB server, mirroring `test_pg_market_data_store_live.py`'s own
-structure. Skipped automatically whenever no reachable server is
-configured via `FUTURES_BOT_DATABASE_URL`, so the default single-developer
-test run is completely unaffected.
+structure. Skipped automatically unless BOTH a reachable server is
+configured via `FUTURES_BOT_DATABASE_URL` AND the destructive-test
+opt-in is given (see `tests/_live_test_guard.py`'s module docstring,
+KNOWN_ISSUES.md ISSUE-041 -- this module TRUNCATEs real tables in its
+cleanup fixture), so the default single-developer test run is
+completely unaffected.
 
     docker compose -f deploy/docker-compose.yml up -d timescaledb
     export FUTURES_BOT_DATABASE_URL=postgresql+psycopg://futures_bot:futures_bot_dev_only@127.0.0.1:5432/futures_bot
+    export FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1
     pytest tests/test_pg_account_store_live.py -v
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
@@ -19,23 +22,10 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("psycopg")
 
-from futures_bot.db.engine import database_url, dispose_engine  # noqa: E402
-from futures_bot.db.health import check_database_health  # noqa: E402
+from futures_bot.db.engine import dispose_engine  # noqa: E402
+from tests._live_test_guard import live_server_reachable, skip_reason  # noqa: E402
 
-
-def _live_server_reachable() -> bool:
-    if not database_url():
-        return False
-    return check_database_health().ok
-
-
-pytestmark = pytest.mark.skipif(
-    not _live_server_reachable(),
-    reason=(
-        f"No reachable Postgres/TimescaleDB at {os.environ.get('FUTURES_BOT_DATABASE_URL', '<unset>')} "
-        "-- start the compose timescaledb service to run this module."
-    ),
-)
+pytestmark = pytest.mark.skipif(not live_server_reachable(), reason=skip_reason())
 
 
 @pytest.fixture()

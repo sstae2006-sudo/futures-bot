@@ -4,6 +4,17 @@ unreachable (a team deployment whose server is down), and configured and
 healthy (the real, working case). PROJECT_STATE.md referenced this
 coverage before it existed as a committed test -- added here so it's a
 permanent regression check, not a one-off manual verification.
+
+`TestConfiguredAndHealthy`'s real-server case (and `TestConfiguredButUnreachable`'s
+wrong-credentials case) go through `conftest.py`'s `live_database_url`
+fixture, which -- per KNOWN_ISSUES.md ISSUE-041 -- now additionally
+requires `FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1` (not just a reachable
+`FUTURES_BOT_DATABASE_URL`) before it will restore a real DSN; both
+cases `pytest.skip()` cleanly when that fixture returns `None`. This
+module never writes to the database (read-only health probes only), but
+is gated the same way as the modules that do, for consistency and
+because a probe that reveals real connectivity/credentials shouldn't
+run against a shared instance without the same deliberate opt-in either.
 """
 
 from __future__ import annotations

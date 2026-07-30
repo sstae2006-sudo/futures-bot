@@ -9,8 +9,10 @@ caller up the stack) assumes a plain string -- the SQLite-only fixture in
 `test_api_market_data.py` can't exercise this at all, since SQLite's own
 `fetch_sync_runs` already returns strings.
 
-Skipped automatically when no reachable server is configured -- same
-pattern as `test_pg_market_data_store_live.py`.
+Skipped automatically unless BOTH a reachable server is configured AND
+the destructive-test opt-in is given -- same pattern as
+`test_pg_market_data_store_live.py` (see `tests/_live_test_guard.py`'s
+module docstring, KNOWN_ISSUES.md ISSUE-041).
 """
 
 from __future__ import annotations
@@ -20,20 +22,10 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("psycopg")
 
-from futures_bot.db.engine import database_url, dispose_engine  # noqa: E402
-from futures_bot.db.health import check_database_health  # noqa: E402
+from futures_bot.db.engine import dispose_engine  # noqa: E402
+from tests._live_test_guard import live_server_reachable, skip_reason  # noqa: E402
 
-
-def _live_server_reachable() -> bool:
-    if not database_url():
-        return False
-    return check_database_health().ok
-
-
-pytestmark = pytest.mark.skipif(
-    not _live_server_reachable(),
-    reason="No reachable Postgres/TimescaleDB configured via FUTURES_BOT_DATABASE_URL.",
-)
+pytestmark = pytest.mark.skipif(not live_server_reachable(), reason=skip_reason())
 
 
 @pytest.fixture

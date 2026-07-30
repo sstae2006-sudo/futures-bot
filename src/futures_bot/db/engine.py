@@ -43,7 +43,7 @@ def database_url() -> Optional[str]:
 
 def get_engine(
     pool_size: int = 5, max_overflow: int = 10, pool_recycle_seconds: int = 1800,
-    connect_timeout_seconds: int = 5,
+    connect_timeout_seconds: int = 5, statement_timeout_ms: int = 30_000,
 ) -> Engine:
     """The one shared pooled ``Engine`` for this process.
 
@@ -63,6 +63,21 @@ def get_engine(
     connection after a bounded lifetime regardless of health, so a
     connection idled long enough for a stateful NAT/firewall along a
     Tailscale path to silently drop it is never kept indefinitely.
+
+    ``statement_timeout_ms`` (KNOWN_ISSUES.md ISSUE-041, found alongside
+    the live-test data-loss issue): ``connect_timeout_seconds`` only
+    bounds *establishing* a new physical connection -- it does nothing
+    once a connection is open and a query is running. Before this fix,
+    nothing bounded query execution at all: a single slow scan, a lock
+    wait, or a runaway statement from a concurrent process could hold a
+    pool slot forever, and with only ``pool_size + max_overflow`` = 15
+    total connections by default, a handful of stuck queries could
+    exhaust the pool and make the whole app appear to hang for every
+    other request. Passed via ``connect_args={"options": "-c
+    statement_timeout=..."}`` -- a psycopg/libpq startup option, applied
+    server-side to every connection this pool opens, so a stuck query is
+    killed (raises a driver error the caller already has to handle) well
+    before a human notices a hang instead of waiting on it indefinitely.
 
     Raises ``RuntimeError`` (not the raw driver exception) if
     ``FUTURES_BOT_DATABASE_URL`` isn't set -- callers only reach this
@@ -89,17 +104,24 @@ def get_engine(
             pool_recycle=pool_recycle_seconds,
             pool_pre_ping=True,
             future=True,
-            # psycopg/libpq's own connect timeout (seconds) -- bounds how
-            # long establishing a *new* physical connection can take, the
-            # scenario that matters for a dead/unreachable host over
-            # Tailscale. Applies to every new connection the pool opens,
-            # not to queries against an already-open one.
-            connect_args={"connect_timeout": connect_timeout_seconds},
+            connect_args={
+                # psycopg/libpq's own connect timeout (seconds) -- bounds
+                # how long establishing a *new* physical connection can
+                # take, the scenario that matters for a dead/unreachable
+                # host over Tailscale. Applies to every new connection
+                # the pool opens, not to queries against an already-open
+                # one -- statement_timeout (below) covers that case.
+                "connect_timeout": connect_timeout_seconds,
+                "options": f"-c statement_timeout={statement_timeout_ms}",
+            },
         )
         return _engine
 
 
-def prime_engine(pool_size: int = 5, max_overflow: int = 10, pool_recycle_seconds: int = 1800) -> Optional[Engine]:
+def prime_engine(
+    pool_size: int = 5, max_overflow: int = 10, pool_recycle_seconds: int = 1800,
+    statement_timeout_ms: int = 30_000,
+) -> Optional[Engine]:
     """Builds the shared `Engine` with explicit pool tuning, if one
     doesn't already exist -- the one place `config.py::DeploymentSettings`'s
     `pool_size`/`max_overflow`/`pool_recycle_seconds` actually reach
@@ -119,7 +141,10 @@ def prime_engine(pool_size: int = 5, max_overflow: int = 10, pool_recycle_second
     """
     if not database_url():
         return None
-    return get_engine(pool_size=pool_size, max_overflow=max_overflow, pool_recycle_seconds=pool_recycle_seconds)
+    return get_engine(
+        pool_size=pool_size, max_overflow=max_overflow, pool_recycle_seconds=pool_recycle_seconds,
+        statement_timeout_ms=statement_timeout_ms,
+    )
 
 
 def dispose_engine() -> None:

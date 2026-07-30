@@ -178,6 +178,35 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
+2026-07-29: **IN PROGRESS, paused mid-session (low on budget) — Critical
+fix: pytest could TRUNCATE real production tables (KNOWN_ISSUES.md
+ISSUE-041), plus a Team Mode slowness investigation.** Persisting
+`FUTURES_BOT_DATABASE_URL` as a Windows env var (this session's earlier
+Team Mode boot fix) meant a plain `pytest` run would silently run 55
+previously-skipped live-Postgres tests for real against the actual
+migrated production database — six of seven `TRUNCATE` real tables in
+cleanup. **Fixed and verified**: a second, deliberate opt-in
+(`FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1`) is now required, enforced in
+`tests/_live_test_guard.py` (new, replaces 7 duplicated skip-check
+copies) + `conftest.py::live_database_url`; confirmed via a real
+`pytest` run that all 55 live tests skip cleanly with just
+`FUTURES_BOT_DATABASE_URL` set. 14 new regression tests. Also fixed:
+`db/engine.py::get_engine()` had no `statement_timeout` (a stuck query
+could hold a pool slot forever) — now bounded at 30s.
+**Next session should start here**: two Explore-agent investigations
+this session (not yet acted on beyond the above) found the most likely
+concrete cause of "team mode never loads" — `system_overview()`
+(the exact endpoint `scripts/start-team.ps1` polls for readiness, with
+only a 3s per-attempt timeout) does an unfiltered `trade_count()` and
+`PgTradeStore.fetch_reports()` has no `LIMIT` — plus a written-up list of
+broader API inefficiencies (unbounded `fetch_trades()`, redundant ML
+feature-matrix rebuilds in `submit_model_training_job`, an N+1 in
+`commit_client_import`, `generate_insights()` recomputing from scratch
+on every Dashboard load, more). See `KNOWN_ISSUES.md` ISSUE-041's
+"Not yet fixed" section for the full punch list with file/function
+names. Full backend suite was mid-run (not yet confirmed green) when
+this session paused — run it first before continuing.
+
 2026-07-29: **Fix: Mission Control's hardcoded fake data
 (KNOWN_ISSUES.md ISSUE-040).** Found during "SIL Research Engine 2.0
 Phase 1"'s audit (Fork D): `ResearchSummaryCard`/`DatabaseSummaryCard`/

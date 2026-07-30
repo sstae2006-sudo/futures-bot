@@ -4,8 +4,11 @@ pythonpath (see `tests/test_tools_turtle_import.py`'s identical pattern).
 
 Builds small synthetic `market_data.db`/`research.db` files (never the
 real, gitignored production files) and migrates them into the live
-compose `timescaledb` service. Skipped automatically when no reachable
-server is configured, same pattern as `test_pg_market_data_store_live.py`.
+compose `timescaledb` service. Skipped automatically unless BOTH a
+reachable server is configured AND the destructive-test opt-in is given
+(see `tests/_live_test_guard.py`'s module docstring, KNOWN_ISSUES.md
+ISSUE-041 -- this module's cleanup fixture TRUNCATEs real tables), same
+pattern as `test_pg_market_data_store_live.py`.
 
 Regression note: an early version of this script always reported "0
 newly inserted" for every table, even on the very first real run --
@@ -29,12 +32,12 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("psycopg")
 
-from futures_bot.db.engine import database_url, dispose_engine  # noqa: E402
-from futures_bot.db.health import check_database_health  # noqa: E402
+from futures_bot.db.engine import dispose_engine  # noqa: E402
 from futures_bot.market_data.store import MarketDataStore  # noqa: E402
 from futures_bot.models import Bar  # noqa: E402
 from futures_bot.research.features import TradeRecord  # noqa: E402
 from futures_bot.research.trade_store import TradeStore  # noqa: E402
+from tests._live_test_guard import live_server_reachable, skip_reason  # noqa: E402
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 
@@ -54,16 +57,7 @@ def _load_migrate_module():
     return module
 
 
-def _live_server_reachable() -> bool:
-    if not database_url():
-        return False
-    return check_database_health().ok
-
-
-pytestmark = pytest.mark.skipif(
-    not _live_server_reachable(),
-    reason="No reachable Postgres/TimescaleDB configured via FUTURES_BOT_DATABASE_URL.",
-)
+pytestmark = pytest.mark.skipif(not live_server_reachable(), reason=skip_reason())
 
 
 @pytest.fixture()

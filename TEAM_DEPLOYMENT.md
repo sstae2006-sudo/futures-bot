@@ -72,6 +72,24 @@ throughout, but rotate it (set a real `TIMESCALEDB_PASSWORD` before first
 bringing the container up — see "Server setup" below) before this
 database is ever reachable from outside your own tailnet.
 
+**⚠️ If you persist this variable (the form above), it is now present in
+every fresh terminal — including ones where you `cd` into this repo and
+run `pytest` for something completely unrelated.** KNOWN_ISSUES.md
+ISSUE-041: this used to be enough, on its own, for the backend test
+suite's live-Postgres modules (`test_pg_*_live.py`, `test_db_health.py`,
+`test_migrate_to_timescaledb.py`, `test_api_market_data_live.py`) to run
+for real against whatever database `FUTURES_BOT_DATABASE_URL` pointed
+at — and six of those seven modules `TRUNCATE` real tables in their own
+cleanup fixtures. **This is fixed**: those modules now additionally
+require `FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1`, a second, separate,
+must-be-deliberate opt-in (see `tests/_live_test_guard.py`) — a plain
+`pytest` run with only `FUTURES_BOT_DATABASE_URL` set (persisted or not)
+now correctly skips all 55 of those tests. Only ever set
+`FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1` in a shell you are about to run that
+specific live suite in, pointed at a disposable/scratch database — never
+as a persistent default, and never pointed at a shared team instance
+with real data.
+
 ## Server setup
 
 One machine (a small VPS, or any always-on box on the tailnet) hosts the

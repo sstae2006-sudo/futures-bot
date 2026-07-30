@@ -1497,3 +1497,87 @@ verified fixed — instead mark it Resolved with a date and commit.
     audit and Milestone 2 respectively) -- a minor, harmless type-
     completeness gap (the JSON still carries the fields, TypeScript just
     doesn't type them), not something this fix's scope covered.
+
+---
+
+### ISSUE-041 — A plain `pytest` run could silently TRUNCATE real production tables (RESOLVED — critical, data-loss)
+
+- **Severity:** Critical — not a performance bug, an active data-loss
+  risk, self-inflicted the same day `FUTURES_BOT_DATABASE_URL` was first
+  persisted as a Windows env var (see the Team Mode boot-failure fix
+  earlier this session).
+- **Description:** Found 2026-07-29 while investigating a user report
+  that "the backend test and all the other stuff never or just take
+  forever to load when running in team mode." `tests/conftest.py`
+  clears `FUTURES_BOT_DATABASE_URL` for every test by default (hermetic
+  suite), *except* for seven modules that explicitly opt back in via the
+  `live_database_url` fixture to test against a real Postgres/TimescaleDB
+  server: `test_pg_market_data_store_live.py`, `test_pg_trade_store_live.py`,
+  `test_pg_collaboration_store_live.py`, `test_pg_account_store_live.py`,
+  `test_db_health.py`, `test_migrate_to_timescaledb.py`,
+  `test_api_market_data_live.py` (55 tests total). Six of those seven
+  modules `TRUNCATE` their tables (`bars`, `trades`, `runs`, `work_items`,
+  `users`, `organizations`, and a dozen more) in their own cleanup
+  fixtures. The condition each module checked before running for real
+  was only "`FUTURES_BOT_DATABASE_URL` is set and the server it points at
+  is reachable" — and once that variable became a *persistent* Windows
+  User environment variable (present in every fresh terminal, pointed at
+  the real, already-migrated production `futures-bot-timescaledb`
+  container), that condition was true in any ordinary shell, for any
+  ordinary `pytest` invocation, regardless of what the developer actually
+  intended to test.
+- **Files involved:** `tests/conftest.py`, `tests/test_pg_market_data_store_live.py`,
+  `tests/test_pg_trade_store_live.py`, `tests/test_pg_collaboration_store_live.py`,
+  `tests/test_pg_account_store_live.py`, `tests/test_db_health.py`,
+  `tests/test_migrate_to_timescaledb.py`, `tests/test_api_market_data_live.py`.
+- **Possible cause:** `FUTURES_BOT_DATABASE_URL` conflated two genuinely
+  different intents that used to always coincide before persistence was
+  introduced: "the app should talk to Postgres right now" (what Team
+  Mode boot needs) and "it is safe to run a destructive test suite
+  against this exact database right now" (a much narrower, deliberate
+  condition). Persisting the variable broke that coincidence.
+- **Current status:** **Resolved 2026-07-29.** A second, independent,
+  must-be-deliberate opt-in — `FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1` — is
+  now required in addition to a reachable `FUTURES_BOT_DATABASE_URL`,
+  checked in two places: `tests/_live_test_guard.py` (a new shared
+  module, replacing seven duplicated copies of the same
+  `_live_server_reachable()` function with one) for the six
+  `pytestmark`-gated modules, and `conftest.py::live_database_url`
+  itself (which now returns `None` unless both conditions hold) for
+  `test_db_health.py`'s per-test skip pattern. Verified directly: with
+  `FUTURES_BOT_DATABASE_URL` set to the real, reachable container and
+  `FUTURES_BOT_ALLOW_LIVE_DB_TESTS` unset, all 55 live tests skip
+  cleanly (confirmed via a real `pytest` run, not inferred). 14 new
+  regression tests (`tests/test_live_test_guard.py`) pin the guard
+  logic and the fixture's gating behavior directly, without ever
+  touching a real database. `TEAM_DEPLOYMENT.md` updated with an
+  explicit warning at the persistence-guidance section.
+- **Also fixed alongside this, same investigation:** `db/engine.py::get_engine()`
+  had no `statement_timeout` — `connect_timeout_seconds` only bounds
+  establishing a new connection, not a query already running, so a
+  single stuck/slow query (a lock wait, a runaway statement from a
+  concurrent process) could hold a pool slot forever; with only
+  `pool_size + max_overflow` = 15 total connections by default, a
+  handful of stuck queries could exhaust the pool and make the whole app
+  appear to hang for every other request. Fixed: a `statement_timeout_ms`
+  parameter (default 30s) now passed via `connect_args={"options":
+  "-c statement_timeout=..."}`, applied server-side to every connection
+  the pool opens.
+- **Not yet fixed, found in the same investigation, tracked for a
+  follow-up session:** `db/health.py::check_database_health`'s own
+  `timeout_seconds` parameter is still a documented no-op (the engine-level
+  `statement_timeout` above now provides a real, if coarser, ceiling
+  regardless); `PgTradeStore.fetch_reports()` has no `LIMIT`;
+  `system_overview()`'s `trade_count()` is an unfiltered full-table
+  `COUNT(*)`; `scripts/start-team.ps1`'s `Wait-ForHttp` uses a 3-second
+  per-attempt timeout against `/api/system/overview` (the endpoint
+  containing both of the above), which could report "backend did not
+  respond" for a backend that's alive but slow under real production
+  data volume — this is the most likely concrete explanation for the
+  original "team mode never loads" symptom and should be the next thing
+  fixed. A broader sweep of the rest of the API surface for the same
+  class of inefficiency (unbounded fetches in `fetch_trades()`,
+  redundant feature-matrix rebuilds in ML training, an N+1 pattern in
+  `commit_client_import`, more) was also completed and is fully written
+  up but not yet fixed — see the session's fork/agent reports for the
+  full list once picked back up.

@@ -4,6 +4,47 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Critical fix: pytest could TRUNCATE real production tables (ISSUE-041)
+
+Investigating a "team mode never loads / takes forever" report surfaced
+something more serious than slowness: persisting `FUTURES_BOT_DATABASE_URL`
+as a Windows env var (earlier this session's Team Mode boot fix) meant
+any plain `pytest` run in a fresh terminal would silently run 55
+previously-skipped live-Postgres tests for real against the actual,
+already-migrated production `futures-bot-timescaledb` container — six of
+those seven test modules `TRUNCATE` real tables in their own cleanup
+fixtures.
+
+**Fixed:** a second, independent, must-be-deliberate opt-in
+(`FUTURES_BOT_ALLOW_LIVE_DB_TESTS=1`) is now required in addition to a
+reachable `FUTURES_BOT_DATABASE_URL`, enforced in two places: a new
+shared `tests/_live_test_guard.py` (replacing 7 duplicated copies of the
+same skip-check) for the six `pytestmark`-gated modules, and
+`conftest.py::live_database_url` itself for `test_db_health.py`'s
+different per-test skip pattern. Verified directly: with
+`FUTURES_BOT_DATABASE_URL` set to the real reachable container and the
+new opt-in unset, all 55 live tests skip cleanly. 14 new regression
+tests pin the guard logic itself, without touching a real database.
+`TEAM_DEPLOYMENT.md` updated with an explicit warning.
+
+Also fixed in the same pass: `db/engine.py::get_engine()` had no
+`statement_timeout` — a single stuck/slow query could hold a pool slot
+forever (only 15 total connections by default), so a handful of stuck
+queries could make the whole app appear to hang. Now bounded at 30s via
+`connect_args`.
+
+**Not yet fixed, tracked for next session** (see `KNOWN_ISSUES.md`
+ISSUE-041 for the full list): `check_database_health()`'s own
+`timeout_seconds` is still a documented no-op; `PgTradeStore.fetch_reports()`
+has no `LIMIT`; `system_overview()`'s `trade_count()` is an unfiltered
+full-table `COUNT(*)`; `scripts/start-team.ps1`'s readiness probe uses a
+3-second per-attempt timeout against the exact endpoint containing both
+of the above — the most likely concrete explanation for "team mode never
+loads," not yet fixed. A full sweep of the broader API surface for the
+same class of inefficiency (unbounded `fetch_trades()`, redundant ML
+feature-matrix rebuilds, an N+1 in `commit_client_import`, more) was
+completed and written up but not yet fixed.
+
 ## 2026-07-29 — Fix: Mission Control's fake data (KNOWN_ISSUES.md ISSUE-040)
 
 Found during "SIL Research Engine 2.0 Phase 1"'s audit: Mission Control's
