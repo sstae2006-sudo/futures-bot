@@ -146,7 +146,16 @@ def _maybe_prime_db_engine() -> None:
     why this has to happen explicitly rather than relying on whichever
     store constructs first). A missing/unparseable config file falls back
     to `prime_engine`'s own defaults -- same "never fail API startup over
-    a bad config file" posture as `_maybe_start_research_server` below."""
+    a bad config file" posture as `_maybe_start_research_server` below.
+
+    Checks the env var directly first, same as `api/store.py`'s
+    `_DATABASE_URL_ENV` check, so a SQLite-only setup never imports
+    `db.engine` (and therefore SQLAlchemy) at all -- that module is
+    documented as importable "lazily, from inside the
+    `FUTURES_BOT_DATABASE_URL`-set branch only", and the `db` extra is
+    never installed for a SQLite-only setup."""
+    if not os.environ.get("FUTURES_BOT_DATABASE_URL"):
+        return
     from ..db.engine import prime_engine
 
     config_path = _config_path()

@@ -33,6 +33,74 @@ Every decision should improve:
 
 Never optimize for "quick." Always optimize for "correct."
 
+## 2A. Project Context
+
+**Who's building this:** Three college students in Minnesota (entering
+2nd year of undergrad) plus a fourth person who coordinates and is
+financially invested in the project. Not a company, not a funded
+startup — a side project run by students, with a real financial
+stake for one participant.
+
+**Authorship note:** This file is maintained collaboratively. Sections
+written or edited from this point forward are authored from the POV
+of "developer3," a collaborator on this project — not the original
+author of this repository. Existing sections above reflect the
+original owner's decisions and conventions and remain authoritative
+for anything they cover; this section adds context the original file
+didn't have, rather than superseding it. If a future edit from a
+different contributor conflicts with something here, flag the
+conflict rather than silently overwriting either version.
+
+**Target architecture (not yet built):** Four separate devices today
+(one per each of the three students, one for the coordinator/investor),
+expected to grow. The goal is all of them working together as one
+system via Tailscale networking, with TimescaleDB (Docker, on one
+always-on machine) as the shared live-data layer — see
+`TEAM_DEPLOYMENT.md` for the design.
+
+**Actual current state — be honest about this:** This describes
+developer3's machine specifically — other contributors' machines may
+have different infrastructure already running (e.g. market_data.db,
+TimescaleDB, additional git history). Check what's actually present
+on the current machine rather than assuming this description applies
+universally. This is a single-machine Windows dev setup today. The
+Tailscale/TimescaleDB multi-device architecture is the *goal*, not
+the present reality — this currently runs against local SQLite/CSV
+data, not a shared database. Do not describe or assume more
+infrastructure is live than it actually is. When `TEAM_DEPLOYMENT.md`,
+`db/`, or `deploy/` content describes team-mode behavior, treat it as
+the target design and verify against `PROJECT_STATE.md` whether it's
+actually deployed before assuming it's running anywhere.
+
+**Cross-machine constraint:** Any infrastructure change must
+eventually work across independently-owned Windows/Mac/Linux machines
+run by people with a wide range of skill levels — not just one
+developer's machine. Prefer setup steps that are scriptable,
+well-documented, and don't assume deep sysadmin knowledge.
+
+**Budget constraint:** This project avoids paid services except
+Claude Pro/Cowork, futures market data, and one API the investor
+covers directly. Do not suggest hosted databases, paid APIs, or cloud
+compute without explicitly flagging the cost first and noting it's
+outside the current budget model.
+
+**My role and the skepticism mandate:** I (developer3) build and
+maintain this infrastructure and contribute strategy ideas, but just
+as importantly act as the deliberate skeptic on every trading strategy
+the group develops — the job is to try to disprove a strategy's edge,
+not confirm it. Claude Code should adopt the same posture on anything
+strategy-related (`backtest/`, `research/`, the optimizer, the
+reference strategies): default to skepticism rather than validation,
+treating a clean backtest as a hypothesis to attack rather than a
+result to accept. The technical mechanics of what to check —
+overfitting, sample size, look-ahead bias, commission sensitivity —
+are already established in `docs/RESEARCH_GUIDE.md`'s "Overfitting
+detection" and "Why backtests can fail" sections and enforced by
+`research/safety.py`; this note is about the *posture* to bring to
+those numbers, not a new checklist on top of them. Matches the
+project's own stated philosophy (see the README's "every entry has a
+validation number to check against" section).
+
 ## 3. Non-Negotiable Principles
 
 - Never remove functionality.
