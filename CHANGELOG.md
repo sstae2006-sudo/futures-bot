@@ -4,6 +4,33 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Found and fixed the real "team mode never loads" cause (ISSUE-042)
+
+Continuing the ISSUE-041 investigation with direct measurement against
+the live production TimescaleDB instead of static file reading:
+`market_data_overview()` (Mission Control's Database Summary card, added
+earlier this session) looped every distinct `product_code` in `bars` and
+made 4-5 separate queries per product. Measured: `all_products()` alone
+returns **897 distinct values** — not a bug, this codebase's historical-
+archive import (ISSUE-001) legitimately stores one `product_code` per
+individual contract ticker. The per-product loop meant `market_data_overview()`
+had not completed after 10+ minutes in a direct timed test.
+
+**Fixed:** a new `product_coverage_summary()` method (added to both
+`MarketDataStore` and `PgMarketDataStore`) computes the same per-product
+coverage via two `GROUP BY` queries total, regardless of product count;
+`fetch_gaps(None, ...)`/`contract_rolls(None)` (already supported "all
+products," just never used that way) replace two more per-product loops.
+Re-measured against the same real database: **1.8–6.3 seconds** (was:
+didn't finish in 10+ minutes). Golden-equivalence tested against the
+original per-product primitives, not just checked for a plausible shape.
+29 existing market-data tests + 4 new tests, all green.
+
+Still open (see `KNOWN_ISSUES.md` ISSUE-041/042): the broader API
+inefficiency punch list from the prior investigation, and pagination for
+the ~900-row `products` list on a future dedicated market-data detail
+page.
+
 ## 2026-07-29 — Critical fix: pytest could TRUNCATE real production tables (ISSUE-041)
 
 Investigating a "team mode never loads / takes forever" report surfaced

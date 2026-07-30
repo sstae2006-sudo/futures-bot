@@ -1581,3 +1581,56 @@ verified fixed — instead mark it Resolved with a date and commit.
   `commit_client_import`, more) was also completed and is fully written
   up but not yet fixed — see the session's fork/agent reports for the
   full list once picked back up.
+
+---
+
+### ISSUE-042 — `market_data_overview()` made ~2,800+ sequential DB round trips against real data (RESOLVED)
+
+- **Severity:** High — the most likely concrete cause of "team mode
+  never loads," confirmed by direct measurement, not inference.
+- **Description:** Found 2026-07-29 continuing the ISSUE-041
+  investigation. `market_data_overview()` (backs Mission Control's
+  Database Summary card and `GET /api/market-data/overview`) looped
+  `store.all_products()` and called `contracts_stored()`/
+  `resolutions_stored()`/`coverage()` (once per resolution)/`fetch_gaps()`
+  for EVERY product, plus a second full loop calling `contract_rolls()`
+  per product. Measured directly against the real production
+  TimescaleDB: `all_products()` alone returned **897 distinct
+  `product_code` values** (not a bug — this codebase's own historical-
+  archive data legitimately has one `product_code` per contract ticker,
+  e.g. `CL83M`, `GC75F`; see ISSUE-001 for why collapsing that would
+  corrupt data). A per-product loop over that many values meant
+  `market_data_overview()` had not finished after 10+ minutes in a
+  direct timed test (background-timed out, never completed) — this is
+  the exact endpoint `DatabaseSummaryCard` (Mission Control, added this
+  session) fetches on every page load.
+- **Files involved:** `src/futures_bot/api/market_data_service.py::market_data_overview`,
+  `src/futures_bot/market_data/store.py`, `src/futures_bot/market_data/pg_store.py`.
+- **Possible cause:** Written assuming a handful of real, distinct
+  tradeable products (MES, MNQ, M2K); never re-evaluated once the
+  turtle-trader historical archive (ISSUE-001, hundreds of individual
+  contract histories) was imported into the same `bars` table with the
+  same `product_code` column semantics.
+- **Current status:** **Resolved 2026-07-29.** Added
+  `product_coverage_summary()` to both `MarketDataStore` and
+  `PgMarketDataStore` — two `GROUP BY` queries (contracts-per-product,
+  best-resolution coverage-per-product) regardless of how many distinct
+  products exist, replacing the per-product loop entirely.
+  `fetch_gaps(None, unresolved_only=True)`/`contract_rolls(None)`
+  already supported "every product in one call" (unused before this
+  fix) — gaps are now grouped by `product_code` in Python instead of
+  re-querying per product. Re-measured directly against the same real
+  production database: **1.8–6.3 seconds** (was: did not complete in
+  10+ minutes). Verified correct, not just fast: a golden-equivalence
+  test (`tests/test_market_data_store.py::TestProductCoverageSummary`)
+  confirms the batched method's output matches the original per-product
+  primitives exactly on real data, plus a resolution-selection test and
+  an at-scale (50 products) correctness test. Existing market-data test
+  suite (29 tests) unaffected.
+- **Still not addressed:** the underlying `products` list returned by
+  this endpoint is still ~900 rows in one response — fine for the
+  summary card (which only reads `.length`), but a dedicated `/market-data`
+  page rendering all 900 as a detail table would still want pagination;
+  out of scope for this fix. The broader API-inefficiency punch list
+  from ISSUE-041 (`fetch_trades()`, ML feature-matrix rebuilds,
+  `commit_client_import`'s N+1, `generate_insights()`) remains unfixed.

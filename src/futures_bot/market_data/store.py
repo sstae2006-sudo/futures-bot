@@ -316,6 +316,50 @@ class MarketDataStore:
         )
         return [row[0] for row in cur.fetchall()]
 
+    def product_coverage_summary(self) -> list[dict]:
+        """Batched replacement for calling `contracts_stored`/
+        `resolutions_stored`/`coverage` once per `all_products()` result
+        -- see KNOWN_ISSUES.md ISSUE-042: this codebase's own historical-
+        archive data (the turtle-trader import, ISSUE-001) legitimately
+        has ~700 distinct `product_code` values -- one per individual
+        contract ticker (`CL83M`, `GC75F`, ...), not per underlying
+        product, and that's intentional, not a bug (see ISSUE-001's own
+        docstring for why collapsing it would corrupt data). A per-
+        product loop over that many values meant `market_data_overview()`
+        made thousands of sequential round trips. Two `GROUP BY` queries
+        instead, regardless of how many distinct products exist.
+
+        Returns one dict per product: `product_code`, `contracts_stored`
+        (list), `bars_stored`/`earliest`/`latest` (the best-covered
+        resolution's `Coverage`, same "most complete series" choice
+        `market_data_overview()` already made -- just computed here
+        instead of by its own per-product loop)."""
+        contracts_by_product: dict[str, list[str]] = {}
+        for product_code, contract in self._conn.execute(
+            "SELECT DISTINCT product_code, contract FROM bars ORDER BY product_code, contract"
+        ):
+            contracts_by_product.setdefault(product_code, []).append(contract)
+
+        best_by_product: dict[str, tuple[int, Optional[str], Optional[str]]] = {}
+        for product_code, count, earliest, latest in self._conn.execute(
+            "SELECT product_code, COUNT(*), MIN(timestamp), MAX(timestamp) FROM bars GROUP BY product_code, resolution"
+        ):
+            current = best_by_product.get(product_code)
+            if current is None or count > current[0]:
+                best_by_product[product_code] = (count, earliest, latest)
+
+        results = []
+        for product_code in sorted(contracts_by_product):
+            count, earliest, latest = best_by_product.get(product_code, (0, None, None))
+            results.append({
+                "product_code": product_code,
+                "contracts_stored": contracts_by_product[product_code],
+                "bars_stored": count,
+                "earliest": datetime.fromisoformat(earliest) if earliest else None,
+                "latest": datetime.fromisoformat(latest) if latest else None,
+            })
+        return results
+
     def all_products(self) -> list[str]:
         cur = self._conn.execute("SELECT DISTINCT product_code FROM bars ORDER BY product_code")
         return [row[0] for row in cur.fetchall()]

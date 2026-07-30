@@ -178,9 +178,30 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
-2026-07-29: **IN PROGRESS, paused mid-session (low on budget) — Critical
-fix: pytest could TRUNCATE real production tables (KNOWN_ISSUES.md
-ISSUE-041), plus a Team Mode slowness investigation.** Persisting
+2026-07-29: **Fix: `market_data_overview()` made ~2,800+ sequential DB
+round trips against real data (KNOWN_ISSUES.md ISSUE-042) — the
+confirmed real cause of "team mode never loads."** Found by directly
+measuring against the live production TimescaleDB (not static reading):
+`all_products()` returns 897 distinct `product_code` values (legitimate
+— one per historical contract ticker, ISSUE-001's archive import), and
+`market_data_overview()`'s per-product loop hadn't completed after 10+
+minutes in a direct timed test. Fixed: `product_coverage_summary()`
+(new, both `MarketDataStore`/`PgMarketDataStore`) computes the same
+coverage via two `GROUP BY` queries total regardless of product count;
+`fetch_gaps(None,...)`/`contract_rolls(None)` (already supported "all
+products," unused before this fix) replace two more per-product loops.
+Re-measured against the same real database: 1.8–6.3s (was: didn't
+finish in 10+ min). Golden-equivalence tested against the original
+per-product primitives. Still open: the broader API-inefficiency punch
+list from ISSUE-041 (see that entry for the full list — `fetch_trades()`
+unbounded, ML feature-matrix rebuilds, `commit_client_import`'s N+1,
+`generate_insights()`), and `system_overview()`'s smaller-but-real
+`trade_count()`/`fetch_reports()` issues. Next session should pick up
+straight from `KNOWN_ISSUES.md` ISSUE-041's "Not yet fixed" list.
+
+2026-07-29: **Critical fix: pytest could TRUNCATE real production tables
+(KNOWN_ISSUES.md ISSUE-041), plus a Team Mode slowness investigation.**
+Persisting
 `FUTURES_BOT_DATABASE_URL` as a Windows env var (this session's earlier
 Team Mode boot fix) meant a plain `pytest` run would silently run 55
 previously-skipped live-Postgres tests for real against the actual

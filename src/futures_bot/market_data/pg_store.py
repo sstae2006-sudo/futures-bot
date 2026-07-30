@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, Sequence
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
@@ -210,6 +210,49 @@ class PgMarketDataStore:
                 select(bars.c.contract).distinct().where(bars.c.product_code == product_code).order_by(bars.c.contract)
             ).all()
         return [r[0] for r in rows]
+
+    def product_coverage_summary(self) -> list[dict]:
+        """Mirrors `store.py::MarketDataStore.product_coverage_summary`
+        -- see that docstring / KNOWN_ISSUES.md ISSUE-042 for why this
+        exists: two `GROUP BY` queries instead of a per-`all_products()`-
+        result loop, regardless of how many distinct `product_code`
+        values exist (this codebase's own historical-archive data
+        legitimately has ~700 of them). Timestamps come back as real
+        `datetime` objects already (psycopg's native `TIMESTAMPTZ`
+        mapping), no `fromisoformat` parsing needed here unlike the
+        SQLite side."""
+        contracts_by_product: dict[str, list[str]] = {}
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(bars.c.product_code, bars.c.contract).distinct()
+                .order_by(bars.c.product_code, bars.c.contract)
+            ).all()
+        for product_code, contract in rows:
+            contracts_by_product.setdefault(product_code, []).append(contract)
+
+        best_by_product: dict[str, tuple[int, Optional[datetime], Optional[datetime]]] = {}
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    bars.c.product_code, func.count(), func.min(bars.c.timestamp), func.max(bars.c.timestamp),
+                ).group_by(bars.c.product_code, bars.c.resolution)
+            ).all()
+        for product_code, count, earliest, latest in rows:
+            current = best_by_product.get(product_code)
+            if current is None or count > current[0]:
+                best_by_product[product_code] = (count, earliest, latest)
+
+        results = []
+        for product_code in sorted(contracts_by_product):
+            count, earliest, latest = best_by_product.get(product_code, (0, None, None))
+            results.append({
+                "product_code": product_code,
+                "contracts_stored": contracts_by_product[product_code],
+                "bars_stored": count,
+                "earliest": earliest,
+                "latest": latest,
+            })
+        return results
 
     def all_products(self) -> list[str]:
         with self._engine.connect() as conn:

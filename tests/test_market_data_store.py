@@ -97,6 +97,73 @@ class TestBars:
         assert store.all_products() == ["MES", "MNQ"]
 
 
+class TestProductCoverageSummary:
+    """KNOWN_ISSUES.md ISSUE-042 -- the batched replacement for calling
+    contracts_stored()/resolutions_stored()/coverage() once per
+    all_products() result. Golden-equivalence tested against the
+    original per-product primitives, not just checked for a plausible
+    shape."""
+
+    def test_matches_per_product_primitives_exactly(self, tmp_path):
+        store = MarketDataStore(tmp_path / "market_data.db")
+        base = datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)
+        store.upsert_bars("MES", "MESM6", "5min", "massive", [make_bar(base), make_bar(base + timedelta(minutes=5))])
+        store.upsert_bars("MES", "MESU6", "1min", "massive", [make_bar(base + timedelta(days=1))])  # a second, less-complete resolution
+        store.upsert_bars("MNQ", "MNQU6", "5min", "massive", [make_bar(base)])
+
+        summary = {row["product_code"]: row for row in store.product_coverage_summary()}
+
+        for product_code in store.all_products():
+            contracts = store.contracts_stored(product_code)
+            resolutions = store.resolutions_stored(product_code)
+            best = max((store.coverage(product_code, r) for r in resolutions), key=lambda c: c.count)
+
+            row = summary[product_code]
+            assert row["contracts_stored"] == contracts
+            assert row["bars_stored"] == best.count
+            assert row["earliest"] == best.earliest
+            assert row["latest"] == best.latest
+
+    def test_picks_the_higher_count_resolution_as_best(self, tmp_path):
+        store = MarketDataStore(tmp_path / "market_data.db")
+        base = datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)
+        store.upsert_bars("MES", "MESM6", "1min", "massive", [make_bar(base)])  # 1 bar
+        store.upsert_bars(
+            "MES", "MESM6", "5min", "massive",
+            [make_bar(base), make_bar(base + timedelta(minutes=5)), make_bar(base + timedelta(minutes=10))],
+        )  # 3 bars -- should win
+
+        row = {r["product_code"]: r for r in store.product_coverage_summary()}["MES"]
+
+        assert row["bars_stored"] == 3
+
+    def test_empty_store_returns_empty_list(self, tmp_path):
+        store = MarketDataStore(tmp_path / "market_data.db")
+        assert store.product_coverage_summary() == []
+
+    def test_many_products_returns_correct_results_at_scale(self, tmp_path):
+        """The actual regression this fix guards against: KNOWN_ISSUES.md
+        ISSUE-042 found market_data_overview() making ~2,800+ sequential
+        round trips against real production data (~700 distinct
+        product_code values from the turtle-trader historical archive,
+        ISSUE-001) -- multiple minutes, confirmed via direct timing
+        against the live database (product_coverage_summary's own source
+        makes exactly two GROUP BY queries total, not one per product --
+        readable directly from its implementation). This test instead
+        confirms correctness holds up at a product count large enough to
+        make an O(N) implementation's mistakes visible."""
+        store = MarketDataStore(tmp_path / "market_data.db")
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for i in range(50):
+            store.upsert_bars(f"PRODUCT{i}", f"PRODUCT{i}X", "5min", "massive", [make_bar(base)])
+
+        result = store.product_coverage_summary()
+
+        assert len(result) == 50
+        assert {r["product_code"] for r in result} == {f"PRODUCT{i}" for i in range(50)}
+        assert all(r["bars_stored"] == 1 for r in result)
+
+
 class TestActiveContractTracking:
     def test_first_set_has_no_previous_and_logs_a_roll(self, tmp_path):
         store = MarketDataStore(tmp_path / "market_data.db")

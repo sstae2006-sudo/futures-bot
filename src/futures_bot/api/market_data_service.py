@@ -43,31 +43,41 @@ def _require_api_key() -> str:
 def market_data_overview() -> MarketDataOverviewOut:
     store = get_market_data_store()
     try:
+        # KNOWN_ISSUES.md ISSUE-042: this used to loop `store.all_products()`
+        # and call contracts_stored()/resolutions_stored()/coverage()/
+        # fetch_gaps() once EACH per product -- against this codebase's own
+        # historical-archive data (ISSUE-001), product_code legitimately has
+        # ~700 distinct values (one per contract ticker), so that loop made
+        # thousands of sequential round trips and could take minutes against
+        # a real Postgres/TimescaleDB server. product_coverage_summary()
+        # computes the same per-product coverage via two GROUP BY queries
+        # instead of per-product ones; fetch_gaps(None, ...)/contract_rolls(None)
+        # already supported "all products in one call" (unused before this
+        # fix) -- gaps are grouped by product_code here in Python rather
+        # than re-querying per product.
+        coverage_summary = store.product_coverage_summary()
+        all_open_gaps = store.fetch_gaps(None, unresolved_only=True)
+        open_gaps_by_product: dict[str, int] = {}
+        for gap in all_open_gaps:
+            open_gaps_by_product[gap["product_code"]] = open_gaps_by_product.get(gap["product_code"], 0) + 1
+
         products = []
         total_bars = 0
-        total_open_gaps = 0
-        for product_code in store.all_products():
-            contracts = store.contracts_stored(product_code)
-            # A product can have bars at more than one resolution; report
-            # coverage for whichever is most complete (the primary series).
-            resolutions = store.resolutions_stored(product_code)
-            best = max((store.coverage(product_code, r) for r in resolutions), key=lambda c: c.count, default=None)
-            open_gaps = len(store.fetch_gaps(product_code, unresolved_only=True))
-            total_open_gaps += open_gaps
-            if best is not None:
-                total_bars += best.count
-                products.append(ProductCoverageOut(
-                    product_code=product_code, contracts_stored=contracts, bars_stored=best.count,
-                    earliest=best.earliest.isoformat() if best.earliest else None,
-                    latest=best.latest.isoformat() if best.latest else None,
-                    open_gaps=open_gaps,
-                ))
+        for row in coverage_summary:
+            open_gaps = open_gaps_by_product.get(row["product_code"], 0)
+            total_bars += row["bars_stored"]
+            products.append(ProductCoverageOut(
+                product_code=row["product_code"], contracts_stored=row["contracts_stored"],
+                bars_stored=row["bars_stored"],
+                earliest=row["earliest"].isoformat() if row["earliest"] else None,
+                latest=row["latest"].isoformat() if row["latest"] else None,
+                open_gaps=open_gaps,
+            ))
+        total_open_gaps = len(all_open_gaps)
 
         recent_runs = store.fetch_sync_runs(limit=1)
         last_run = recent_runs[0] if recent_runs else None
-        rolls = []
-        for product_code in store.all_products():
-            rolls.extend(store.contract_rolls(product_code))
+        rolls = store.contract_rolls(None)
         rolls.sort(key=lambda r: r["rolled_at"], reverse=True)
 
         scheduler_running = False
