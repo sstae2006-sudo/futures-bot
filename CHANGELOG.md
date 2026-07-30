@@ -4,6 +4,59 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-29 — Fix: Mission Control's fake data (KNOWN_ISSUES.md ISSUE-040)
+
+Found during "SIL Research Engine 2.0 Phase 1"'s audit: Mission Control's
+`ResearchSummaryCard`/`DatabaseSummaryCard`/`MarketContextSummaryCard`/
+`PerformanceCard`/`HealthGrid`/`ActivityFeed`/`AlertCenter`/`RoadmapPanel`
+were all rendering hardcoded placeholder numbers from a "design/scaffold
+pass" (`missionControlData.ts`) -- a fake profit factor of 1.42, a fake
+$18.6 expectancy, a fake "187 completed backtests," a frozen boot-sequence
+activity feed, a fake "94% operational" health score -- sitting on the
+same live page as real, API-backed panels with no visual distinction.
+`StatusBar.tsx` (global chrome, every page) had the same problem
+independently: `GIT_BRANCH`/`GIT_COMMIT` frozen to one specific past
+commit.
+
+**Fixed, one panel at a time, always toward a real API or an honest
+removal, never a different fake:**
+- `ResearchSummaryCard` -- extended `GET /api/system/overview` with five
+  new fields computed server-side in `api/services.py::system_overview`
+  (`avg_profit_factor`/`avg_expectancy`/`best_strategy`/`latest_backtest_*`)
+  from real completed backtest runs -- plain means over each run's own
+  already-persisted, engine-computed values, never a re-derived formula.
+  `None` when there's no data yet, never a fabricated default.
+- `DatabaseSummaryCard` -- wired to the already-real `GET /api/market-data/overview`.
+- `MarketContextSummaryCard`/`PerformanceCard` -- **removed**, not
+  patched: Context Engine has no live "current regime" to report (OFF by
+  default), and `PerformanceCard` was a fake duplicate of the already-real
+  `InfrastructurePanel` right next to it.
+- `HealthGrid` -- rebuilt from only genuinely checkable real signals
+  (system health, system overview, research-server status, live-session
+  status); components with no real check available were dropped, not
+  faked. The fake 94% score became a real roll-up of the actual fetched
+  cards' tones.
+- `ActivityFeed` -- wired to the already-built, real
+  `GET /api/activity/timeline` instead of a frozen boot-sequence snapshot.
+- `AlertCenter` -- derives real alerts from automation schedulers'
+  `last_error` fields and real team-database reachability -- pure
+  display-layer relabeling of already-computed status, no new alerting
+  backend built.
+- `RoadmapPanel` -- kept as explicitly-labeled **static reference**
+  content (a "static reference" tag added) rather than faked further;
+  the fake completion-percentage bar was dropped.
+- `StatusBar` -- branch/commit now come from the real, already-built
+  `GET /api/git/branch-info`; the fake "Last Startup" row was dropped
+  (the already-real Uptime field says the same thing honestly).
+
+20 new tests (9 backend, using real backtest runs through the actual
+engine, not synthetic mocks; 11 frontend, asserting the old fake
+literals never appear and the new real ones do). Full suite green: 1669
+backend (1660 -> 1669, 0 failed), 145 frontend (134 -> 145, 0 failed),
+`tsc -b`/`oxlint` clean. See `KNOWN_ISSUES.md` ISSUE-040 for full detail,
+including one small out-of-scope type-completeness gap noted for later
+(`MaintenanceStatus`'s TS type missing two fields the backend already has).
+
 ## 2026-07-29 — Fix Team Mode boot failure + document PowerShell env-var setup
 
 Root cause of a recurring "`FUTURES_BOT_DATABASE_URL` is not set in this

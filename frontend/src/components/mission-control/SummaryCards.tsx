@@ -1,6 +1,20 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { databaseSummary, marketContextSummary, performance, researchSummary } from './missionControlData'
+import { getMarketDataOverview, getSystemOverview, listExperiments } from '../../api'
+import { useApi } from '../../useApi'
+import { dateTime, money, num } from '../../format'
+
+// KNOWN_ISSUES.md ISSUE-040 -- every card in this file used to render a
+// hardcoded placeholder from missionControlData.ts (a fake avg profit
+// factor of 1.42, a fake "187 completed backtests", etc.) with no
+// relationship to any real backtest or database ever run. Both cards
+// below now fetch real data. `MarketContextSummaryCard`/`PerformanceCard`
+// (also previously fake) were removed outright rather than fixed:
+// Context Engine has no live "current regime" reading to report (it's
+// OFF by default, see docs/ARCHITECTURE.md; MarketRegime.tsx already
+// covers real historical regime performance), and `PerformanceCard` was
+// a redundant fake duplicate of the already-real `InfrastructurePanel`
+// rendered right next to it on this same page.
 
 function SummaryCard({ title, to, toLabel, children }: { title: string; to?: string; toLabel?: string; children: ReactNode }) {
   return (
@@ -24,81 +38,40 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
 }
 
 export function ResearchSummaryCard() {
+  const { data: overview } = useApi(getSystemOverview, [])
+  const { data: experiments } = useApi(listExperiments, [])
+
+  const latest = overview?.latest_backtest_strategy
+    ? `${overview.latest_backtest_strategy} -- ${money(overview.latest_backtest_net_pnl)} (${dateTime(overview.latest_backtest_completed_at)})`
+    : '—'
+
   return (
     <SummaryCard title="Research Summary" to="/experiments" toLabel="Experiments →">
-      <Row label="Experiments" value={researchSummary.experiments} />
-      <Row label="Strategies" value={researchSummary.strategies} />
-      <Row label="Completed Backtests" value={researchSummary.completedBacktests} />
-      <Row label="Optimization Jobs" value={researchSummary.optimizationJobs} />
-      <Row label="Best Strategy" value={researchSummary.bestStrategy} />
-      <Row label="Latest Result" value={researchSummary.latestResult} />
-      <Row label="Avg. Profit Factor" value={researchSummary.avgProfitFactor} />
-      <Row label="Avg. Expectancy" value={`$${researchSummary.avgExpectancy}`} />
+      <Row label="Experiments" value={experiments?.length ?? '—'} />
+      <Row label="Strategies" value={overview?.strategies_available.length ?? '—'} />
+      <Row label="Completed Backtests" value={overview?.total_backtests ?? '—'} />
+      <Row label="Optimization Jobs" value={overview?.total_optimizer_runs ?? '—'} />
+      <Row label="Best Strategy" value={overview?.best_strategy ?? '—'} />
+      <Row label="Latest Result" value={latest} />
+      <Row label="Avg. Profit Factor" value={overview ? num(overview.avg_profit_factor) : '—'} />
+      <Row label="Avg. Expectancy" value={overview ? money(overview.avg_expectancy) : '—'} />
     </SummaryCard>
   )
 }
 
 export function DatabaseSummaryCard() {
+  const { data: overview } = useApi(getMarketDataOverview, [])
+  const sizeGb = overview ? (overview.database_size_bytes / 1e9).toFixed(2) : null
+
   return (
     <SummaryCard title="Database Summary" to="/market-data" toLabel="Market Data →">
-      <Row label="Bars Stored" value={databaseSummary.barsStored} />
-      <Row label="Symbols" value={databaseSummary.symbols} />
-      <Row label="Timeframes" value={databaseSummary.timeframes} />
-      <Row label="Database Size" value={databaseSummary.databaseSize} />
-      <Row label="Validation Status" value={databaseSummary.validationStatus} />
-      <Row label="Duplicates" value={databaseSummary.duplicates} />
-      <Row label="Missing Data" value={databaseSummary.missingData} />
-      <Row label="Last Sync" value={databaseSummary.lastSync} />
-    </SummaryCard>
-  )
-}
-
-export function MarketContextSummaryCard() {
-  const c = marketContextSummary
-  return (
-    <SummaryCard title="Market Context Summary" to="/regime" toLabel="Market Regime →">
-      <Row label="Regime" value={c.regime} />
-      <Row label="Session" value={c.session} />
-      <Row label="Trend" value={c.trend} />
-      <Row label="Liquidity" value={c.liquidity} />
-      <Row label="Volatility" value={c.volatility} />
-      <Row label="Environment Score" value={`${c.environmentScore} / 100`} />
-      <div className="mc-context-distribution">
-        {c.distribution.map((seg) => (
-          <span
-            key={seg.label}
-            style={{
-              width: `${seg.pct}%`,
-              background: `var(--${seg.tone === 'neutral' ? 'text-faint' : seg.tone})`,
-            }}
-            title={`${seg.label} ${seg.pct}%`}
-          />
-        ))}
-      </div>
-      <div className="mc-context-legend">
-        {c.distribution.map((seg) => (
-          <span className="mc-context-legend-item" key={seg.label}>
-            <span
-              className="mc-context-legend-dot"
-              style={{ background: `var(--${seg.tone === 'neutral' ? 'text-faint' : seg.tone})` }}
-            />
-            {seg.label} {seg.pct}%
-          </span>
-        ))}
-      </div>
-    </SummaryCard>
-  )
-}
-
-export function PerformanceCard() {
-  return (
-    <SummaryCard title="Performance">
-      <Row label="CPU" value={performance.cpu} />
-      <Row label="Memory" value={performance.memory} />
-      <Row label="API Latency" value={performance.apiLatency} />
-      <Row label="DB Query Time" value={performance.dbQueryTime} />
-      <Row label="Running Jobs" value={performance.runningJobs} />
-      <Row label="Background Tasks" value={performance.backgroundTasks} />
+      <Row label="Bars Stored" value={overview ? overview.total_bars.toLocaleString() : '—'} />
+      <Row label="Products" value={overview?.products.length ?? '—'} />
+      <Row label="Open Gaps" value={overview?.total_open_gaps ?? '—'} />
+      <Row label="Database Size" value={sizeGb ? `${sizeGb} GB` : '—'} />
+      <Row label="Scheduler" value={overview ? (overview.scheduler_running ? 'Running' : 'Stopped') : '—'} />
+      <Row label="Last Sync" value={overview ? dateTime(overview.last_sync_at) : '—'} />
+      <Row label="Last Sync Status" value={overview?.last_sync_status ?? '—'} />
     </SummaryCard>
   )
 }

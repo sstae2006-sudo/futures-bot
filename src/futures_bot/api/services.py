@@ -1680,6 +1680,31 @@ def _overfit_insight() -> list[InsightOut]:
 
 # --- System overview ---
 
+def _average_decimal(values: list[Optional[Decimal]]) -> Optional[Decimal]:
+    present = [v for v in values if v is not None]
+    if not present:
+        return None
+    return sum(present, Decimal(0)) / len(present)
+
+
+def _best_strategy_by_avg_profit_factor(completed_backtests: list[dict]) -> Optional[str]:
+    """The strategy with the highest average profit factor across its own
+    completed runs -- `None` if no run has a usable (non-`None`)
+    `profit_factor`. A plain mean over already-persisted values, same
+    convention `_average_decimal` above uses; not a re-derivation of the
+    profit-factor formula itself."""
+    by_strategy: dict[str, list[Decimal]] = {}
+    for run in completed_backtests:
+        pf = run.get("profit_factor")
+        if pf is None:
+            continue
+        by_strategy.setdefault(run["strategy"], []).append(pf)
+    if not by_strategy:
+        return None
+    averages = {strategy: sum(pfs, Decimal(0)) / len(pfs) for strategy, pfs in by_strategy.items()}
+    return max(averages, key=lambda s: averages[s])
+
+
 def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
     store = get_store()
     all_runs = store.fetch_runs(limit=10_000)
@@ -1689,6 +1714,16 @@ def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
 
     last_opt = optimizer_runs[0]["created_at"] if optimizer_runs else None
     last_report = reports[0]["created_at"] if reports else None
+
+    # Mission Control's Research Summary card (KNOWN_ISSUES.md ISSUE-040)
+    # -- `backtests` is already ordered newest-first (fetch_runs' own
+    # `ORDER BY created_at DESC`), so the first completed one is the
+    # latest by construction, no separate sort needed.
+    completed_backtests = [r for r in backtests if r["status"] == "completed"]
+    latest_completed = completed_backtests[0] if completed_backtests else None
+    avg_profit_factor = _average_decimal([r.get("profit_factor") for r in completed_backtests])
+    avg_expectancy = _average_decimal([r.get("expectancy") for r in completed_backtests])
+    best_strategy = _best_strategy_by_avg_profit_factor(completed_backtests)
 
     # `.path` is SQLite-only (see TradeStore.location's docstring) --
     # `hasattr` branches rather than calling `.location` unconditionally so
@@ -1711,6 +1746,12 @@ def system_overview(config_path: Path = Path("config.yaml")) -> SystemOverview:
         last_report_generated=last_report,
         database_path=store.location,
         database_status=db_status,
+        avg_profit_factor=avg_profit_factor,
+        avg_expectancy=avg_expectancy,
+        best_strategy=best_strategy,
+        latest_backtest_strategy=latest_completed["strategy"] if latest_completed else None,
+        latest_backtest_net_pnl=latest_completed.get("net_pnl") if latest_completed else None,
+        latest_backtest_completed_at=latest_completed.get("completed_at") if latest_completed else None,
     )
 
 

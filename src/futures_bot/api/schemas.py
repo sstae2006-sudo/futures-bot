@@ -308,6 +308,22 @@ class SystemOverview(BaseModel):
     last_report_generated: Optional[str] = None
     database_path: str
     database_status: str
+    #: Mission Control's Research Summary card (fixed 2026-07-29 -- see
+    #: KNOWN_ISSUES.md ISSUE-040: this card previously showed hardcoded
+    #: placeholder numbers, e.g. a fake avg_profit_factor of 1.42 with no
+    #: relationship to any real backtest ever run). All five computed
+    #: server-side from `store.fetch_runs`'s completed backtests/walk-forwards
+    #: only -- `None` when there are none yet, never a fabricated default.
+    #: `avg_profit_factor`/`avg_expectancy` reuse each run's own already-
+    #: persisted `profit_factor`/`expectancy` (the same values
+    #: `backtest/metrics.py` computed when the run was saved) -- a plain
+    #: mean, not a re-derivation of either formula.
+    avg_profit_factor: Optional[Decimal] = None
+    avg_expectancy: Optional[Decimal] = None
+    best_strategy: Optional[str] = None
+    latest_backtest_strategy: Optional[str] = None
+    latest_backtest_net_pnl: Optional[Decimal] = None
+    latest_backtest_completed_at: Optional[str] = None
 
 
 class DatabaseHealthOut(BaseModel):

@@ -181,6 +181,15 @@ export interface SystemOverview {
   last_report_generated: string | null
   database_path: string
   database_status: string
+  // Mission Control's Research Summary card (KNOWN_ISSUES.md ISSUE-040) --
+  // all computed server-side from real completed backtests, null when
+  // there are none yet.
+  avg_profit_factor: string | null
+  avg_expectancy: string | null
+  best_strategy: string | null
+  latest_backtest_strategy: string | null
+  latest_backtest_net_pnl: string | null
+  latest_backtest_completed_at: string | null
 }
 
 export interface DatabaseHealth {

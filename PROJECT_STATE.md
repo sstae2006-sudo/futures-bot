@@ -25,15 +25,15 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1711 tests as of 2026-07-29** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1660 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1720 tests as of 2026-07-29** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1669 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
   `test_api_market_data_live.py`, `test_migrate_to_timescaledb.py`) —
   they skip cleanly by design when no reachable Postgres/TimescaleDB is
   configured, not a failure. With `FUTURES_BOT_DATABASE_URL` pointed at
-  `deploy/docker-compose.yml`'s `timescaledb` service, all 1711 run for
+  `deploy/docker-compose.yml`'s `timescaledb` service, all 1720 run for
   real (see "Team deployment" below for the exact count and what those
   tests actually verify against a live server). One test
   (KNOWN_ISSUES.md ISSUE-002) is a known
@@ -177,6 +177,37 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-29: **Fix: Mission Control's hardcoded fake data
+(KNOWN_ISSUES.md ISSUE-040).** Found during "SIL Research Engine 2.0
+Phase 1"'s audit (Fork D): `ResearchSummaryCard`/`DatabaseSummaryCard`/
+`MarketContextSummaryCard`/`PerformanceCard`/`HealthGrid`/`ActivityFeed`/
+`AlertCenter`/`RoadmapPanel` all rendered hardcoded placeholder numbers
+from a "design/scaffold pass" (`missionControlData.ts`) -- a fake profit
+factor of 1.42, a fake $18.6 expectancy, a fake "187 completed
+backtests," a fake "94% operational" score -- sitting on the same live
+page as real, API-backed panels with no visual distinction, directly
+contradicting the page's own module docstring ("nothing on this page is
+mocked"). `StatusBar.tsx` (global chrome) had the same problem
+independently (git branch/commit frozen to one specific past commit).
+Fixed one panel at a time, always toward a real API or an honest
+removal: `ResearchSummaryCard`/`DatabaseSummaryCard` wired to
+`GET /api/system/overview` (extended with 5 new server-computed
+aggregate fields, `api/services.py::system_overview`) and the already-real
+`GET /api/market-data/overview`; `MarketContextSummaryCard`/`PerformanceCard`
+removed (no live regime reading exists; the latter duplicated the
+already-real `InfrastructurePanel`); `HealthGrid` rebuilt from only
+genuinely checkable signals; `ActivityFeed` wired to the already-built
+real timeline; `AlertCenter` derives real alerts from existing
+automation/health status fields; `RoadmapPanel` kept as explicitly-labeled
+static reference; `StatusBar` wired to the real, already-built
+`GET /api/git/branch-info`. 20 new tests (9 backend using real backtest
+runs through the actual engine, not synthetic mocks; 11 frontend
+asserting the old fake literals never appear). Full suite green: 1669
+backend (1660->1669), 145 frontend (134->145), 0 failed either side,
+`tsc -b`/`oxlint` clean. No architecture doc update needed (frontend-only
+plus one additive `SystemOverview` schema extension, no new subsystem) --
+see `KNOWN_ISSUES.md` ISSUE-040 for full detail.
 
 2026-07-29: **Fix: Integration Queue was O(N^2) in queue size
 (KNOWN_ISSUES.md ISSUE-039).** Found by actually measuring the

@@ -1,10 +1,15 @@
 import { roadmap } from './missionControlData'
 
+// Static reference content, kept in sync with ROADMAP.md by hand -- not
+// a live reading (there's no "% platform complete" this could honestly
+// measure, so unlike every other Mission Control panel, this one isn't
+// wired to an API call; see missionControlData.ts's module docstring).
 export default function RoadmapPanel() {
   return (
     <div className="mc-panel">
       <div className="mc-panel-head">
         <h3>Roadmap</h3>
+        <span style={{ fontSize: 10, opacity: 0.5 }}>static reference</span>
       </div>
       <div className="mc-roadmap-milestone">
         <span className="k">Current Milestone</span>
@@ -20,15 +25,6 @@ export default function RoadmapPanel() {
           <li key={item}>{item}</li>
         ))}
       </ul>
-      <div className="mc-roadmap-completion">
-        <div className="bar-label">
-          <span>Platform Completion</span>
-          <span>{roadmap.completionPct}%</span>
-        </div>
-        <div className="job-progress-track">
-          <div className="job-progress-fill tone-fill-good" style={{ width: `${roadmap.completionPct}%` }} />
-        </div>
-      </div>
     </div>
   )
 }

@@ -328,6 +328,93 @@ class TestSystemOverview:
             "ema_crossover", "opening_range_breakout", "trend_pullback", "vwap_reversion",
         }
 
+    def test_no_completed_backtests_leaves_aggregate_fields_none(self, workspace):
+        """KNOWN_ISSUES.md ISSUE-040 -- Mission Control's Research Summary
+        card used to show a fabricated avg profit factor/expectancy with
+        no real backtest behind it. An empty database must report `None`
+        for all of these, never a fake default."""
+        overview = services.system_overview()
+        assert overview.avg_profit_factor is None
+        assert overview.avg_expectancy is None
+        assert overview.best_strategy is None
+        assert overview.latest_backtest_strategy is None
+        assert overview.latest_backtest_net_pnl is None
+        assert overview.latest_backtest_completed_at is None
+
+    def test_single_run_aggregate_equals_that_runs_own_values(self, workspace):
+        """With exactly one completed backtest, the "average" and "best"
+        must trivially equal that run's own real, engine-computed
+        numbers -- not a fabricated or rounded-off approximation."""
+        req = BacktestRunRequest(strategy_name="vwap_reversion", dataset="data.csv", contract="MES")
+        result = services.run_backtest_job(req)
+
+        overview = services.system_overview()
+
+        assert overview.avg_profit_factor == result.profit_factor
+        assert overview.avg_expectancy == result.expectancy
+        assert overview.best_strategy == "vwap_reversion"
+        assert overview.latest_backtest_strategy == "vwap_reversion"
+        assert overview.latest_backtest_net_pnl == result.net_pnl
+
+    def test_latest_backtest_reflects_the_most_recently_completed_run(self, workspace):
+        import time
+
+        req1 = BacktestRunRequest(strategy_name="vwap_reversion", dataset="data.csv", contract="MES")
+        services.run_backtest_job(req1)
+        time.sleep(1.1)  # SQLite `datetime('now')` is only second-resolution
+        req2 = BacktestRunRequest(strategy_name="ema_crossover", dataset="data.csv", contract="MES")
+        result2 = services.run_backtest_job(req2)
+
+        overview = services.system_overview()
+
+        assert overview.latest_backtest_strategy == "ema_crossover"
+        assert overview.latest_backtest_net_pnl == result2.net_pnl
+
+
+class TestSystemOverviewAggregateHelpers:
+    """Unit tests for the pure aggregation helpers `system_overview` uses
+    -- exact synthetic inputs, so behavior at every edge case (empty,
+    all-None, ties) is pinned precisely rather than only exercised
+    incidentally through a real backtest run."""
+
+    def test_average_decimal_ignores_none_values(self):
+        from futures_bot.api.services import _average_decimal
+
+        assert _average_decimal([Decimal("1.0"), None, Decimal("3.0")]) == Decimal("2.0")
+
+    def test_average_decimal_empty_list_returns_none(self):
+        from futures_bot.api.services import _average_decimal
+
+        assert _average_decimal([]) is None
+
+    def test_average_decimal_all_none_returns_none(self):
+        from futures_bot.api.services import _average_decimal
+
+        assert _average_decimal([None, None]) is None
+
+    def test_best_strategy_picks_highest_average_profit_factor(self):
+        from futures_bot.api.services import _best_strategy_by_avg_profit_factor
+
+        runs = [
+            {"strategy": "a", "profit_factor": Decimal("1.5")},
+            {"strategy": "b", "profit_factor": Decimal("2.5")},
+            {"strategy": "b", "profit_factor": Decimal("1.5")},  # b's average: 2.0
+        ]
+
+        assert _best_strategy_by_avg_profit_factor(runs) == "b"
+
+    def test_best_strategy_ignores_runs_with_no_profit_factor(self):
+        from futures_bot.api.services import _best_strategy_by_avg_profit_factor
+
+        runs = [{"strategy": "a", "profit_factor": None}]
+
+        assert _best_strategy_by_avg_profit_factor(runs) is None
+
+    def test_best_strategy_empty_list_returns_none(self):
+        from futures_bot.api.services import _best_strategy_by_avg_profit_factor
+
+        assert _best_strategy_by_avg_profit_factor([]) is None
+
 
 class TestMlDatasetInfo:
     def test_reflects_recorded_trades(self, workspace):

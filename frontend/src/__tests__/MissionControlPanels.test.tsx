@@ -1,14 +1,22 @@
+import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import ActivityFeed from '../components/mission-control/ActivityFeed'
+import AlertCenter from '../components/mission-control/AlertCenter'
 import AutomationPanel from '../components/mission-control/AutomationPanel'
+import HealthGrid from '../components/mission-control/HealthGrid'
 import InfrastructurePanel from '../components/mission-control/InfrastructurePanel'
 import IntegrationQueuePanel from '../components/mission-control/IntegrationQueuePanel'
+import { DatabaseSummaryCard, ResearchSummaryCard } from '../components/mission-control/SummaryCards'
+import StatusBar from '../components/mission-control/StatusBar'
 import TeamPanel from '../components/mission-control/TeamPanel'
 import WorkforcePanel from '../components/mission-control/WorkforcePanel'
+import { MemoryRouter } from 'react-router-dom'
 import { SessionProvider } from '../session'
 import * as api from '../api'
 import type {
-  AutomationStatus, Infrastructure, IntegrationQueueEntry, IntegrationReview, SystemHealth, User, Worker, WorkItem,
+  AutomationStatus, BranchInfo, Infrastructure, IntegrationQueueEntry, IntegrationReview, LiveSessionStatus,
+  MarketDataOverview, ResearchServerStatus, SystemHealth, SystemOverview, TimelineEntry, User, Worker, WorkItem,
 } from '../types'
 
 vi.mock('../api', async () => {
@@ -28,8 +36,19 @@ vi.mock('../api', async () => {
     getIntegrationQueue: vi.fn(),
     getIntegrationReviews: vi.fn(),
     generateIntegrationReview: vi.fn(),
+    getSystemOverview: vi.fn(),
+    getMarketDataOverview: vi.fn(),
+    listExperiments: vi.fn(),
+    getLiveStatus: vi.fn(),
+    getResearchServerStatus: vi.fn(),
+    getTimeline: vi.fn(),
+    getBranchInfo: vi.fn(),
   }
 })
+
+function renderWithProviders(node: ReactElement) {
+  return render(<MemoryRouter><SessionProvider>{node}</SessionProvider></MemoryRouter>)
+}
 
 const SESSION_KEY = 'futures-bot:session:user-id'
 
@@ -93,6 +112,65 @@ function makeAutomationStatus(overrides: Partial<AutomationStatus> = {}): Automa
       running: false, last_cycle_at: null, last_result: null, last_error: null,
       cycles_completed: 0, pulls_applied_count: 0,
     },
+    ...overrides,
+  }
+}
+
+function makeSystemOverview(overrides: Partial<SystemOverview> = {}): SystemOverview {
+  return {
+    version: '0.7.0', strategies_available: ['ema_crossover', 'vwap_reversion'],
+    total_backtests: 2, total_optimizer_runs: 0, total_trades_analyzed: 15, total_reports_generated: 0,
+    last_optimization_run: null, last_report_generated: null, database_path: 'research.db', database_status: 'ok',
+    avg_profit_factor: '1.85', avg_expectancy: '42.50', best_strategy: 'vwap_reversion',
+    latest_backtest_strategy: 'vwap_reversion', latest_backtest_net_pnl: '640.00',
+    latest_backtest_completed_at: '2026-07-30 01:00:00',
+    ...overrides,
+  }
+}
+
+function makeMarketDataOverview(overrides: Partial<MarketDataOverview> = {}): MarketDataOverview {
+  return {
+    total_bars: 4_800_000,
+    products: [{ product_code: 'MES', contracts_stored: ['MESZ25'], bars_stored: 4_800_000, earliest: null, latest: null, open_gaps: 2 }],
+    total_open_gaps: 2, database_path: 'market_data.db', database_size_bytes: 1_200_000_000,
+    last_sync_at: '2026-07-29 18:00:00', last_sync_status: 'ok', recent_rolls: [], scheduler_running: true,
+    ...overrides,
+  }
+}
+
+function makeLiveStatus(overrides: Partial<LiveSessionStatus> = {}): LiveSessionStatus {
+  return {
+    status: 'stopped', run_id: null, strategy: null, contract: null, broker: null, live_symbol: null,
+    resolution: null, poll_seconds: null, position: null, session_pnl: null, trade_count_today: null,
+    halted: false, halt_reason: null, last_bar_time: null, last_bar_close: null, last_feed_error: null,
+    error_message: null, started_at: null, stopped_at: null, warnings: [],
+    ...overrides,
+  }
+}
+
+function makeResearchServerStatus(overrides: Partial<ResearchServerStatus> = {}): ResearchServerStatus {
+  return {
+    running: false, started_at: null, uptime_seconds: null,
+    data_scheduler: { running: false, targets: [], last_cycle_at: null, last_result: null, last_error: null, cycles_completed: 0 },
+    paper_trader: { running: false, live_symbol: null, last_feed_error: null, strategies: {} },
+    nightly_jobs: { running: false, last_run_date: null, last_run_summary: null, last_error: null },
+    ...overrides,
+  }
+}
+
+function makeTimelineEntry(overrides: Partial<TimelineEntry> = {}): TimelineEntry {
+  return {
+    kind: 'work_item', timestamp: '2026-07-30 01:00:00', title: 'created', detail: 'Task created',
+    actor: 'alice', work_item_id: 'wi1',
+    ...overrides,
+  }
+}
+
+function makeBranchInfo(overrides: Partial<BranchInfo> = {}): BranchInfo {
+  return {
+    branch: 'main', is_detached: false, base_branch: null, branch_age_days: null, ahead: null, behind: null,
+    last_commit: { hash: 'b676726abcdef', short_hash: 'b676726', subject: 'Fix', author: 'dev', authored_at: null },
+    notes: [],
     ...overrides,
   }
 }
@@ -452,5 +530,148 @@ describe('IntegrationQueuePanel', () => {
 
     await waitFor(() => expect(api.generateIntegrationReview).toHaveBeenCalledWith('w1'))
     await waitFor(() => expect(screen.getByText(/Recommend proceeding to integration/)).toBeInTheDocument())
+  })
+})
+
+// KNOWN_ISSUES.md ISSUE-040 -- every describe block below covers a
+// Mission Control component that used to render a hardcoded placeholder
+// from missionControlData.ts. Each test asserts the component renders
+// the REAL mocked API response, and none of the old fake literals
+// (1.42, 187, 18.6, "280d52b", "17m ago") appear anywhere.
+describe('ResearchSummaryCard', () => {
+  it('renders real aggregate values from the system overview', async () => {
+    vi.mocked(api.getSystemOverview).mockResolvedValue(makeSystemOverview())
+    vi.mocked(api.listExperiments).mockResolvedValue([])
+
+    renderWithProviders(<ResearchSummaryCard />)
+
+    await waitFor(() => expect(screen.getByText('vwap_reversion', { selector: '.v' })).toBeInTheDocument())
+    expect(screen.getByText('1.85')).toBeInTheDocument()
+    expect(screen.getByText('$42.50')).toBeInTheDocument()
+    expect(screen.queryByText('1.42')).not.toBeInTheDocument()
+    expect(screen.queryByText('187')).not.toBeInTheDocument()
+  })
+
+  it('shows a dash, never a fabricated number, when there are no completed backtests', async () => {
+    vi.mocked(api.getSystemOverview).mockResolvedValue(makeSystemOverview({
+      total_backtests: 0, avg_profit_factor: null, avg_expectancy: null, best_strategy: null,
+      latest_backtest_strategy: null, latest_backtest_net_pnl: null, latest_backtest_completed_at: null,
+    }))
+    vi.mocked(api.listExperiments).mockResolvedValue([])
+
+    renderWithProviders(<ResearchSummaryCard />)
+
+    await waitFor(() => expect(screen.getAllByText('—').length).toBeGreaterThan(0))
+  })
+})
+
+describe('DatabaseSummaryCard', () => {
+  it('renders real values from the market data overview', async () => {
+    vi.mocked(api.getMarketDataOverview).mockResolvedValue(makeMarketDataOverview())
+
+    renderWithProviders(<DatabaseSummaryCard />)
+
+    await waitFor(() => expect(screen.getByText('4,800,000')).toBeInTheDocument())
+    expect(screen.getByText('1.20 GB')).toBeInTheDocument()
+    expect(screen.getByText('Running')).toBeInTheDocument()
+  })
+})
+
+describe('HealthGrid', () => {
+  beforeEach(() => {
+    vi.mocked(api.getLiveStatus).mockResolvedValue(makeLiveStatus())
+    vi.mocked(api.getResearchServerStatus).mockResolvedValue(makeResearchServerStatus())
+    vi.mocked(api.getSystemOverview).mockResolvedValue(makeSystemOverview())
+  })
+
+  it('shows the backend as operational once real health data loads', async () => {
+    vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
+
+    renderWithProviders(<HealthGrid />)
+
+    await waitFor(() => expect(screen.getByText('Backend')).toBeInTheDocument())
+    expect(screen.getByText('OPERATIONAL')).toBeInTheDocument()
+    // The old fake grid always showed exactly these 10 static names --
+    // AI Services had no real data source and was dropped, not faked.
+    expect(screen.queryByText('AI Services')).not.toBeInTheDocument()
+  })
+
+  it('shows the real team database card only when team mode is configured', async () => {
+    vi.mocked(api.getSystemHealth).mockResolvedValue(
+      makeHealth({ database: { configured: true, ok: true, latency_ms: 12.5, error: null } }),
+    )
+
+    renderWithProviders(<HealthGrid />)
+
+    await waitFor(() => expect(screen.getByText('Team Database (TimescaleDB)')).toBeInTheDocument())
+  })
+})
+
+describe('ActivityFeed', () => {
+  it('renders real timeline entries', async () => {
+    vi.mocked(api.getTimeline).mockResolvedValue([makeTimelineEntry({ title: 'claimed', detail: 'Real work item event' })])
+
+    renderWithProviders(<ActivityFeed />)
+
+    await waitFor(() => expect(screen.getByText('claimed')).toBeInTheDocument())
+  })
+
+  it('shows a graceful empty state, not fake boot-sequence entries', async () => {
+    vi.mocked(api.getTimeline).mockResolvedValue([])
+
+    renderWithProviders(<ActivityFeed />)
+
+    await waitFor(() => expect(screen.getByText('No recent activity.')).toBeInTheDocument())
+    expect(screen.queryByText(/futures-bot startup/)).not.toBeInTheDocument()
+  })
+})
+
+describe('AlertCenter', () => {
+  it('shows nothing to report when every scheduler is clean', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
+    vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
+
+    renderWithProviders(<AlertCenter />)
+
+    await waitFor(() => expect(screen.getAllByText('Nothing to report.').length).toBe(3))
+  })
+
+  it('surfaces a real scheduler error as a critical alert', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus({
+      git_watcher: {
+        running: true, last_cycle_at: '2026-07-30 01:00:00', last_result: null,
+        last_error: 'permission denied', cycles_completed: 3, drafts_created_count: 0,
+      },
+    }))
+    vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
+
+    renderWithProviders(<AlertCenter />)
+
+    await waitFor(() => expect(screen.getByText(/Git watcher: permission denied/)).toBeInTheDocument())
+  })
+
+  it('surfaces an unreachable team database as a critical alert', async () => {
+    vi.mocked(api.getAutomationStatus).mockResolvedValue(makeAutomationStatus())
+    vi.mocked(api.getSystemHealth).mockResolvedValue(
+      makeHealth({ database: { configured: true, ok: false, latency_ms: null, error: 'connection refused' } }),
+    )
+
+    renderWithProviders(<AlertCenter />)
+
+    await waitFor(() => expect(screen.getByText(/Team database \(TimescaleDB\) unreachable/)).toBeInTheDocument())
+  })
+})
+
+describe('StatusBar', () => {
+  it('renders the real current branch and commit, not a frozen placeholder', async () => {
+    vi.mocked(api.getSystemHealth).mockResolvedValue(makeHealth())
+    vi.mocked(api.getBranchInfo).mockResolvedValue(makeBranchInfo({ branch: 'feature/audit-fix' }))
+
+    renderWithProviders(<StatusBar />)
+
+    await waitFor(() => expect(screen.getByText('feature/audit-fix')).toBeInTheDocument())
+    expect(screen.getByText('b676726')).toBeInTheDocument()
+    expect(screen.queryByText('280d52b')).not.toBeInTheDocument()
+    expect(screen.queryByText('17m ago')).not.toBeInTheDocument()
   })
 })

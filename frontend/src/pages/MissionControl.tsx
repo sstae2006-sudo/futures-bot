@@ -11,7 +11,7 @@ import RoadmapPanel from '../components/mission-control/RoadmapPanel'
 import TeamPanel from '../components/mission-control/TeamPanel'
 import WorkforcePanel from '../components/mission-control/WorkforcePanel'
 import WorkRegistryPanel from '../components/mission-control/WorkRegistryPanel'
-import { DatabaseSummaryCard, MarketContextSummaryCard, PerformanceCard, ResearchSummaryCard } from '../components/mission-control/SummaryCards'
+import { DatabaseSummaryCard, ResearchSummaryCard } from '../components/mission-control/SummaryCards'
 
 // Mission Control is the platform's "operating system home screen" --
 // the boot destination (index route). It answers five questions at a
@@ -19,10 +19,13 @@ import { DatabaseSummaryCard, MarketContextSummaryCard, PerformanceCard, Researc
 // what needs attention, what's next. Every other page is reached by
 // branching outward from here (sidebar nav, or the summary cards'
 // "View →" links). Every panel here reads real data from the API --
-// infrastructure metrics, team/connected-user state, and (SIL Phase 2,
-// 2026-07-28) the Active Work Registry's full Collaboration Workspace
-// (my/team/AI active work, recent activity, merge queue, conflict
-// warnings, ready-for-review) -- nothing on this page is mocked.
+// infrastructure metrics, team/connected-user state, the Active Work
+// Registry's full Collaboration Workspace, health/activity/alerts,
+// research/database summaries (fixed 2026-07-29, KNOWN_ISSUES.md
+// ISSUE-040 -- these five used to render hardcoded placeholders) --
+// with one deliberate, clearly-labeled exception: RoadmapPanel is
+// static reference content kept in sync with ROADMAP.md by hand, since
+// there's no honest "% platform complete" this page could measure.
 export default function MissionControl() {
   return (
     <div className="mission-control">
@@ -64,8 +67,6 @@ export default function MissionControl() {
         <div className="mc-column">
           <ResearchSummaryCard />
           <DatabaseSummaryCard />
-          <MarketContextSummaryCard />
-          <PerformanceCard />
         </div>
       </div>
     </div>

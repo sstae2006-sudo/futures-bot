@@ -22,6 +22,12 @@ const overview: SystemOverview = {
   last_report_generated: '2026-07-23 04:02:46',
   database_path: 'research.db',
   database_status: 'ok',
+  avg_profit_factor: '1.9',
+  avg_expectancy: '30.00',
+  best_strategy: 'vwap_reversion',
+  latest_backtest_strategy: 'vwap_reversion',
+  latest_backtest_net_pnl: '126.28',
+  latest_backtest_completed_at: '2026-07-23 04:02:46',
 }
 
 function makeRun(overrides: Partial<RunSummary> = {}): RunSummary {

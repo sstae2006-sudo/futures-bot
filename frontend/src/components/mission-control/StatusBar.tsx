@@ -1,21 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getSystemHealth } from '../../api'
+import { getBranchInfo, getSystemHealth } from '../../api'
 import { useApi } from '../../useApi'
 import { useSession } from '../../session'
 
 // Global chrome, rendered once in Layout.tsx above <Outlet/> -- "always
 // visible" per the Mission Control spec. Version/environment/uptime come
-// from GET /api/system/health (see api/routes/system.py::get_health) --
-// the one real-data slice the team-deployment plan (item #7) scoped for
-// this bar. Branch/commit stay static placeholders (git info, not part of
-// that route's payload) and "Last Startup" isn't provided either -- both
-// noted in missionControlData.ts. Only the clock genuinely ticks
-// independent of any backend call.
-const GIT_BRANCH = 'main'
-const GIT_COMMIT = '280d52b'
+// from GET /api/system/health. Branch/commit (KNOWN_ISSUES.md ISSUE-040
+// -- these were previously hardcoded to one specific past commit,
+// silently going stale on every commit since) now come from the real
+// GET /api/git/branch-info (collaboration/git_info.py -- already built
+// for SIL Phase 6, live `git` introspection, never persisted). "Last
+// Startup" was dropped rather than fixed -- there's no real absolute
+// timestamp for it beyond re-deriving one from `uptime_seconds`, and
+// "Uptime" already conveys the same information honestly. Only the
+// clock genuinely ticks independent of any backend call.
 const FALLBACK_VERSION = '0.7.0'
-const LAST_STARTUP = '17m ago'
 
 function useClock() {
   const [now, setNow] = useState(() => new Date())
@@ -40,6 +40,7 @@ export default function StatusBar() {
   const now = useClock()
   const timeLabel = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const { data: health, refetch } = useApi(getSystemHealth, [])
+  const { data: branchInfo } = useApi(() => getBranchInfo(), [])
   // Refetches every 30s so uptime/environment/version stay live without a
   // page reload -- cheap (one small JSON payload) and this bar is always
   // on screen for as long as the app is open.
@@ -51,18 +52,20 @@ export default function StatusBar() {
   const version = health?.version ?? FALLBACK_VERSION
   const environment = health?.environment ?? 'development'
   const uptime = health ? formatUptime(health.uptime_seconds) : '—'
+  const branch = branchInfo?.is_detached ? 'detached' : branchInfo?.branch ?? '—'
+  const commit = branchInfo?.last_commit?.short_hash ?? '—'
 
   return (
     <div className="status-bar">
       <div className="status-bar-group">
         <div className="status-bar-item">
           <span className="sb-label">Branch</span>
-          <span className="sb-value">{GIT_BRANCH}</span>
+          <span className="sb-value">{branch}</span>
         </div>
         <span className="status-bar-sep">|</span>
         <div className="status-bar-item">
           <span className="sb-label">Commit</span>
-          <span className="sb-value">{GIT_COMMIT}</span>
+          <span className="sb-value">{commit}</span>
         </div>
         <span className="status-bar-sep">|</span>
         <div className="status-bar-item">
@@ -73,11 +76,6 @@ export default function StatusBar() {
         <span className={`env-badge env-badge-${environment}`}>{environment}</span>
       </div>
       <div className="status-bar-group">
-        <div className="status-bar-item">
-          <span className="sb-label">Last Startup</span>
-          <span className="sb-value">{LAST_STARTUP}</span>
-        </div>
-        <span className="status-bar-sep">|</span>
         <div className="status-bar-item">
           <span className="sb-label">Uptime</span>
           <span className="sb-value">{uptime}</span>

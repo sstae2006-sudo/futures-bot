@@ -1398,3 +1398,102 @@ verified fixed — instead mark it Resolved with a date and commit.
   ~120ms/item at scale is a real, still-present, informational cost
   worth knowing about for a much larger queue (hundreds of items) --
   not addressed here, and not urgent at today's usage.
+
+---
+
+### ISSUE-040 — Mission Control rendered hardcoded fake data indistinguishable from real panels on the same page (RESOLVED)
+
+- **Severity:** High -- not a subtle bug, a flagship dashboard directly
+  contradicting its own module docstring ("nothing on this page is
+  mocked") while showing fabricated numbers for exactly the figures a
+  user would trust most.
+- **Description:** Found 2026-07-29 during the "SIL Research Engine 2.0
+  Phase 1" audit's Fork D (research APIs/dashboard/exports). `missionControlData.ts`
+  was a "design/scaffold pass" of static placeholder constants (a fake
+  `avgProfitFactor: 1.42`, `avgExpectancy: 18.6`, `completedBacktests: 187`,
+  a frozen boot-sequence activity feed, two hardcoded alert entries, a
+  fake "72% platform complete" roadmap bar, a fabricated 10-item
+  component-health grid with a fake "94% operational" score) rendered by
+  `ResearchSummaryCard`/`DatabaseSummaryCard`/`MarketContextSummaryCard`/
+  `PerformanceCard`/`HealthGrid`/`ActivityFeed`/`AlertCenter`/`RoadmapPanel`
+  -- sitting on the exact same live Mission Control page as real,
+  API-backed panels (`WorkforcePanel`, `IntegrationQueuePanel`,
+  `InfrastructurePanel`, `TeamPanel`, `AutomationPanel`) with no visual
+  distinction. `PerformanceCard` was additionally a fake *duplicate* of
+  the already-real `InfrastructurePanel` rendered right next to it.
+  `StatusBar.tsx` (global chrome, every page) had the same problem
+  independently: `GIT_BRANCH`/`GIT_COMMIT` were literals frozen to one
+  specific past commit, silently going stale on every commit since, and
+  `LAST_STARTUP` was a frozen `'17m ago'`.
+- **Files involved:** `frontend/src/components/mission-control/missionControlData.ts`,
+  `SummaryCards.tsx`, `HealthGrid.tsx`, `ActivityFeed.tsx`, `AlertCenter.tsx`,
+  `RoadmapPanel.tsx`, `StatusBar.tsx`, `frontend/src/pages/MissionControl.tsx`.
+- **Possible cause:** Built as an explicitly-labeled scaffold in an
+  earlier Mission Control pass (the file's own header comment already
+  said so), with the intent to wire real data in later -- that follow-up
+  never happened, and the label was only visible in source, not the
+  rendered page.
+- **Current status:** **Resolved 2026-07-29.**
+  - `ResearchSummaryCard`: wired to `GET /api/system/overview`, extended
+    with five new real fields (`avg_profit_factor`/`avg_expectancy`/
+    `best_strategy`/`latest_backtest_*`) computed server-side in
+    `api/services.py::system_overview` from completed backtest runs
+    (`_average_decimal`/`_best_strategy_by_avg_profit_factor` -- plain
+    means over each run's own already-persisted, engine-computed
+    `profit_factor`/`expectancy`, never a re-derivation of either
+    formula), plus `listExperiments()` for the experiment count. `None`
+    for every field when there are no completed backtests yet, never a
+    fabricated default.
+  - `DatabaseSummaryCard`: wired to the already-real `GET /api/market-data/overview`.
+  - `MarketContextSummaryCard`: **removed**, not fixed -- Context Engine
+    has no live "current regime" reading to report (OFF by default, see
+    docs/ARCHITECTURE.md), and `MarketRegime.tsx` already covers real
+    historical regime performance via `GET /api/regime/performance`; a
+    redundant fake summary card duplicating that page's job wasn't worth
+    building.
+  - `PerformanceCard`: **removed** -- a fake duplicate of the already-real
+    `InfrastructurePanel`.
+  - `HealthGrid`: rebuilt from only genuinely, cheaply-checkable real
+    signals (`GET /api/system/health`, `.../system/overview`,
+    `.../research-server/status`, `.../live/status`) -- cards with no
+    real per-component check available (a "Risk Engine" signal, "AI
+    Services" deployment count) were dropped rather than faked. The fake
+    "94% operational" score was replaced with a real
+    operational/degraded/issues-detected roll-up derived from the actual
+    fetched cards' tones.
+  - `ActivityFeed`: wired to the already-built, real
+    `GET /api/activity/timeline` (SIL Phase 2's activity timeline --
+    work-item events merged with real git commits) instead of a frozen
+    boot-sequence snapshot.
+  - `AlertCenter`: derives real alerts from `GET /api/automation/status`'s
+    per-scheduler `last_error` fields and `GET /api/system/health`'s real
+    team-database reachability -- pure display-layer relabeling of
+    already-computed real status fields, no new alert-generation backend
+    built.
+  - `RoadmapPanel`: kept as **explicitly-labeled static reference**
+    content (a small "static reference" tag added to its header) rather
+    than removed or fabricated further -- there's no honest "% platform
+    complete" this could measure; the fake completion-percentage bar was
+    dropped.
+  - `StatusBar`: `GIT_BRANCH`/`GIT_COMMIT` wired to the real, already-built
+    `GET /api/git/branch-info`; the fake `LAST_STARTUP` row was dropped
+    (the already-real `Uptime` field conveys the same information
+    honestly).
+  - `MissionControl.tsx`'s module docstring corrected to describe this
+    accurately (real data throughout, with `RoadmapPanel` as the one
+    explicit, labeled exception) instead of the previous blanket, false
+    "nothing on this page is mocked" claim.
+  - 20 new tests (9 backend -- `TestSystemOverview`'s new cases plus
+    `TestSystemOverviewAggregateHelpers`, using real backtest runs
+    through the actual engine via the existing `workspace` fixture, not
+    synthetic mocks; 11 frontend, asserting the OLD fake literals never
+    appear and the new real ones do). Full suite green: 1669 backend
+    (1660 -> 1669, 0 failed), 145 frontend (134 -> 145, 0 failed), `tsc -b`/
+    `oxlint` clean.
+  - **Not fixed in this pass, noted for later:** `frontend/src/types.ts`'s
+    `MaintenanceStatus` interface is missing `orphaned_orgs_detected_count`/
+    `stale_workers_marked_offline_count`, both real fields the backend's
+    `MaintenanceStatusOut` schema already has (added in the SIL Phase 6
+    audit and Milestone 2 respectively) -- a minor, harmless type-
+    completeness gap (the JSON still carries the fields, TypeScript just
+    doesn't type them), not something this fix's scope covered.
