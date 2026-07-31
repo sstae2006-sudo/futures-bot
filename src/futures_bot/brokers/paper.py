@@ -28,7 +28,7 @@ from typing import Optional
 
 from ..contracts import ContractSpec
 from ..journal import LOGGER_NAME
-from ..models import Bar, Fill, Order, OrderStatus, OrderType, Position, Side, Trade
+from ..models import Bar, ExitReason, Fill, Order, OrderStatus, OrderType, Position, Side, Trade, classify_stop_exit
 from .base import Broker, BrokerError
 
 log = logging.getLogger(LOGGER_NAME)
@@ -236,16 +236,20 @@ class PaperBroker(Broker):
                 "resolving against the position at %s.",
                 now, pos.stop_loss, pos.take_profit, bar.low, bar.high, exit_price,
             )
+            reason = classify_stop_exit(pos.side, pos.entry_price, exit_price)
             return self._close(
-                exit_price, now, "stop_loss (ambiguous bar, resolved against)",
+                exit_price, now, f"{reason} (ambiguous bar, resolved against)",
                 exit_slippage=abs(exit_price - pos.stop_loss),
             )
         if stop_hit:
             exit_price = self._slip(pos.stop_loss, pos.side, opening=False)
-            return self._close(exit_price, now, "stop_loss", exit_slippage=abs(exit_price - pos.stop_loss))
+            reason = classify_stop_exit(pos.side, pos.entry_price, exit_price)
+            return self._close(exit_price, now, reason, exit_slippage=abs(exit_price - pos.stop_loss))
         if target_hit:
             exit_price = self._slip(pos.take_profit, pos.side, opening=False)
-            return self._close(exit_price, now, "take_profit", exit_slippage=abs(exit_price - pos.take_profit))
+            return self._close(
+                exit_price, now, ExitReason.TAKE_PROFIT, exit_slippage=abs(exit_price - pos.take_profit),
+            )
         return None
 
     # --- Internals ---

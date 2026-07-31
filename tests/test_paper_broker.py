@@ -152,3 +152,106 @@ class TestPositionState:
         ts1, b1 = bar(4995, 4996, 4988, 4992, minute=5)
         b.on_bar(b1, ts1)
         assert b.get_position() is None
+
+
+class TestStopExitClassification:
+    """A resting-stop exit is labeled by where the fill landed relative to
+    entry (see models.classify_stop_exit), not just "a stop was hit" --
+    these lock down that a trailed/breakeven stop hit after moving into
+    profit is distinguishable from an initial, still-losing stop, without
+    changing where/when the stop itself fires."""
+
+    def test_long_breakeven_stop(self):
+        b = make_broker()
+        ts0, b0 = bar(5000, 5001, 4999, 5000)
+        b.on_bar(b0, ts0)
+        b.submit_bracket(Side.LONG, 1, stop_loss=Decimal("4990"), take_profit=Decimal("5100"), now=ts0)
+        entry_price = b.get_position().entry_price  # 5000.25, adverse fill
+
+        # Price must move favorably first -- modify_stop_loss refuses to set
+        # a stop past the *current* bar's close (it would fill immediately).
+        ts1, b1 = bar(5010, 5012, 5009, 5011, minute=5)
+        b.on_bar(b1, ts1)
+        # One tick above entry: adverse exit slippage (1 tick worse for a
+        # long close) brings the actual fill back to exactly entry_price.
+        b.modify_stop_loss(entry_price + Decimal("0.25"))
+
+        ts2, b2 = bar(5005, 5006, 4998, 5001, minute=10)
+        trade = b.on_bar(b2, ts2)
+
+        assert trade is not None
+        assert trade.exit_reason == "breakeven_stop"
+        assert trade.exit_price == entry_price  # confirms fill price/behavior is unchanged
+
+    def test_short_breakeven_stop(self):
+        b = make_broker()
+        ts0, b0 = bar(5000, 5001, 4999, 5000)
+        b.on_bar(b0, ts0)
+        b.submit_bracket(Side.SHORT, 1, stop_loss=Decimal("5010"), take_profit=Decimal("4900"), now=ts0)
+        entry_price = b.get_position().entry_price  # 4999.75, adverse fill
+
+        ts1, b1 = bar(4988, 4989, 4985, 4987, minute=5)
+        b.on_bar(b1, ts1)
+        # One tick below entry: adverse exit slippage (1 tick worse for a
+        # short close) brings the actual fill back to exactly entry_price.
+        b.modify_stop_loss(entry_price - Decimal("0.25"))
+
+        ts2, b2 = bar(4995, 5000, 4994, 4998, minute=10)
+        trade = b.on_bar(b2, ts2)
+
+        assert trade is not None
+        assert trade.exit_reason == "breakeven_stop"
+        assert trade.exit_price == entry_price
+
+    def test_long_trailing_stop_hit_in_profit(self):
+        b = make_broker()
+        ts0, b0 = bar(5000, 5001, 4999, 5000)
+        b.on_bar(b0, ts0)
+        b.submit_bracket(Side.LONG, 1, stop_loss=Decimal("4990"), take_profit=Decimal("5100"), now=ts0)
+        entry_price = b.get_position().entry_price  # 5000.25
+
+        ts1, b1 = bar(5015, 5016, 5010, 5014, minute=5)
+        b.on_bar(b1, ts1)
+        b.modify_stop_loss(Decimal("5010"))  # trailed well above entry
+
+        ts2, b2 = bar(5012, 5013, 5005, 5008, minute=10)
+        trade = b.on_bar(b2, ts2)
+
+        assert trade is not None
+        assert trade.exit_reason == "trailing_stop"
+        assert trade.exit_price > entry_price
+        assert trade.net_pnl > 0  # confirms this really is a profitable exit, not just a label
+
+    def test_short_trailing_stop_hit_in_profit(self):
+        b = make_broker()
+        ts0, b0 = bar(5000, 5001, 4999, 5000)
+        b.on_bar(b0, ts0)
+        b.submit_bracket(Side.SHORT, 1, stop_loss=Decimal("5010"), take_profit=Decimal("4900"), now=ts0)
+        entry_price = b.get_position().entry_price  # 4999.75
+
+        ts1, b1 = bar(4985, 4986, 4980, 4982, minute=5)
+        b.on_bar(b1, ts1)
+        b.modify_stop_loss(Decimal("4990"))  # trailed well below entry
+
+        ts2, b2 = bar(4988, 4992, 4987, 4991, minute=10)
+        trade = b.on_bar(b2, ts2)
+
+        assert trade is not None
+        assert trade.exit_reason == "trailing_stop"
+        assert trade.exit_price < entry_price
+        assert trade.net_pnl > 0
+
+    def test_ambiguous_bar_still_classifies_correctly_with_the_suffix_preserved(self):
+        b = make_broker()
+        ts0, b0 = bar(5000, 5001, 4999, 5000)
+        b.on_bar(b0, ts0)
+        b.submit_bracket(Side.LONG, 1, stop_loss=Decimal("4990"), take_profit=Decimal("5010"), now=ts0)
+
+        # Both stop (4990) and target (5010) are inside this bar's range --
+        # same ambiguous-bar fixture as the slippage test above, still a
+        # genuinely losing stop, so the base label must still be "stop_loss".
+        ts1, b1 = bar(5000, 5015, 4985, 5002, minute=5)
+        trade = b.on_bar(b1, ts1)
+
+        assert trade is not None
+        assert trade.exit_reason == "stop_loss (ambiguous bar, resolved against)"

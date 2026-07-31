@@ -25,8 +25,8 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1720 tests as of 2026-07-29** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1669 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1750 tests as of 2026-07-30** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1699 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
@@ -177,6 +177,34 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-07-30: **Two new self-verification tools, plus a real fix found
+through using them: `exit_reason` split into stop_loss / breakeven_stop /
+trailing_stop (KNOWN_ISSUES.md ISSUE-044).** `tools/verify_decisions_journal.py`
+streams `logs/decisions.jsonl` (34.3M lines / 8.64 GB at first run) without
+loading it into memory, reports record-type/action/block-reason
+breakdowns, flags JSON parse errors (found 10, clustered in one narrow
+band — worth a follow-up look), and independently re-verifies every
+trade's `gross_pnl - commission == net_pnl` (zero mismatches found;
+**sum of net PnL across all 49,576 logged trades: -$94,370.64** — flagging
+this plainly since it's a real number, not a validated edge).
+`tools/trade_quiz.py` is a standalone local review UI (its own FastAPI
+app + SQLite judgments store, doesn't touch research.db or the main
+API): shows one real trade at a time with actual candles from
+`market_data.db` and the strategy's logged entry reasoning, you judge it
+right/wrong, and a Leitner-style scheduler resurfaces "wrong"-judged
+trades 3x more often. Hand-reviewing real trades this way surfaced
+ISSUE-044: a trailed/breakeven stop hit in profit still logged
+`exit_reason: "stop_loss"`, identical to a still-losing stop — internally
+confusing on review even though execution/PnL were always correct.
+Fixed via a new `models.py::classify_stop_exit()` helper wired into the
+exact two points (`brokers/paper.py`, `brokers/tradovate.py`) that used
+to hardcode the literal string; zero change to stop-firing/trailing
+behavior, no schema migration (plain TEXT/String column), not
+retroactive to already-logged trades. 16 new tests, full backend suite
+green (1699 passed, 51 skipped, 0 failed — up from the prior session's
+1669/51 baseline). See CHANGELOG.md and KNOWN_ISSUES.md ISSUE-044 for
+full detail.
 
 2026-07-29: **Fix: every signed-in user showed "offline" within ~2
 minutes, including themselves (KNOWN_ISSUES.md ISSUE-043).**

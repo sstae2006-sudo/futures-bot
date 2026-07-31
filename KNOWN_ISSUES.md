@@ -1672,3 +1672,59 @@ verified fixed — instead mark it Resolved with a date and commit.
   block): fires immediately, fires again after the interval elapses,
   never fires with no signed-in user, and a failed heartbeat doesn't
   surface as an error. Full frontend suite green.
+
+### ISSUE-044 — Every resting-stop exit was labeled `exit_reason: "stop_loss"`, even when it was profitable (RESOLVED)
+
+- **Severity:** Low — cosmetic/analytics-only, not a P&L or execution bug.
+  Surfaced via manual review, not a user report of broken behavior.
+- **Description:** Found 2026-07-30 during a hand-review of
+  `logs/decisions.jsonl` trades (see `tools/trade_quiz.py`). A trailing or
+  breakeven stop that gets moved into profit before being hit still
+  produced `exit_reason: "stop_loss"`, identical to a stop that was still
+  at its original, losing level. `brokers/paper.py::PaperBroker._close`
+  and `brokers/tradovate.py::TradovateBroker.poll_closed_trade` both
+  hardcoded the literal string `"stop_loss"` for any exit that filled
+  against the resting stop order, with no distinction for where that stop
+  actually was relative to entry. A profitable trade reading `stop_loss`
+  looked internally inconsistent on review, even though the underlying
+  fill, P&L, and execution were all correct.
+- **Files involved:** `src/futures_bot/models.py` (new
+  `classify_stop_exit()` helper + `DEFAULT_BREAKEVEN_EPSILON`),
+  `src/futures_bot/brokers/paper.py`, `src/futures_bot/brokers/tradovate.py`.
+- **Possible cause:** The label was written once, early, as a simple
+  "which order type filled" tag, before trailing/breakeven stops existed
+  in the engine (`engine.py`'s HOLD-carries-stop_loss trailing mechanism).
+  Nothing downstream ever needed a finer distinction until a human started
+  reviewing individual trades by hand.
+- **Current status:** **Resolved 2026-07-30.** `exit_reason` for a stop
+  exit is now one of `"stop_loss"` (fill still adverse to entry),
+  `"breakeven_stop"` (fill within `DEFAULT_BREAKEVEN_EPSILON` of entry),
+  or `"trailing_stop"` (fill favorable to entry) — computed from the same
+  `entry_price`/fill-`price`/`side` both call sites already had in hand,
+  with zero change to when/where a stop fires or how P&L is computed. The
+  ambiguous-bar case (`" (ambiguous bar, resolved against)"` suffix) is
+  preserved and still classified correctly; `backtest/metrics.py::exit_reasons`
+  already grouped by the text before `"("`, so it needed no changes to
+  count all three labels separately. `exit_reason` is a plain
+  `TEXT`/`String` column in both `research/trade_store.py` (SQLite) and
+  `db/research_schema.py` (Postgres) — no enum, no CHECK constraint, no
+  schema migration needed. **Not retroactive**: trades already logged
+  before this change keep their original `"stop_loss"` label even if they
+  were actually breakeven/trailing exits; only new trades get the finer
+  classification. 16 new tests (`tests/test_models.py`'s
+  `TestClassifyStopExit`, plus new long/short breakeven/trailing cases in
+  `tests/test_paper_broker.py` and `tests/test_tradovate_broker.py`). Full
+  backend suite green (1699 passed, 51 skipped, 0 failed).
+- **Follow-up (same day):** added `models.py::ExitReason` (a `StrEnum`:
+  `STOP_LOSS`/`BREAKEVEN_STOP`/`TRAILING_STOP`/`TAKE_PROFIT`/
+  `CLOSED_AT_BROKER`/`IMPORTED`) and switched every broker-mechanical exit
+  call site (`paper.py`, `tradovate.py`, `research/trade_import.py`) to
+  use it instead of bare string literals. Deliberately does **not**
+  extend to the free-text exits — `engine.py::_flatten`'s `reason` param
+  carries arbitrary strategy/risk-authored prose (e.g.
+  `f"strategy exit: {signal.reason}"`, `risk.manager.must_flatten()`'s
+  dynamic messages) that a closed enum would either reject or silently
+  discard; `Trade.exit_reason` stays a plain `str` so that free text is
+  untouched. `ExitReason` members are valid `str` values (StrEnum), so
+  this needed no changes anywhere `exit_reason` is read, serialized, or
+  stored. Full suite re-confirmed green after this change too.

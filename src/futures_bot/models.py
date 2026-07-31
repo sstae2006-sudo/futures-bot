@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Optional
 import uuid
 
@@ -36,6 +36,62 @@ class Side(str, Enum):
     def sign(self) -> int:
         """+1 for long, -1 for short. Used in P&L arithmetic."""
         return 1 if self is Side.LONG else -1
+
+
+class ExitReason(StrEnum):
+    """Typed constants for the mechanical, broker-computed exit reasons --
+    the ones a broker adapter derives itself from which order filled and
+    where, as opposed to the free-text reasons a strategy EXIT signal or a
+    risk-forced flatten produce (`engine.py::_flatten`'s `reason` param,
+    ultimately from `Signal.reason`/`RiskDecision.reason`). `Trade.exit_reason`
+    stays a plain `str` on purpose -- constraining it to this enum would
+    either reject that free text or silently discard it, and the whole
+    point of the decision journal is recording *why*, not just *what* (see
+    journal.py's module docstring). A member of this enum is still a valid
+    `str` (StrEnum), so using it anywhere `Trade.exit_reason` is read/
+    written/serialized/stored needs no special-casing.
+    """
+
+    STOP_LOSS = "stop_loss"
+    BREAKEVEN_STOP = "breakeven_stop"
+    TRAILING_STOP = "trailing_stop"
+    TAKE_PROFIT = "take_profit"
+    CLOSED_AT_BROKER = "closed_at_broker"
+    IMPORTED = "imported"
+
+
+#: Default tolerance for treating a stop exit as "at breakeven" rather than
+#: strictly profitable/unprofitable. Prices here are Decimal, not float (see
+#: this module's docstring), so this mostly guards a future float-valued
+#: caller rather than any real rounding this codebase produces today.
+DEFAULT_BREAKEVEN_EPSILON = Decimal("0.000001")
+
+
+def classify_stop_exit(
+    side: Side, entry_price: Decimal, exit_price: Decimal,
+    epsilon: Decimal = DEFAULT_BREAKEVEN_EPSILON,
+) -> ExitReason:
+    """Labels a resting-stop exit by where the fill landed relative to
+    entry, rather than the single generic "stop_loss" every stop exit used
+    to get regardless of whether the stop was still at its original level,
+    had been moved to breakeven, or had been trailed into profit -- a
+    profitable "stop_loss" exit was flagged during a manual trade-journal
+    review (2026-07-30) as internally inconsistent-looking even though the
+    underlying fill was correct.
+
+    Pure post-hoc classification of a fill that already happened -- does
+    not decide *when* a stop fires or *where* it's placed, and both call
+    sites (`brokers.paper.PaperBroker._close`,
+    `brokers.tradovate.TradovateBroker.poll_closed_trade`) call this at the
+    exact point they previously hardcoded the literal string "stop_loss",
+    once both `entry_price` and the actual fill price are known.
+    """
+    diff = (exit_price - entry_price) * side.sign
+    if diff > epsilon:
+        return ExitReason.TRAILING_STOP
+    if diff < -epsilon:
+        return ExitReason.STOP_LOSS
+    return ExitReason.BREAKEVEN_STOP
 
 
 class OrderType(str, Enum):

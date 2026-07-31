@@ -62,7 +62,7 @@ import requests
 
 from ..contracts import ContractSpec
 from ..journal import LOGGER_NAME
-from ..models import Fill, Order, OrderStatus, OrderType, Position, Side, Trade
+from ..models import ExitReason, Fill, Order, OrderStatus, OrderType, Position, Side, Trade, classify_stop_exit
 from .base import Broker, BrokerError
 
 log = logging.getLogger(LOGGER_NAME)
@@ -549,11 +549,11 @@ class TradovateBroker(Broker):
         commission = self.commission_per_side * entry.quantity * 2
 
         if exit_fill.order_id == entry.stop_order_id:
-            reason = "stop_loss"
+            reason = classify_stop_exit(entry.side, entry.entry_price, exit_price)
         elif exit_fill.order_id == entry.target_order_id:
-            reason = "take_profit"
+            reason = ExitReason.TAKE_PROFIT
         else:
-            reason = "closed_at_broker"
+            reason = ExitReason.CLOSED_AT_BROKER
 
         trade = Trade(
             side=entry.side, quantity=entry.quantity, entry_price=entry.entry_price, exit_price=exit_price,

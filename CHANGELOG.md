@@ -4,6 +4,58 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-07-30 — Split `exit_reason` for stop exits into stop_loss / breakeven_stop / trailing_stop (ISSUE-044)
+
+Found while hand-reviewing real trades via a new tool
+(`tools/trade_quiz.py`, an interactive right/wrong review UI built this
+session, plus `tools/verify_decisions_journal.py`, a streaming integrity
+checker for `logs/decisions.jsonl`): a trailed or breakeven stop hit after
+moving into profit still logged `exit_reason: "stop_loss"`, identical to
+a stop still sitting at its original, losing level — internally
+confusing on review, though the fill/PnL themselves were always correct.
+
+**Fixed:** `models.py::classify_stop_exit(side, entry_price, exit_price,
+epsilon)` — a pure function computing `"stop_loss"` (still adverse to
+entry), `"breakeven_stop"` (within `DEFAULT_BREAKEVEN_EPSILON`), or
+`"trailing_stop"` (favorable to entry) — called from the exact two points
+that used to hardcode the literal string `"stop_loss"`:
+`brokers/paper.py::PaperBroker._close` and
+`brokers/tradovate.py::TradovateBroker.poll_closed_trade`. Zero change to
+when/where stops fire, trailing behavior, or P&L math — purely a
+post-hoc classification of a fill that already happened. No schema
+migration: `exit_reason` is a plain TEXT/String column, no enum, in both
+SQLite and Postgres. Not retroactive: already-logged trades keep their
+original `"stop_loss"` label. `backtest/metrics.py::exit_reasons` needed
+no changes (already groups generically); frontend `types.ts`/
+`TradeExplorer.tsx` needed no changes (`exit_reason` is already a plain
+`string`, no union type, no color/icon logic keyed off it). 16 new tests
+across `tests/test_models.py` (new file), `tests/test_paper_broker.py`,
+`tests/test_tradovate_broker.py`. Full backend suite green (1699 passed,
+51 skipped, 0 failed). See KNOWN_ISSUES.md ISSUE-044 for full detail.
+
+Same-day follow-up: added `models.py::ExitReason` (`StrEnum`) for the
+broker-mechanical exit values only (`STOP_LOSS`/`BREAKEVEN_STOP`/
+`TRAILING_STOP`/`TAKE_PROFIT`/`CLOSED_AT_BROKER`/`IMPORTED`), wired into
+`paper.py`/`tradovate.py`/`research/trade_import.py`. `Trade.exit_reason`
+deliberately stays plain `str` — a strict enum would have broken or
+silently discarded the free-text reasons `engine.py::_flatten` produces
+for strategy EXIT signals and risk-forced flattens, which are dynamic,
+strategy-authored prose, not one of a fixed set of values. Full suite
+re-confirmed green (1699 passed, 51 skipped, 0 failed).
+
+Also this session: `tools/verify_decisions_journal.py` (streams
+`logs/decisions.jsonl` — 34.3M lines / 8.64 GB at time of first run — and
+reports record-type/action/block-reason breakdowns, flags JSON parse
+errors, and independently re-verifies every trade's
+`gross_pnl - commission == net_pnl`; found 10 corrupted lines clustered
+around one narrow band, zero arithmetic mismatches) and
+`tools/trade_quiz.py` (a standalone local FastAPI app, its own SQLite
+judgments store, reads trades + entry-decision reasoning straight out of
+the journal, renders actual candles from `market_data.db` via the
+project's own configured contract/resolution, and weights previously
+"wrong"-judged trades to resurface 3x more often than "right"-judged
+ones — a Leitner-style scheduler, not real ML).
+
 ## 2026-07-29 — Fix: everyone showed "offline" within ~2 minutes (ISSUE-043)
 
 User-reported: "it says offline for me or anyone even if they are

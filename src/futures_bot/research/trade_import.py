@@ -32,6 +32,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional, Sequence
 
 from ..contracts import CME_TZ, CONTRACTS, get_contract
+from ..models import ExitReason
 from .features import TradeRecord
 
 CANONICAL_FIELDS = (
@@ -439,7 +440,7 @@ def build_trade_record(match: ClosedMatch, import_id: str, profile_name: str) ->
         entry_price=lot.entry_price, exit_price=fill.price,
         gross_pnl=gross_pnl, commission=match.commission_share, net_pnl=net_pnl,
         holding_minutes=(exit_time - entry_time).total_seconds() / 60.0,
-        exit_reason="imported",
+        exit_reason=ExitReason.IMPORTED,
         session_date=exit_time.date().isoformat(), day_of_week=exit_time.strftime("%A"), hour=exit_time.hour,
         entry_reason=f"Imported fill ({pnl_basis})",
         entry_metadata={"raw_entry_fill": lot.raw_entry_row, "raw_exit_fill": fill.raw_row, "pnl_basis": pnl_basis},

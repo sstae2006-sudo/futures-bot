@@ -354,6 +354,41 @@ class TestPollClosedTrade:
         assert trade.side is Side.LONG
         assert broker._entry is None  # cleared once reconciled
 
+    def test_stop_fill_at_breakeven_is_classified_as_breakeven_stop(self):
+        entry = _fake_entry(
+            side=Side.LONG, quantity=1, entry_price=Decimal("7500"),
+            entry_time=datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc),
+            stop_loss=Decimal("7500"), stop_order_id="2", target_order_id="3",
+        )
+        broker = connected_broker({
+            "GET /position/list": [],
+            "GET /fill/list": [
+                {"orderId": "2", "action": "Sell", "qty": 1, "price": 7500,
+                 "timestamp": "2026-01-05T15:00:00.000Z"},
+            ],
+        })
+        broker._entry = entry
+        trade = broker.poll_closed_trade(datetime(2026, 1, 5, 15, 5, tzinfo=timezone.utc))
+        assert trade.exit_reason == "breakeven_stop"
+
+    def test_short_stop_fill_below_entry_is_classified_as_trailing_stop(self):
+        entry = _fake_entry(
+            side=Side.SHORT, quantity=1, entry_price=Decimal("7500"),
+            entry_time=datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc),
+            stop_loss=Decimal("7480"), stop_order_id="2", target_order_id="3",
+        )
+        broker = connected_broker({
+            "GET /position/list": [],
+            "GET /fill/list": [
+                {"orderId": "2", "action": "Buy", "qty": 1, "price": 7480,
+                 "timestamp": "2026-01-05T15:00:00.000Z"},
+            ],
+        })
+        broker._entry = entry
+        trade = broker.poll_closed_trade(datetime(2026, 1, 5, 15, 5, tzinfo=timezone.utc))
+        assert trade.exit_reason == "trailing_stop"
+        assert trade.net_pnl > 0
+
     def test_builds_trade_when_target_fills(self):
         entry = _fake_entry(
             side=Side.SHORT, quantity=1, entry_price=Decimal("7500"),
