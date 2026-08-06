@@ -20,6 +20,14 @@ research.db-shm
 research.db-wal
 api_reports/
 
+# Scratch TradeStore DBs created by tools/experiment_context_*.py and
+# tools/tune_trend_pullback.py -- same regenerable-artifact status as
+# research.db above, just a separate file so experiment runs never touch
+# the real research.db.
+research_experiments.db
+research_experiments.db-shm
+research_experiments.db-wal
+
 # Local market-data caches and generated backtest reports -- large,
 # machine-specific, and regenerable via tools/ and the fetch/convert scripts.
 market_data*.db

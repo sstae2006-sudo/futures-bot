@@ -222,7 +222,7 @@ futures_bot.api`, `npm run dev`).
 | `src/futures_bot/backtest/` | Backtesting engine, metrics, HTML/text report generation. |
 | `src/futures_bot/research/` | Feature engineering, grid-search optimizer, ML dataset/training/prediction, trade import, trade store. |
 | `src/futures_bot/research_server/` | Autonomous layer: paper trader, nightly jobs, orchestrator. Distinct from `research/` — this is the always-on process, not the analysis library. |
-| `src/futures_bot/strategy/` | Strategy implementations (`ema_crossover`, `opening_range_breakout`, `vwap_reversion`, `trend_pullback/`). |
+| `src/futures_bot/strategy/` | Strategy implementations (`ema_crossover`, `opening_range_breakout`, `vwap_reversion`, `trend_pullback/`). Also `context_gate.py` (2026-08-04): `ContextGatedStrategy`, a composable wrapper — not a modification to any of the above — that scores an inner strategy's entries against `MarketContext` via a pluggable `ContextScorer` interface. Not `StrategyRegistry`-registered; a research/backtesting composition tool, not a config.yaml-selectable strategy. See `docs/ARCHITECTURE.md`'s "Context → Strategy consumption, Phase 1" section. |
 | `src/futures_bot/market_data/` | Market-data sync/scheduler/store and the vendor contracts client. |
 | `src/futures_bot/brokers/` | Paper broker (used everywhere except live CLI trading) and the Tradovate live broker adapter. |
 | `src/futures_bot/risk/` | Risk manager — daily loss kill switch, trade caps, trading-hours filter, force-flat. |

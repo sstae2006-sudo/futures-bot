@@ -4,6 +4,298 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-08-05 — Full experiment sweep: all four strategies, zero validated edges
+
+Requested as "try everything" after Experiments 1-2 (below). Three more
+context-gating experiments (one per remaining bundled strategy) plus a
+27-combination parameter-tuning sweep on `trend_pullback`, run in parallel
+against the same real MES 5-minute data (~73,420 bars, ~13 months). New
+scripts: `tools/experiment_context_orb_liquidity.py`,
+`tools/experiment_context_vwap_reversion_volatility.py`,
+`tools/experiment_context_ema_crossover_regime.py`,
+`tools/tune_trend_pullback.py`. Full write-up:
+`docs/EXPERIMENT_SWEEP_2026-08-05.md`.
+
+**Experiment 3 — `opening_range_breakout` + `LiquidityState` (skip THIN):**
+most encouraging result of the sweep. 165 trades/-$887.10/31.5% win rate
+unfiltered vs. 143 trades/-$479.82/34.3% gated; validation profit factor
+1.03 → 1.14. `research/safety.py` confidence genuinely improved Low → Medium
+(single-best-trade dominance dropped from 165% to 48% of net profit) — the
+only experiment today where the safety rating itself improved. Still not
+"validated": one warning remains.
+
+**Experiment 4 — `vwap_reversion` + `VolatilityState` (avoid HIGH/EXTREME):**
+rejected. The only baseline with positive full-dataset net P&L across all
+five context experiments ($925.20, profit factor 3.74 training) — but on
+only 16 training/4 validation trades, Low confidence with five findings
+including the single best trade at 102% of training profit and 84% of
+validation profit. The volatility filter made every metric worse (net P&L
+to $240.11, single-trade dominance to 200% of validation profit).
+Independently: this strategy's attractive-looking baseline profit factor is
+itself untrustworthy — too rare a signal (20 trades/13 months) to clear
+this platform's own `MIN_TRADES_FOR_SIGNIFICANCE`.
+
+**Experiment 5 — `ema_crossover` + `market_regime` (avoid RANGING):**
+untestable. Baseline is the worst of the four strategies by a wide margin
+(178 trades/-$3,465.72/12.4% win rate, training profit factor 0.18, a
+single trade at 3352% of net profit). The regime filter cut entries 89%
+(178 → 19), collapsing validation to a single trade — Low confidence on
+both sides of the split, no conclusion possible in either direction.
+
+**`trend_pullback` parameter tuning (not context-gating):** 27 combinations
+across `adx_min`/`atr_stop_mult`/`atr_target_mult` via the existing
+`research/optimizer.py::run_optimization`. One combination
+(`adx_min=15, atr_stop_mult=1.5, atr_target_mult=4.0`) cleared profit
+factor > 1 in *both* train (1.11) and validation (1.13) — the only result
+in the entire sweep to do so. `research/safety.py`: **Low confidence**,
+four findings — single best trade at 80% of training and **141% of
+validation** profit (every other validation trade combined lost money),
+only 2 of 26 other grid combinations scoring anywhere close ("an isolated
+spike, not a robust region"), and a 54% profit collapse at 2x commission.
+Textbook demonstration of exactly the failure mode
+`check_parameter_fitting`/`check_unrealistic_gains` exist to catch —
+clearing both splits' profit-factor bar is not sufficient on its own.
+
+**Consolidated finding**: six runs, four strategies, five context
+hypotheses, one 27-combination tuning sweep — **zero results cleared
+`research/safety.py`'s own bar for trustworthiness.** Every tool worked
+exactly as designed, catching every case where a headline number looked
+better than the evidence supported. This is not a mechanism failure — it's
+an honest, now-actually-checked confirmation of `config.yaml`'s own
+disclaimer ("standard published setups or reference implementations, not
+proven edges"). `ROADMAP.md`'s Critical item updated: the validation loop
+is done as a mechanism; whether to pursue different strategy logic, wait
+for more data, or move to a different priority is explicitly left as a
+decision for the next session/human, not resolved here.
+
+## 2026-08-05 — Experiment 2: `trend_pullback` gated on `market_regime` alignment — inconclusive
+
+Second hypothesis through the same pipeline as Experiment 1 (below):
+`ContextGatedStrategy` → `compare_context_impact` →
+`research/safety.py::build_safety_report`. New shared harness,
+`tools/context_experiment_lib.py` (factored out of Experiment 1's script
+before writing this one — the two scripts would otherwise have duplicated
+~130 lines; Experiment 1's script was refactored to use it and re-run to
+confirm byte-identical results before this experiment was trusted). New
+script: `tools/experiment_context_trend_pullback_regime_alignment.py`. Full
+write-up: `docs/EXPERIMENT_TREND_PULLBACK_REGIME_ALIGNMENT.md`.
+
+**Pre-registered hypothesis**: `trend_pullback`'s own trend filter is a
+blunt binary EMA-order check; requiring the Context Engine's `market_regime`
+(ADX≥25 strength + direction + volatility, a materially stricter
+computation) to independently confirm the entry's direction should filter
+out weak/borderline entries and improve win rate or expectancy.
+
+**Result: inconclusive, not "confirmed."** Full-dataset headline looked
+like an improvement (92 trades/-$305.33/46.7% win rate unfiltered vs. 25
+trades/-$223.50/48.0% gated) — but the train/validation split told a
+different story: gated train net -$232.38 (profit factor 0.46, expectancy
+-$19.36 — the worst per-trade number across either experiment), gated
+validation net +$8.88 (profit factor 1.03, expectancy +$0.68, essentially
+breakeven). `research/safety.py` returned **Low confidence** with three
+findings: only 12 training trades (below 30), only 13 validation trades
+(below 20), and the single best trade producing 1675% of net profit. The
+filter cut entries 73% (92 → 25), and what's left is dominated by one
+outlier — exactly the shape `research/safety.py` exists to catch before a
+flattering headline number gets treated as evidence. This experiment
+neither confirms nor refutes the underlying idea; it shows `threshold=1.0`
+(exact regime agreement) is too strict a bar to test meaningfully on ~13
+months of this instrument's data.
+
+**Both experiments together**: the Context → Strategy → Validation pipeline
+has now been run on two independent, pre-registered hypotheses and
+correctly distinguished a clean rejection (Experiment 1) from a
+headline-looks-good-but-isn't-trustworthy result (Experiment 2) — doing
+exactly the job it was built for. Neither result is a reason to distrust
+the mechanism; both are reasons to be careful about what gets treated as a
+validated edge. `ROADMAP.md`'s Critical item updated with both outcomes.
+Underlying open question from Experiment 1 still applies to both: `trend_pullback`'s
+own untuned baseline has no demonstrated edge on this data regardless of
+context-gating, so further filter experiments on this specific strategy are
+testing a filter on top of a strategy not yet shown to work.
+
+## 2026-08-05 — Experiment 1: `trend_pullback` gated on `RiskState` — hypothesis rejected
+
+The platform's first hypothesis run end to end through the full validation
+pipeline against real data: `strategy/context_gate.py::ContextGatedStrategy`
+(2026-08-04) → `backtest/context_comparison.py::compare_context_impact`
+(built 2026-07-27, never exercised on a real claim before this) →
+`research/safety.py::build_safety_report`. New reproducible script:
+`tools/experiment_context_trend_pullback_risk_state.py`. Full write-up:
+`docs/EXPERIMENT_TREND_PULLBACK_RISK_STATE.md`.
+
+**Pre-registered hypothesis** (stated before running): `trend_pullback`'s
+pullback-continuation entries perform worse when `RiskState` indicates
+elevated-or-extreme market-condition risk (a composite of `volatility_state`
++ `market_regime`); requiring `RiskState.LOW` at entry should improve or
+preserve expectancy.
+
+**Data**: real MES 5-minute bars from `market_data.db`, 73,312 bars,
+2025-07-24 → 2026-08-05 (~13 months) — not synthetic. Strategy run with its
+own class-default parameters, no tuning. Settings matched `config.yaml`'s
+real defaults.
+
+**Result: hypothesis rejected.** The `RiskState.LOW` filter made every
+measured metric worse — full-dataset net P&L -$305.33 (92 trades) unfiltered
+vs. -$375.78 (47 trades) gated; win rate 46.7% vs. 40.4%; train/validation
+profit factor 0.87/0.85 unfiltered vs. 0.66/0.66 gated; per-trade expectancy
+roughly 2.3x worse gated (-$7.55 to -$8.36 vs. -$3.18 to -$3.53). Working
+the arithmetic the other way: the 45 trades the filter *removed* averaged
++$1.57/trade while the 47 it *kept* averaged -$8.00/trade — directionally
+opposite the hypothesis, though with sample sizes this small (~45-47 per
+bucket) that shouldn't be read as "elevated risk is actually good" either,
+just as no support for the original claim. `research/safety.py` gave the
+unfiltered baseline High confidence/no warnings (not a claim it's
+profitable — no overfitting-shaped red flags fired on an honestly
+unprofitable, non-overfit-looking result) and the gated variant Medium
+confidence with one real warning: only 26 training trades, below this
+platform's own `MIN_TRADES_FOR_SIGNIFICANCE = 30` — the filter's own
+sample-halving directly triggered an existing guard.
+
+**A second, independent finding**: `trend_pullback` with default parameters
+has no demonstrated edge on this real MES data at all — it lost money in
+both the training and validation slices with consistent, non-overfit-looking
+behavior. Useful ground truth, separate from the context-gating question.
+
+**What this proves and doesn't**: proves the full Context → Strategy →
+Validation pipeline works end to end against real data and produces an
+honest, checkable verdict — the actual point of Phase 1/2. Does not mean
+`MarketContext`/`RiskState` are useless (one strategy, one dimension, one
+~13-month sample, untuned parameters) or that `trend_pullback` is a bad
+design (its baseline was never tuned on this instrument). Commission-shock
+check on both variants correctly declined to run — neither had a positive
+baseline P&L to stress-test.
+
+**Not decided, deliberately left as an open question in the write-up**:
+whether to try a different context dimension/strategy pairing, tune
+`trend_pullback`'s own parameters first, or treat the Critical-priority
+"close the loop" item as satisfied for now. `ROADMAP.md`'s matching Critical
+item updated with the outcome rather than left as "not started."
+
+## 2026-08-05 — Whole-codebase engineering review
+
+Requested explicitly as a "lead architect" pass — study every major
+subsystem, evaluate the architecture, and answer "what's the next major
+architectural leap?" No code written; pure analysis, saved to
+`docs/ENGINEERING_REVIEW_2026-08.md`.
+
+**Method:** direct reading of all governance docs plus line-level review of
+the core trading pipeline (`engine.py`, `strategy/`, `risk/manager.py`,
+`context/`, `research/safety.py`, `research/optimizer.py`,
+`backtest/metrics.py`, `backtest/context_comparison.py`, `models.py`), plus
+four parallel Explore-agent investigations covering the API layer,
+brokers/journal/state/contracts, research/research_server, and
+market_data/config/db/frontend — each cross-checked against direct code
+reading rather than taken at face value.
+
+**Headline finding**, backed by precise `wc -l` counts run this session:
+`collaboration/`+`accounts/` (4,837 backend lines + 1,552 frontend lines) is
+within a few hundred lines of `research/`+`research_server/` combined
+(6,853 lines) and 2.4x the size of the entire strategy library (2,622
+lines, four reference strategies + base). Named plainly as a portfolio-level
+imbalance, not a defect in any individual SIL milestone (each is well-scoped
+and well-tested): the team-coordination tooling has been engineered to a
+degree of sophistication the trading core it coordinates hasn't earned yet
+— no bundled strategy has cleared `research/safety.py`'s own validation bar.
+
+**Ranked "next architectural leap"**: (1) close the Context → Strategy →
+Validation loop for real — `ContextGatedStrategy` (2026-08-04) →
+`compare_context_impact` (built 2026-07-27, never exercised on a real
+hypothesis) → `research/safety.py` already form a complete, tested,
+never-actually-used pipeline; (2) real authentication — `accounts/`'s
+`api_key` (every user has one since 2026-07-28) is checked against nothing
+across all 139 API endpoints, CORS is `allow_origins=["*"]`, justified
+inline as "internal tool, no user data," an assumption Team Mode's actual
+multi-device target erodes; (3) retire `journal.py`'s unbounded decision
+log onto the TimescaleDB infrastructure already provisioned for team
+deployment — confirmed this session that ISSUE-017's fix only patched the
+*reader* (`api/services.py::_read_tail_lines`), the writer
+(`journal.py::_write`) is still a bare unbounded append with zero rotation
+and zero thread lock.
+
+**Also catalogued** (full detail and file:line citations in the review
+doc): two god-objects (`api/services.py`, 1,871 lines/21 sections/85
+top-level defs; `research/trade_store.py`, 1,467 lines/~65 methods across
+12+ concerns); `TradovateBroker` never verified against a real account
+(its own docstring: "believed correct but unverified"); `api/jobs.py`'s
+job *state* persisting to the `jobs` table while its `ThreadPoolExecutor`
+itself is in-memory, so a restart abandons in-flight jobs with rows stuck
+`running` forever; a measured SQLite concurrent-writer ceiling (~100
+threads, from the prior SIL Phase 6 audit) relevant once Team Mode's real
+multi-device usage begins; frontend has no shared client-cache library at
+21 pages. Also named, at equal length, what's working well and shouldn't
+change: the engine/strategy/risk/broker separation, the tested one-way
+`context/`↔`engine.py` dependency boundary, the "compute live, never
+persist" principle applied consistently across `context/`/`collaboration/`,
+and documentation discipline that let this entire review be reconstructed
+to near-complete accuracy from `PROJECT_STATE.md`/`ROADMAP.md`/
+`docs/ARCHITECTURE.md`/`KNOWN_ISSUES.md` before a line of code was read.
+
+**Roadmap folded into `ROADMAP.md`**: two new itemized priorities (Critical:
+closing the validation loop; High: real authentication), four new Medium
+items (journal retention direction, Tradovate verification, the two
+god-object splits, the jobs reaper), and an explicit "not a priority right
+now" note against further `collaboration/` investment until the Critical
+item produces a real result. Full 12-month phased sequencing lives in the
+review doc itself.
+
+## 2026-08-04 — Context → Strategy Phase 1: `ContextGatedStrategy` wrapper + `ContextScorer` interface
+
+First real consumer of the Market Context Engine's `MarketContext`/
+`ContextMode.ENABLED` integration (built 2026-07-27, wired into
+`TradingEngine` but never actually read by any bundled strategy since).
+Preceded by an architecture review (not code) of the full Context →
+Strategy pipeline, which rejected a heavier "Strategy Orchestrator" as
+premature — no strategy has a validated edge yet to orchestrate among, and
+an existing seam (`TradingEngine.signal_filter`, already in production for
+ML win-probability filtering) already does the "intercept an entry signal
+before risk" job a new orchestration layer would duplicate.
+
+**Built:** `strategy/context_gate.py` — `ContextGatedStrategy(Strategy)`, a
+composable wrapper (not a modification) around any existing `Strategy`.
+`uses_context = True`; scores only `ENTER_LONG`/`ENTER_SHORT` signals from
+the wrapped strategy against the current `MarketContext` via a pluggable
+`ContextScorer`, converting a below-threshold entry into a `HOLD` with an
+explanatory reason. Every `HOLD`/`EXIT` (including a stop-management HOLD
+carrying `stop_loss`) passes through untouched and is never scored.
+
+Designed around a scoring interface (`ContextScore`: a `[0.0, 1.0]` value +
+reason), not a bare allow/deny predicate — per this session's explicit
+request, so a future confidence-weighted position-sizing phase can consume
+the same `ContextScorer`/`ContextScore` shape without an architecture
+change; `ContextGatedStrategy.last_score` (populated every bar, reset each
+call) is the seam that phase would read. Phase 1 itself only ever produces
+binary 0.0/1.0 scores, via a small composable rule library: `reject_if`/
+`require_if` (predicate → veto or pass) and `all_of`/`any_of` (combinators
+whose min/max logic generalizes correctly to a future continuous scorer
+without changing shape).
+
+Zero modification to any of the four bundled strategies, `strategy/base.py`,
+or `engine.py` — the wrapper only uses the `uses_context`/`self.context`
+contract those files already expose. Not registered with `StrategyRegistry`
+(a research/backtesting composition tool, not a config.yaml-selectable
+strategy) and does not touch `Signal.metadata` (avoids any coupling with
+the ML `signal_filter` or `research/features.py`'s feature extraction,
+both of which already read that dict for their own purposes) — the score is
+exposed only via the `last_score` instance attribute.
+
+26 new tests (`tests/test_context_gate.py`): the scoring interface and rule
+library in isolation, wrapper delegation/veto behavior against a
+controllable inner strategy (no engine involved), and end-to-end proof
+through both the real `TradingEngine` (`ContextMode.OFF`/`ENABLED`) and the
+existing, previously-unused `backtest/context_comparison.py::compare_context_impact`
+A/B framework — confirming the wrapper is a drop-in `strategy_factory` for
+that tool with no changes to it. Full backend suite green: 1725 passed (up
+from 1699), 51 skipped, 0 failed.
+
+**Deliberately not done, and not started without approval**: no real
+strategy has been wrapped with a real trading hypothesis yet — that's a
+strategy-authored decision this session correctly declined to make
+unilaterally (CLAUDE.md §8: "deciding whether/how a specific strategy
+should actually consult `self.context`... needs explicit approval").
+`ContextGatedStrategy` is the reusable mechanism; picking a strategy + a
+pre-registered hypothesis is the next step, once given.
+
 ## 2026-07-30 — Split `exit_reason` for stop exits into stop_loss / breakeven_stop / trailing_stop (ISSUE-044)
 
 Found while hand-reviewing real trades via a new tool

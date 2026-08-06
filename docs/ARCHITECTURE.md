@@ -587,6 +587,71 @@ behalf), and whether `MarketContext`/`EnvironmentScore` snapshots get
 persisted to a database for research (a schema change, needs its own
 explicit approval per `CLAUDE.md` section 8).
 
+### Context → Strategy consumption, Phase 1 (`strategy/context_gate.py`, 2026-08-04)
+
+The first real consumer of `ContextMode.ENABLED` — built over a week after
+the integration above landed with zero bundled strategies reading
+`self.context`. Preceded by an architecture review of the whole Context →
+Strategy pipeline that deliberately rejected building a heavier "Strategy
+Orchestrator" as a new architectural tier: `context/`'s own dependency rule
+(zero references back to `engine.py`/`risk/manager.py`/`brokers/`) means a
+component that reads both context and coordinates strategies can't live in
+`context/` at all; and there is nothing to orchestrate yet — no bundled
+strategy has a validated edge, so an allocator choosing among strategies
+would be optimizing over unproven components. `TradingEngine` already has
+the seam a new orchestration layer would duplicate: `signal_filter`
+(Phase 9, `engine.py`'s constructor argument), currently fed by an ML
+model's win probability in `research_server/paper_trader.py`, already
+intercepts an entry `Signal` before it reaches `RiskManager` — extending
+that hook is the planned Phase 2 move (see ROADMAP.md), not building a
+second one.
+
+```
+ContextGatedStrategy(Strategy)        Composes any existing Strategy
+  |  uses_context = True              ("inner") -- not a modification to
+  |                                    it. Only ENTER_LONG/ENTER_SHORT
+  v                                    signals from `inner` are ever
+inner: Strategy                        scored; every HOLD/EXIT (including
+scorer: ContextScorer                  a stop-management HOLD carrying
+threshold: float                       stop_loss, e.g. trend_pullback's
+                                        trailing-stop requests) passes
+                                        through untouched. warmup_bars/
+                                        on_start/on_stop all delegate to
+                                        `inner`.
+```
+
+`ContextScorer = Callable[[Signal, MarketContext], ContextScore]` — a
+scoring interface, not a bare allow/deny predicate, per this phase's own
+explicit design goal: `ContextScore` (`value: float` in `[0.0, 1.0]` +
+`reason: str`) lets a future confidence-weighted position-sizing phase
+reuse the identical interface (reading `ContextGatedStrategy.last_score`,
+populated every bar) without any shape change here. Phase 1 itself only
+ever produces binary `0.0`/`1.0` scores — "binary pass/fail rules for the
+experiments" was this phase's explicit scope — via a small composable rule
+library: `reject_if`/`require_if` (a `Callable[[MarketContext], bool]`
+predicate → veto or pass) and `all_of`/`any_of` (combinators using min/max
+of the composed scores' values, which generalizes correctly to a future
+non-binary scorer without either combinator's logic changing).
+
+Deliberately **not** surfaced through `Signal.metadata` — both the ML
+`signal_filter` and `research/features.py`'s ML feature extraction already
+read that dict for their own purposes, and adding new keys there risks
+silently changing what those systems see. `last_score` is a plain instance
+attribute instead, with zero effect on anything that inspects a `Signal`.
+
+Not registered with `StrategyRegistry` — a composition tool for
+research/backtesting (e.g. as the `strategy_factory` passed to
+`compare_context_impact`), not a config.yaml-selectable strategy. Verified
+as a drop-in `strategy_factory` for the existing, previously-unexercised
+`compare_context_impact` A/B framework with zero changes to that module.
+
+Zero modification to any of the four bundled strategies, `strategy/base.py`,
+or `engine.py`. **Not yet done, and not to be started without approval**:
+wrapping a real bundled strategy with an actual, pre-registered trading
+hypothesis (CLAUDE.md §8 requires explicit sign-off on this specific
+decision) — this phase built the reusable mechanism only. See ROADMAP.md's
+"Context → Strategy Phase 2" entry for the planned next step.
+
 ## Team Collaboration Platform (Active Work Registry MVP + SIL Phase 2 "Workflow Integration" + User Registration & Organization Management, all 2026-07-28)
 
 A layer alongside (not inside) the trading pipeline above -- it coordinates

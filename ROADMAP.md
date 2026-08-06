@@ -7,6 +7,12 @@ here, ask before assuming it matters.
 
 ## Current Priorities
 
+See `docs/ENGINEERING_REVIEW_2026-08.md` for the full whole-codebase
+architecture review this reprioritization is based on (strengths,
+technical debt, scalability concerns, and the ranked "next architectural
+leap" analysis) — the bullets below fold its verdict into this list rather
+than duplicate it.
+
 **Critical**
 - Importer reliability (turtle-data corruption in KNOWN_ISSUES.md
   ISSUE-001 resolved 2026-07-26 — see Completed; other import paths
@@ -14,11 +20,51 @@ here, ask before assuming it matters.
 - Startup reliability
 - Dependency management
 - Backend stability
+- **Close the Context → Strategy → Validation loop for real** (Engineering
+  Review 2026-08-05, Leverage #1) — **done as a mechanism, 2026-08-05: six
+  independent runs (all four bundled strategies, five context-gating
+  hypotheses, one 27-combination parameter sweep), zero validated edges.**
+  Same pipeline throughout (`ContextGatedStrategy` → `compare_context_impact`
+  → `research/safety.py::build_safety_report`), same shared harness
+  (`tools/context_experiment_lib.py`), same real MES 5-minute data
+  (~73,400 bars, ~13 months). Full results:
+  `docs/EXPERIMENT_TREND_PULLBACK_RISK_STATE.md` (rejected),
+  `docs/EXPERIMENT_TREND_PULLBACK_REGIME_ALIGNMENT.md` (inconclusive),
+  `docs/EXPERIMENT_SWEEP_2026-08-05.md` (ORB+liquidity — improved but still
+  flagged; vwap_reversion+volatility — rejected, and its attractive-looking
+  baseline profit factor is itself untrustworthy at only 20 trades;
+  ema_crossover+regime — sample collapsed, untestable, and its baseline is
+  the worst of the four strategies; trend_pullback parameter tuning — the
+  one result clearing profit-factor>1 in both splits turned out to be a
+  single-trade-dependent isolated spike in the grid).
+
+  **The mechanism is proven — it caught every case where a headline number
+  looked better than the evidence behind it, across six different failure
+  shapes.** The real, un-glamorous finding is one level up: none of the
+  four bundled reference strategies has a demonstrated edge on the real
+  data available today, with or without context-gating or tuning — exactly
+  what `config.yaml`'s own disclaimer already said, now actually checked.
+  **Not decided, and not this session's call to make**: whether to pursue
+  genuinely different strategy logic, wait for a longer/different data
+  window, or treat "research strategies with no proven edge yet" as this
+  platform's honest current state and move to a different `ROADMAP.md`
+  priority (auth, journal retention, etc.).
 
 **High**
 - Walk-forward testing
 - Monte Carlo
 - Parameter robustness
+- **Real authentication** (Engineering Review 2026-08-05, Leverage #2) —
+  bearer-token validation of the `api_key` every user already has
+  (`accounts/`, generated since 2026-07-28, checked against nothing);
+  server-side enforcement of `accounts/permissions.py`'s already-built
+  role→capability table instead of frontend-only advisory use. Already
+  named in this file's own Future section below as the smallest next step
+  given the primitive exists — elevated to High here because Team Mode's
+  wide-open CORS (`allow_origins=["*"]`) and zero-auth 139 endpoints were a
+  reasonable trade-off for one developer's laptop and stop being one the
+  moment a second real device joins the tailnet (still not live as of this
+  writing per CLAUDE.md §2A, but it's the stated goal).
 
 **Medium**
 - UX polish
@@ -30,15 +76,46 @@ here, ask before assuming it matters.
   unbounded (observed at 9.2 GB / 34.2M lines on this machine, KNOWN_ISSUES.md
   ISSUE-017). Reading it is now cheap regardless of size, but nothing stops
   it growing until it threatens disk space on a long-running deployment.
+  **Engineering Review 2026-08-05 (Leverage #3) recommends the specific
+  direction**: a TimescaleDB hypertable, reusing the team-deployment
+  Postgres investment already built rather than inventing a bespoke
+  rotation scheme — confirmed still fully unbounded on the write side as of
+  this review (`journal.py::_write`'s per-call bare append has no rotation
+  logic and no thread lock; only the ISSUE-017 reader-side fix landed).
 - Fix `frontend/src/format.ts::dateTime()` to correctly parse SQLite
   (local-mode) timestamps as UTC instead of local time (KNOWN_ISSUES.md
   ISSUE-021) — affects every page rendering a local-mode timestamp through
   this shared helper.
+- Verify `TradovateBroker` against a real Tradovate demo account
+  (Engineering Review 2026-08-05) — its own docstring states field names
+  are "believed correct but unverified," mocked-HTTP tests only, sitting at
+  the single highest-stakes code path in the system.
+- Split `api/services.py` (1,871 lines / 21 sections) and
+  `research/trade_store.py` (1,467 lines / ~65 methods across 12+ concerns)
+  into per-concern modules (Engineering Review 2026-08-05) — both are
+  genuine god-objects by responsibility count, and both are exactly the
+  kind of single-file concentration most likely to produce false-positive
+  `collaboration/overlap_v2.py` warnings between otherwise-unrelated work.
+- Give `api/jobs.py` a reaper for orphaned `running` rows after a process
+  restart (Engineering Review 2026-08-05) — job *state* persists to the
+  `jobs` table, but the in-memory `ThreadPoolExecutor` (4-worker cap) does
+  not survive a restart, so an interrupted job's row is stuck `running`
+  forever with nothing to clean it up.
 
 **Low**
 - New strategies
 - Fix `US80Z` genuine OHLC violations in raw source data
   (KNOWN_ISSUES.md ISSUE-005)
+
+**Explicitly not a priority right now** (Engineering Review 2026-08-05): a
+fourth SIL phase, a fifth background scheduler, or any new
+`collaboration/`-tooling milestone. `collaboration/`+`accounts/` (4,837
+backend lines + 1,552 frontend lines) is already within a few hundred lines
+of `research/`+`research_server/` combined (6,853 lines — the actual
+trading-research engine) and 2.4x the size of the entire strategy library
+(2,622 lines). The coordination layer has no further claim on the next unit
+of engineering effort until the Critical item above has actually produced a
+validated-or-rejected trading claim.
 
 ## Future Roadmap
 
@@ -220,6 +297,40 @@ Engine" section for the full rationale.
   ~35-46% (converging toward ~45%, matching the ~90%-duplicate-halved
   prediction). 6 new tests (1215 → 1221 total). No remaining blockers
   before the first context-aware strategy is built.
+- **Context → Strategy Phase 1 -- `ContextGatedStrategy` wrapper (done,
+  2026-08-04).** The first real consumer of `ContextMode.ENABLED`, over a
+  week after it was wired in with nothing reading it. Preceded by an
+  architecture review that deliberately rejected a heavier "Strategy
+  Orchestrator" as premature (no strategy has a validated edge yet to
+  orchestrate among; the existing `signal_filter` hook already does the
+  job a new layer would duplicate -- see `docs/ARCHITECTURE.md`'s "Market
+  Context Engine" section). `strategy/context_gate.py::ContextGatedStrategy`
+  composes any existing strategy with a pluggable `ContextScorer`
+  (`ContextScore`: `[0.0, 1.0]` + reason, not a bare allow/deny predicate,
+  so a future confidence-weighted sizing phase can reuse the interface
+  without an architecture change) that vetoes entry signals via a binary
+  0.0/1.0 rule this phase's own scope calls for (`reject_if`/`require_if`/
+  `all_of`/`any_of`). Zero modification to any bundled strategy,
+  `strategy/base.py`, or `engine.py`. 26 new tests. **Not yet done, needs
+  explicit approval before starting**: wrapping a real strategy with an
+  actual, pre-registered trading hypothesis -- this phase built the
+  mechanism only.
+- **Context → Strategy Phase 2 (not started, needs a strategy + hypothesis
+  first).** Pick one bundled strategy and a falsifiable hypothesis for how
+  `MarketContext`/`EnvironmentScore` should change its entries (e.g. "veto
+  `trend_pullback` entries when `RiskState.HIGH`"), validate via
+  `backtest/context_comparison.py::compare_context_impact` (built
+  2026-07-27, exercised by Phase 1's tests but never on a real hypothesis)
+  and `research/safety.py::build_safety_report`, same skeptical scrutiny
+  any parameter change gets. Only after this produces real evidence should
+  confidence-based entry veto move from experimental (`ContextGatedStrategy`
+  used standalone) into `TradingEngine.signal_filter` for real (composed
+  alongside the existing ML filter, not a second filter parameter).
+  Confidence-weighted position *sizing* is a further-out, larger step --
+  touches the protected `engine.py` and interacts with
+  `RiskManager.can_enter`'s daily-loss projection (which assumes one fixed
+  dollar-risk-per-trade figure) -- explicit approval required, not to be
+  bundled into Phase 2.
 
 ## Completed
 
