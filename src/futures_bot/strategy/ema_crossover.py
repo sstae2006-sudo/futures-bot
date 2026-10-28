@@ -4,7 +4,7 @@ from typing import Optional, Sequence
 
 from ..models import Bar, Position, Side, Signal
 from .base import Strategy, StrategyRegistry
-from .indicators import IncrementalEMA
+from .indicators import ema_series, atr_series
 
 
 @StrategyRegistry.register("ema_crossover")
@@ -45,42 +45,32 @@ class EmaCrossover(Strategy):
 
         self.warmup_bars = trend_period + 5
 
-        # Incremental EMA state -- updated one bar at a time instead of
-        # rescanning the full close history on every call (see
-        # `IncrementalEMA`'s docstring). `_trend_ema` keeps a 5-value
-        # lookback because `trend_rising`/`trend_falling` compare against
-        # the value from 5 bars ago, not just the previous one.
-        self._fast_ema = IncrementalEMA(fast_period, history=2)
-        self._slow_ema = IncrementalEMA(slow_period, history=2)
-        self._trend_ema = IncrementalEMA(trend_period, history=5)
-
     def on_bar(
         self,
         bars: Sequence[Bar],
         position: Optional[Position],
     ) -> Signal:
-        # Fed every bar, warmup or not -- these are recurrences that need to
-        # see the whole history from bar zero to stay in sync with the batch
-        # `ema_series` equivalent.
-        self._fast_ema.update(bars[-1].close)
-        self._slow_ema.update(bars[-1].close)
-        self._trend_ema.update(bars[-1].close)
 
         if len(bars) < self.warmup_bars:
             return self.hold(
                 f"Warming up ({len(bars)}/{self.warmup_bars})"
             )
 
-        fast_now = self._fast_ema.lookback(1)
-        fast_prev = self._fast_ema.lookback(2)
+        closes = [bar.close for bar in bars]
 
-        slow_now = self._slow_ema.lookback(1)
-        slow_prev = self._slow_ema.lookback(2)
+        fast = ema_series(closes, self.fast_period)
+        slow = ema_series(closes, self.slow_period)
+        trend = ema_series(closes, self.trend_period)
 
-        trend_now = self._trend_ema.lookback(1)
-        trend_then = self._trend_ema.lookback(5)
+        fast_now = fast[-1]
+        fast_prev = fast[-2]
 
-        price = bars[-1].close
+        slow_now = slow[-1]
+        slow_prev = slow[-2]
+
+        trend_now = trend[-1]
+
+        price = closes[-1]
 
         crossed_up = (
             fast_prev <= slow_prev
@@ -95,8 +85,8 @@ class EmaCrossover(Strategy):
         bullish_trend = price > trend_now
         bearish_trend = price < trend_now
 
-        trend_rising = trend_now > trend_then
-        trend_falling = trend_now < trend_then
+        trend_rising = trend[-1] > trend[-5]
+        trend_falling = trend[-1] < trend[-5]
 
         ema_distance = abs(fast_now - slow_now)
 

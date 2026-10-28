@@ -13,6 +13,7 @@ from futures_bot.contracts import CME_TZ, MES
 from futures_bot.models import Bar
 from futures_bot.research.optimizer import (
     OptimizationResult,
+    _combo_key,
     expand_param_grid,
     format_optimization_report,
     run_optimization,
@@ -246,6 +247,166 @@ class TestExhaustiveParallelResumableSearch:
         # (both already asserted above) -- not a specific tie-breaking
         # order neither this test nor `run_optimization` ever promised.
         assert score_by_net_pnl(sequential.best.train_metrics) == score_by_net_pnl(parallel.best.train_metrics)
+
+
+class TestProvenanceAndDsrWiring:
+    """Professional-research-pipeline plan Phase 1a/1c/1d: dataset_version/
+    git_commit provenance, per-trial pnl_stdev/skew/kurtosis, the trial-
+    inflation counter, and the winning trial's Deflated Sharpe Ratio --
+    all wired through `run_optimization` end to end against a real store."""
+
+    GRID = {"fast_period": [3, 5], "slow_period": [15, 25]}
+
+    def test_dataset_version_and_git_commit_are_persisted(self, tmp_path):
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        store = TradeStore(tmp_path / "trials.db")
+
+        run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2,
+            assess_commission_sensitivity=False, store=store, batch_id="prov-test", resolution="1min",
+        )
+
+        rows = store.fetch_optimization_trials("prov-test")
+        assert rows
+        assert all(r["dataset_version"] is not None for r in rows)
+        # Every trial in one call shares the same fingerprint -- same bars, same contract.
+        assert len({r["dataset_version"] for r in rows}) == 1
+        store.close()
+
+    def test_omitting_store_never_computes_provenance(self, tmp_path):
+        """No store -> no git subprocess call, no dataset fingerprinting --
+        confirmed indirectly via successful, unaffected completion."""
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        result = run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2, assess_commission_sensitivity=False,
+        )
+        assert result.combos_tried == 4
+
+    def test_train_pnl_moments_are_persisted_for_every_trial(self, tmp_path, monkeypatch):
+        """`ema_crossover` over synthetic choppy bars genuinely produces
+        zero trades under this settings/grid combination (confirmed
+        directly -- every other test in this file that cares about trade
+        counts monkeypatches for the same reason, see
+        `_fake_metrics_with_trade_count`/`TestMinTradesRankingFloor`), so
+        `_evaluate_combo` is patched here to guarantee a real, >=2-trade
+        sample deterministically rather than hoping a bars/strategy pairing
+        happens to produce one."""
+        import futures_bot.research.optimizer as optimizer_module
+
+        monkeypatch.setattr(
+            optimizer_module, "_evaluate_combo",
+            lambda strategy_name, params, settings, train_bars: _fake_metrics_with_trade_count(10),
+        )
+
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        store = TradeStore(tmp_path / "trials.db")
+
+        run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2,
+            assess_commission_sensitivity=False, store=store, batch_id="moments-test", max_workers=1,
+        )
+
+        rows = store.fetch_optimization_trials("moments-test")
+        assert rows
+        assert all(r["train_pnl_stdev"] is not None for r in rows)
+        store.close()
+
+    def test_validation_pnl_moments_are_persisted_for_validated_trials(self, tmp_path, monkeypatch):
+        import futures_bot.research.optimizer as optimizer_module
+
+        monkeypatch.setattr(
+            optimizer_module, "_evaluate_combo",
+            lambda strategy_name, params, settings, train_bars: _fake_metrics_with_trade_count(10),
+        )
+        monkeypatch.setattr(
+            optimizer_module, "run_backtest",
+            lambda settings, strategy, bars, *a, **kw: _fake_metrics_with_trade_count(10),
+        )
+
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        store = TradeStore(tmp_path / "trials.db")
+
+        result = run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2,
+            assess_commission_sensitivity=False, store=store, batch_id="val-moments-test", max_workers=1,
+        )
+
+        rows = {r["combo_key"]: r for r in store.fetch_optimization_trials("val-moments-test")}
+        validated_keys = {_combo_key(t.params) for t in result.ranked_trials if t.validation_metrics is not None}
+        assert validated_keys
+        for key in validated_keys:
+            assert rows[key]["validation_pnl_stdev"] is not None
+        store.close()
+
+    def test_trial_inflation_finding_appears_once_the_count_is_high_enough(self, tmp_path):
+        """Runs the same (strategy, dataset) grid across enough separate
+        batches to cross TRIAL_INFLATION_WARNING_COUNT, then confirms the
+        next batch's safety report actually reflects the accumulated count."""
+        from futures_bot.research.safety import TRIAL_INFLATION_WARNING_COUNT
+
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        store = TradeStore(tmp_path / "trials.db")
+        one_combo_grid = {"fast_period": [3], "slow_period": [15]}
+
+        # Each call with a distinct batch_id but identical bars/contract
+        # persists 1 trial against the same dataset_version.
+        result = None
+        for i in range(TRIAL_INFLATION_WARNING_COUNT + 1):
+            result = run_optimization(
+                settings, "ema_crossover", one_combo_grid, bars,
+                assess_commission_sensitivity=False, store=store, batch_id=f"inflation-{i}", resolution="1min",
+            )
+
+        assert result is not None and result.safety is not None
+        assert any("trial" in r.lower() for r in result.safety.reasons)
+        store.close()
+
+    def test_dataset_usage_ledger_records_train_and_validation_ranges(self, tmp_path):
+        """Professional-research-pipeline plan Phase 3: run_optimization
+        must record both slices' ranges in the hold-out ledger, once per
+        call, regardless of how many combos are tried against them."""
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        store = TradeStore(tmp_path / "trials.db")
+
+        run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2,
+            assess_commission_sensitivity=False, store=store, batch_id="ledger-test", resolution="1min",
+        )
+
+        rows = store.fetch_dataset_usage("MES", "1min")
+        purposes = {r["purpose"] for r in rows}
+        assert purposes == {"optimizer", "validation"}
+        train_row = next(r for r in rows if r["purpose"] == "optimizer")
+        assert train_row["strategy"] == "ema_crossover"
+        assert train_row["run_id_or_batch_id"] == "ledger-test"
+        store.close()
+
+    def test_dataset_usage_ledger_recorded_once_per_call_not_per_combo(self, tmp_path):
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        store = TradeStore(tmp_path / "trials.db")
+
+        run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2,
+            assess_commission_sensitivity=False, store=store, batch_id="ledger-once-test", resolution="1min",
+        )
+
+        rows = store.fetch_dataset_usage("MES", "1min")
+        assert len(rows) == 2  # exactly one train + one validation row, not one per combo
+
+    def test_omitting_store_does_not_touch_the_ledger(self, tmp_path):
+        settings = make_settings(logging={"directory": tmp_path, "level": "WARNING"})
+        bars = make_choppy_bars(400)
+        result = run_optimization(
+            settings, "ema_crossover", self.GRID, bars, top_n=2, assess_commission_sensitivity=False,
+        )
+        assert result.combos_tried == 4  # completes fine with no store to write to
 
 
 class TestRunOptimization:

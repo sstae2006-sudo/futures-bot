@@ -79,6 +79,145 @@ class TestSharpeSortino:
         assert m_outlier.sortino_ratio > 0
 
 
+class TestDailyReturns:
+    """`BacktestMetrics.daily_returns()` -- professional-research-pipeline
+    plan Phase 1b. Net P&L bucketed by CME session date, not per-trade."""
+
+    def test_empty_with_no_trades(self):
+        assert BacktestMetrics(trades=[]).daily_returns() == []
+
+    def test_multiple_trades_same_day_sum_into_one_bucket(self):
+        m = BacktestMetrics(trades=[
+            trade(Decimal("10"), ct(2026, 7, 21, 9)),
+            trade(Decimal("-4"), ct(2026, 7, 21, 11)),
+            trade(Decimal("6"), ct(2026, 7, 21, 13)),
+        ])
+        assert m.daily_returns() == [Decimal("12")]
+
+    def test_trades_across_multiple_days_produce_ordered_buckets(self):
+        m = BacktestMetrics(trades=[
+            trade(Decimal("10"), ct(2026, 7, 21)),
+            trade(Decimal("-5"), ct(2026, 7, 22)),
+            trade(Decimal("3"), ct(2026, 7, 23)),
+        ])
+        assert m.daily_returns() == [Decimal("10"), Decimal("-5"), Decimal("3")]
+
+    def test_a_fill_after_session_close_rolls_to_the_next_session_date(self):
+        """A trade entered at 18:00 CT (after the 17:00 CT session open)
+        belongs to the next CME trade date -- see contracts.session_date."""
+        from futures_bot.contracts import session_date
+
+        late_entry = ct(2026, 7, 21, 18)
+        early_next_day = ct(2026, 7, 22, 9)
+        m = BacktestMetrics(trades=[trade(Decimal("10"), late_entry), trade(Decimal("5"), early_next_day)])
+        assert session_date(late_entry) == session_date(early_next_day)
+        assert m.daily_returns() == [Decimal("15")]  # both fall in the same session bucket
+
+
+class TestAnnualizedSharpe:
+    """`BacktestMetrics.annualized_sharpe_ratio` -- distinct from the
+    existing, deliberately un-annualized `sharpe_ratio`."""
+
+    def test_none_with_fewer_than_two_trading_days(self):
+        m = BacktestMetrics(trades=[trade(Decimal("10"), ct(2026, 7, 21))])
+        assert m.annualized_sharpe_ratio is None
+
+    def test_none_with_no_trades(self):
+        assert BacktestMetrics(trades=[]).annualized_sharpe_ratio is None
+
+    def test_positive_for_consistently_profitable_days(self):
+        m = BacktestMetrics(trades=[
+            trade(Decimal("10"), ct(2026, 7, 21)),
+            trade(Decimal("12"), ct(2026, 7, 22)),
+            trade(Decimal("9"), ct(2026, 7, 23)),
+            trade(Decimal("11"), ct(2026, 7, 24)),
+        ])
+        assert m.annualized_sharpe_ratio > 0
+
+    def test_negative_for_consistently_losing_days(self):
+        m = BacktestMetrics(trades=[
+            trade(Decimal("-10"), ct(2026, 7, 21)),
+            trade(Decimal("-12"), ct(2026, 7, 22)),
+            trade(Decimal("-9"), ct(2026, 7, 23)),
+        ])
+        assert m.annualized_sharpe_ratio < 0
+
+    def test_is_the_daily_sharpe_scaled_by_sqrt_trading_days_per_year(self):
+        m = BacktestMetrics(trades=[
+            trade(Decimal("10"), ct(2026, 7, 21)),
+            trade(Decimal("12"), ct(2026, 7, 22)),
+            trade(Decimal("9"), ct(2026, 7, 23)),
+            trade(Decimal("11"), ct(2026, 7, 24)),
+        ])
+        returns = m.daily_returns()
+        mean = sum(returns) / Decimal(len(returns))
+        sd = BacktestMetrics._stdev(returns)
+        expected = (mean / sd) * Decimal(BacktestMetrics.TRADING_DAYS_PER_YEAR).sqrt()
+        assert m.annualized_sharpe_ratio == expected
+
+    def test_is_a_distinct_metric_from_the_unannualized_sharpe_ratio(self):
+        """Same trades, one per day -- daily_returns() and _trade_returns()
+        coincide numerically here, so annualized_sharpe_ratio must differ
+        from sharpe_ratio by (approximately) the sqrt(252) scaling factor,
+        not be silently identical to it."""
+        m = BacktestMetrics(trades=[
+            trade(Decimal("10"), ct(2026, 7, 21)),
+            trade(Decimal("12"), ct(2026, 7, 22)),
+            trade(Decimal("9"), ct(2026, 7, 23)),
+        ])
+        assert m.sharpe_ratio != m.annualized_sharpe_ratio
+        ratio = m.annualized_sharpe_ratio / m.sharpe_ratio
+        assert ratio == Decimal(BacktestMetrics.TRADING_DAYS_PER_YEAR).sqrt()
+
+
+class TestPnlDistributionMoments:
+    """`pnl_stdev`/`pnl_skew`/`pnl_kurtosis` -- professional-research-
+    pipeline plan Phase 1c inputs for `research/dsr.py`. Hand-computed
+    against pnls = [1, 2, 3, 4, 5] (mean=3, population m2=2, m3=0, m4=6.8),
+    a symmetric series with an exact, checkable answer."""
+
+    def _symmetric_metrics(self) -> BacktestMetrics:
+        return BacktestMetrics(trades=[
+            trade(Decimal(p), ct(2026, 7, 20 + i)) for i, p in enumerate([1, 2, 3, 4, 5])
+        ])
+
+    def test_none_with_fewer_than_two_trades(self):
+        m = BacktestMetrics(trades=[trade(Decimal("10"), ct(2026, 7, 21))])
+        assert m.pnl_stdev is None
+        assert m.pnl_skew is None
+        assert m.pnl_kurtosis is None
+
+    def test_pnl_stdev_is_the_sample_stdev(self):
+        m = self._symmetric_metrics()
+        # variance = sum((v-mean)^2)/(n-1) = 10/4 = 2.5
+        assert m.pnl_stdev == Decimal("2.5").sqrt()
+
+    def test_pnl_skew_is_zero_for_a_symmetric_series(self):
+        m = self._symmetric_metrics()
+        assert m.pnl_skew == Decimal("0")
+
+    def test_pnl_kurtosis_matches_the_hand_computed_value(self):
+        m = self._symmetric_metrics()
+        # m2=2, m4=6.8 -> kurtosis_excess = 6.8/4 - 3 = -1.3
+        assert m.pnl_kurtosis == Decimal("-1.3")
+
+    def test_positive_skew_for_a_right_skewed_series(self):
+        # A long flat run of small losses with one huge winner.
+        pnls = [-1, -1, -1, -1, -1, -1, -1, -1, -1, 20]
+        m = BacktestMetrics(trades=[trade(Decimal(p), ct(2026, 7, 20 + i)) for i, p in enumerate(pnls)])
+        assert m.pnl_skew > 0
+
+    def test_negative_skew_for_a_left_skewed_series(self):
+        pnls = [1, 1, 1, 1, 1, 1, 1, 1, 1, -20]
+        m = BacktestMetrics(trades=[trade(Decimal(p), ct(2026, 7, 20 + i)) for i, p in enumerate(pnls)])
+        assert m.pnl_skew < 0
+
+    def test_zero_variance_returns_none(self):
+        m = BacktestMetrics(trades=[trade(Decimal("5"), ct(2026, 7, 21)), trade(Decimal("5"), ct(2026, 7, 22))])
+        assert m.pnl_skew is None
+        assert m.pnl_kurtosis is None
+
+
 class TestRMultiples:
     def test_r_multiple_is_pnl_over_risk(self):
         m = BacktestMetrics(trades=[trade(Decimal("100"), ct(2026, 7, 21))])

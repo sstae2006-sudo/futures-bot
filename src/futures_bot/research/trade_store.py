@@ -31,6 +31,7 @@ import json
 import os
 import sqlite3
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional, Sequence
@@ -346,6 +347,29 @@ CREATE TABLE IF NOT EXISTS config_deployments (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_config_deployments_strategy ON config_deployments(strategy, created_at);
+
+-- Professional-research-pipeline plan Phase 3 (2026-08-06): the hold-out/
+-- data-snooping ledger -- every bar range a backtest/optimizer run has
+-- ever touched, so `research.holdout.protected_range` can tell Phase 4's
+-- wider strategy search which slice of a dataset has genuinely never been
+-- looked at yet. Append-only (no update/delete path -- a range, once used,
+-- stays used forever), populated from `first_bar`/`last_bar`/split-boundary
+-- values `api/services.py::_persist_completed_run` and
+-- `research/optimizer.py::run_optimization` already compute internally --
+-- one new insert alongside each module's existing `insert_run`/
+-- `insert_optimization_trial` call, no new range-tracking logic of its own.
+CREATE TABLE IF NOT EXISTS dataset_usage (
+    id                TEXT PRIMARY KEY,
+    product_code      TEXT NOT NULL,
+    resolution        TEXT NOT NULL,
+    start_ts          TEXT NOT NULL,
+    end_ts            TEXT NOT NULL,
+    purpose           TEXT NOT NULL,   -- 'train' | 'validation' | 'optimizer' | 'exploratory'
+    strategy          TEXT,
+    run_id_or_batch_id TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dataset_usage_product_resolution ON dataset_usage(product_code, resolution);
 """
 
 
@@ -413,6 +437,22 @@ class TradeStore:
         ("train_largest_win", "TEXT"),
     )
 
+    #: Professional-research-pipeline plan, Phase 1a/1c/1d (2026-08-06):
+    #: provenance (`dataset_version`/`git_commit`, see `provenance.py`) and
+    #: the per-trial return-distribution stats Phase 1c's Deflated/
+    #: Probabilistic Sharpe Ratio needs (`research/dsr.py`, not yet built as
+    #: of this migration -- these columns are added now, alongside the
+    #: provenance columns, so this table only needs one schema migration
+    #: instead of two; they stay NULL for every trial until Phase 1c's
+    #: computation is wired into `optimizer.run_optimization`). Same
+    #: "ALTER TABLE if missing" migration as `_TRIAL_RESUME_COLUMNS` above;
+    #: all nullable, so every existing row reads back with these as None.
+    _TRIAL_PROVENANCE_COLUMNS = (
+        ("dataset_version", "TEXT"), ("git_commit", "TEXT"),
+        ("train_pnl_stdev", "TEXT"), ("train_pnl_skew", "TEXT"), ("train_pnl_kurtosis", "TEXT"),
+        ("validation_pnl_stdev", "TEXT"), ("validation_pnl_skew", "TEXT"), ("validation_pnl_kurtosis", "TEXT"),
+    )
+
     #: Phase 9: links an experiment to the model it tested, the dataset
     #: version that model was trained against, and a snapshot of its
     #: headline metrics -- so two experiments can be compared side-by-side
@@ -438,6 +478,9 @@ class TradeStore:
         self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_trade_id ON trades(trade_id)")
         existing_trial_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(optimization_trials)")}
         for name, sqltype in self._TRIAL_RESUME_COLUMNS:
+            if name not in existing_trial_columns:
+                self._conn.execute(f"ALTER TABLE optimization_trials ADD COLUMN {name} {sqltype}")
+        for name, sqltype in self._TRIAL_PROVENANCE_COLUMNS:
             if name not in existing_trial_columns:
                 self._conn.execute(f"ALTER TABLE optimization_trials ADD COLUMN {name} {sqltype}")
         existing_experiment_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(experiments)")}
@@ -607,13 +650,30 @@ class TradeStore:
         validation_profit_factor: Optional[Decimal] = None,
         validation_max_drawdown: Optional[Decimal] = None,
         rank: Optional[int] = None,
+        dataset_version: Optional[str] = None,
+        git_commit: Optional[str] = None,
+        train_pnl_stdev: Optional[Decimal] = None,
+        train_pnl_skew: Optional[Decimal] = None,
+        train_pnl_kurtosis: Optional[Decimal] = None,
+        validation_pnl_stdev: Optional[Decimal] = None,
+        validation_pnl_skew: Optional[Decimal] = None,
+        validation_pnl_kurtosis: Optional[Decimal] = None,
     ) -> None:
         """``OR IGNORE``: a second insert for a ``(batch_id, combo_key)``
         pair that's already there is a silent no-op, not an error --
         defense in depth for a resumed run, which already avoids
         re-submitting a cached combo in the first place (see
         `optimizer.run_optimization`), but must not corrupt the batch if
-        something ever does submit it twice."""
+        something ever does submit it twice.
+
+        ``dataset_version``/``git_commit`` (see `provenance.py`) and the
+        ``*_pnl_stdev``/``*_pnl_skew``/``*_pnl_kurtosis`` return-distribution
+        stats (Phase 1c's Deflated/Probabilistic Sharpe Ratio input) all
+        default to ``None`` -- every existing caller that doesn't pass them
+        is unaffected, and the stats columns stay NULL until
+        `research/dsr.py` exists and `optimizer.run_optimization` is wired
+        to compute them.
+        """
         combo_key = json.dumps(_jsonable(params), sort_keys=True)
         self._conn.execute(
             """
@@ -622,8 +682,10 @@ class TradeStore:
                 train_trades, train_net_pnl, train_profit_factor, train_max_drawdown,
                 train_gross_losses, train_win_count, train_largest_win,
                 validation_trades, validation_net_pnl, validation_profit_factor, validation_max_drawdown,
-                rank
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                rank, dataset_version, git_commit,
+                train_pnl_stdev, train_pnl_skew, train_pnl_kurtosis,
+                validation_pnl_stdev, validation_pnl_skew, validation_pnl_kurtosis
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 batch_id, strategy, combo_key, combo_key,
@@ -637,7 +699,13 @@ class TradeStore:
                 str(validation_net_pnl) if validation_net_pnl is not None else None,
                 str(validation_profit_factor) if validation_profit_factor is not None else None,
                 str(validation_max_drawdown) if validation_max_drawdown is not None else None,
-                rank,
+                rank, dataset_version, git_commit,
+                str(train_pnl_stdev) if train_pnl_stdev is not None else None,
+                str(train_pnl_skew) if train_pnl_skew is not None else None,
+                str(train_pnl_kurtosis) if train_pnl_kurtosis is not None else None,
+                str(validation_pnl_stdev) if validation_pnl_stdev is not None else None,
+                str(validation_pnl_skew) if validation_pnl_skew is not None else None,
+                str(validation_pnl_kurtosis) if validation_pnl_kurtosis is not None else None,
             ),
         )
         self._conn.commit()
@@ -652,18 +720,27 @@ class TradeStore:
         validation_profit_factor: Optional[Decimal],
         validation_max_drawdown: Optional[Decimal],
         rank: Optional[int],
+        validation_pnl_stdev: Optional[Decimal] = None,
+        validation_pnl_skew: Optional[Decimal] = None,
+        validation_pnl_kurtosis: Optional[Decimal] = None,
     ) -> None:
         """The second (validation) pass targets the row the first
         (training) pass already wrote, instead of inserting a duplicate --
         this is what lets training results be saved continuously (one
         `insert_optimization_trial` per combo, immediately) while
         validation/ranking still only happens once, at the end, for the
-        top N."""
+        top N.
+
+        ``validation_pnl_stdev``/``skew``/``kurtosis`` (professional-
+        research-pipeline plan Phase 1c) default to ``None``: every
+        existing caller that doesn't pass them is unaffected.
+        """
         self._conn.execute(
             """
             UPDATE optimization_trials
             SET validation_trades = ?, validation_net_pnl = ?,
-                validation_profit_factor = ?, validation_max_drawdown = ?, rank = ?
+                validation_profit_factor = ?, validation_max_drawdown = ?, rank = ?,
+                validation_pnl_stdev = ?, validation_pnl_skew = ?, validation_pnl_kurtosis = ?
             WHERE batch_id = ? AND combo_key = ?
             """,
             (
@@ -671,7 +748,11 @@ class TradeStore:
                 str(validation_net_pnl) if validation_net_pnl is not None else None,
                 str(validation_profit_factor) if validation_profit_factor is not None else None,
                 str(validation_max_drawdown) if validation_max_drawdown is not None else None,
-                rank, batch_id, combo_key,
+                rank,
+                str(validation_pnl_stdev) if validation_pnl_stdev is not None else None,
+                str(validation_pnl_skew) if validation_pnl_skew is not None else None,
+                str(validation_pnl_kurtosis) if validation_pnl_kurtosis is not None else None,
+                batch_id, combo_key,
             ),
         )
         self._conn.commit()
@@ -723,6 +804,34 @@ class TradeStore:
             d["validation_max_drawdown"] = _decimal_or_none(d["validation_max_drawdown"])
             out.append(d)
         return out
+
+    def count_prior_trials(self, strategy: str, dataset_version: Optional[str]) -> int:
+        """How many `optimization_trials` rows already exist for this exact
+        ``(strategy, dataset_version)`` pair -- the input
+        `research.safety.check_trial_inflation` (professional-research-
+        pipeline plan Phase 1a) needs to warn when a new result is the
+        Nth attempt against the same data, not the first.
+
+        ``dataset_version`` is the `provenance.bars_dataset_version`
+        fingerprint (see `optimizer.run_optimization`); ``None`` matches
+        every pre-Phase-1a row (written before that column existed) --
+        deliberately still counted, since those rows really were trials
+        against *some* dataset for this strategy, just one this function
+        can no longer distinguish by dataset.
+
+        Deliberately does **not** also count `runs` (ad hoc single
+        backtests, outside an optimizer sweep) -- that table has no
+        `dataset_version` column, and adding one is a separate schema
+        decision this method's own migration didn't request approval for.
+        A strategy tested only via ad hoc backtests, never through
+        `run_optimization`, currently always counts as 0 prior trials
+        here regardless of how many times it was actually run by hand.
+        """
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM optimization_trials WHERE strategy = ? AND dataset_version IS ?",
+            (strategy, dataset_version),
+        ).fetchone()
+        return row[0] if row else 0
 
     # --- Runs (Phase 6A research API) ---
 
@@ -1404,6 +1513,46 @@ class TradeStore:
             d["warnings"] = json.loads(d["warnings"]) if d.get("warnings") else []
             out.append(d)
         return out
+
+    # --- Dataset usage (hold-out ledger, professional-research-pipeline plan Phase 3) ---
+
+    def insert_dataset_usage(
+        self, *, product_code: str, resolution: str, start_ts: datetime, end_ts: datetime, purpose: str,
+        strategy: Optional[str] = None, run_id_or_batch_id: Optional[str] = None,
+    ) -> None:
+        """Records that ``[start_ts, end_ts]`` of ``(product_code,
+        resolution)`` was used for ``purpose`` -- append-only, no update/
+        delete path: a range, once used, stays used forever, which is the
+        entire point of a hold-out ledger. Callers (`api/services.py`'s
+        `_persist_completed_run`, `research/optimizer.py::run_optimization`)
+        already compute ``start_ts``/``end_ts`` from a slice's own
+        ``first_bar``/``last_bar`` (or a `split_bars` boundary) for their
+        own purposes -- this is one new insert alongside their existing
+        `insert_run`/`insert_optimization_trial` call, not new
+        range-tracking logic.
+        """
+        self._conn.execute(
+            "INSERT INTO dataset_usage (id, product_code, resolution, start_ts, end_ts, purpose, "
+            "strategy, run_id_or_batch_id) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                uuid.uuid4().hex, product_code, resolution, start_ts.isoformat(), end_ts.isoformat(), purpose,
+                strategy, run_id_or_batch_id,
+            ),
+        )
+        self._conn.commit()
+
+    def fetch_dataset_usage(self, product_code: str, resolution: str) -> list[dict]:
+        """Every recorded range for ``(product_code, resolution)``, in no
+        particular guaranteed order -- `research.holdout.protected_range`
+        is the caller that imposes meaning on these rows."""
+        self._conn.row_factory = sqlite3.Row
+        cur = self._conn.execute(
+            "SELECT * FROM dataset_usage WHERE product_code = ? AND resolution = ?",
+            (product_code, resolution),
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+        self._conn.row_factory = None
+        return rows
 
 
 def _decode_job(d: dict) -> dict:

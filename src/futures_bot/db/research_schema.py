@@ -129,6 +129,20 @@ optimization_trials = Table(
     Column("validation_profit_factor", Numeric),
     Column("validation_max_drawdown", Numeric),
     Column("rank", Integer),
+    # Professional-research-pipeline plan, Phase 1a/1c/1d (2026-08-06):
+    # provenance (see `provenance.py`) and the per-trial return-distribution
+    # stats Phase 1c's Deflated/Probabilistic Sharpe Ratio needs
+    # (`research/dsr.py`, not yet built as of this migration -- these stay
+    # NULL until `optimizer.run_optimization` computes and passes them).
+    # Mirrors `research/trade_store.py`'s `_TRIAL_PROVENANCE_COLUMNS`.
+    Column("dataset_version", String),
+    Column("git_commit", String),
+    Column("train_pnl_stdev", Numeric),
+    Column("train_pnl_skew", Numeric),
+    Column("train_pnl_kurtosis", Numeric),
+    Column("validation_pnl_stdev", Numeric),
+    Column("validation_pnl_skew", Numeric),
+    Column("validation_pnl_kurtosis", Numeric),
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Index("idx_trials_batch_id", "batch_id"),
     UniqueConstraint("batch_id", "combo_key", name="uq_trials_batch_combo"),
@@ -347,6 +361,25 @@ config_deployments = Table(
     Column("backup_path", String),
     Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
     Index("idx_config_deployments_strategy", "strategy", "created_at"),
+)
+
+# Professional-research-pipeline plan Phase 3 (2026-08-06): the hold-out/
+# data-snooping ledger. Append-only (no update/delete path anywhere in this
+# codebase for this table) -- see research/trade_store.py's matching SQLite
+# `dataset_usage` table comment for the full rationale.
+dataset_usage = Table(
+    "dataset_usage",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("product_code", String, nullable=False),
+    Column("resolution", String, nullable=False),
+    Column("start_ts", _TSTZ, nullable=False),
+    Column("end_ts", _TSTZ, nullable=False),
+    Column("purpose", String, nullable=False),
+    Column("strategy", String),
+    Column("run_id_or_batch_id", String),
+    Column("created_at", _TSTZ, nullable=False, server_default=func.now()),
+    Index("idx_dataset_usage_product_resolution", "product_code", "resolution"),
 )
 
 # --- Lightweight user/organization accounts (Team Collaboration MVP) ---

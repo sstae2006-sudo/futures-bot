@@ -166,6 +166,134 @@ class TestOptimizationTrials:
             assert len(store.fetch_optimization_trials("batch-b")) == 1
 
 
+class TestOptimizationTrialsProvenanceColumns:
+    """Professional-research-pipeline plan, Phase 1a/1c/1d (2026-08-06):
+    dataset_version/git_commit (see `provenance.py`) and the Phase 1c
+    return-distribution stats, added to `optimization_trials` via an
+    ALTER TABLE migration in `ensure_schema` since the table already
+    existed. All nullable -- a trial persisted without this data reads
+    back as None, not a crash."""
+
+    def test_provenance_fields_round_trip(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            store.insert_optimization_trial(
+                batch_id="batch-1", strategy="trend_pullback", params={},
+                train_trades=10, train_net_pnl=Decimal("100"), train_profit_factor=Decimal("1.5"),
+                train_max_drawdown=Decimal("20"),
+                dataset_version="abc123", git_commit="deadbeef",
+                train_pnl_stdev=Decimal("12.5"), train_pnl_skew=Decimal("0.3"),
+                train_pnl_kurtosis=Decimal("2.1"),
+                validation_pnl_stdev=Decimal("9.1"), validation_pnl_skew=Decimal("-0.1"),
+                validation_pnl_kurtosis=Decimal("1.8"),
+            )
+            trial = store.fetch_optimization_trials("batch-1")[0]
+        assert trial["dataset_version"] == "abc123"
+        assert trial["git_commit"] == "deadbeef"
+        assert trial["train_pnl_stdev"] == "12.5"
+        assert trial["train_pnl_skew"] == "0.3"
+        assert trial["train_pnl_kurtosis"] == "2.1"
+        assert trial["validation_pnl_stdev"] == "9.1"
+        assert trial["validation_pnl_skew"] == "-0.1"
+        assert trial["validation_pnl_kurtosis"] == "1.8"
+
+    def test_missing_provenance_fields_are_none(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            store.insert_optimization_trial(
+                batch_id="batch-1", strategy="trend_pullback", params={},
+                train_trades=10, train_net_pnl=Decimal("100"), train_profit_factor=Decimal("1.5"),
+                train_max_drawdown=Decimal("20"),
+            )
+            trial = store.fetch_optimization_trials("batch-1")[0]
+        assert trial["dataset_version"] is None
+        assert trial["git_commit"] is None
+        assert trial["train_pnl_stdev"] is None
+        assert trial["validation_pnl_kurtosis"] is None
+
+    def test_migration_adds_columns_to_a_pre_provenance_database(self, tmp_path):
+        """Simulates a database created before these columns existed --
+        insert a trial with the pre-migration schema (no ALTER yet), then
+        reopen with the current TradeStore and confirm the migration runs
+        cleanly and old rows read back with None for the new columns."""
+        db_path = tmp_path / "old.db"
+        conn = sqlite3.connect(db_path)
+        old_schema = (
+            "CREATE TABLE optimization_trials ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT NOT NULL, strategy TEXT NOT NULL, "
+            "params TEXT NOT NULL, combo_key TEXT, "
+            "train_trades INTEGER NOT NULL, train_net_pnl TEXT NOT NULL, train_profit_factor TEXT, "
+            "train_max_drawdown TEXT NOT NULL, train_gross_losses TEXT, train_win_count INTEGER, "
+            "train_largest_win TEXT, "
+            "validation_trades INTEGER, validation_net_pnl TEXT, validation_profit_factor TEXT, "
+            "validation_max_drawdown TEXT, rank INTEGER, "
+            "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ");"
+        )
+        conn.executescript(old_schema)
+        conn.execute(
+            "INSERT INTO optimization_trials (batch_id, strategy, params, combo_key, train_trades, "
+            "train_net_pnl, train_max_drawdown) VALUES (?,?,?,?,?,?,?)",
+            ("batch-1", "trend_pullback", "{}", "{}", 5, "50", "10"),
+        )
+        conn.commit()
+        conn.close()
+
+        with TradeStore(db_path) as store:
+            fetched = store.fetch_optimization_trials("batch-1")
+        assert len(fetched) == 1
+        assert fetched[0]["dataset_version"] is None
+        assert fetched[0]["train_pnl_stdev"] is None
+
+
+class TestCountPriorTrials:
+    """`TradeStore.count_prior_trials` -- the input
+    `research.safety.check_trial_inflation` needs. Professional-research-
+    pipeline plan Phase 1a."""
+
+    _counter = 0
+
+    def _insert(self, store, *, strategy="trend_pullback", dataset_version="abc123"):
+        # `(batch_id, combo_key)` is a uniqueness constraint (see
+        # `_SCHEMA`) -- every call here must use distinct params (and
+        # therefore a distinct combo_key) or a same-batch second insert
+        # would be silently ignored rather than actually persisted,
+        # making these tests pass for the wrong reason.
+        TestCountPriorTrials._counter += 1
+        store.insert_optimization_trial(
+            batch_id="batch-1", strategy=strategy, params={"x": TestCountPriorTrials._counter},
+            train_trades=10, train_net_pnl=Decimal("10"), train_profit_factor=Decimal("1.1"),
+            train_max_drawdown=Decimal("5"), dataset_version=dataset_version,
+        )
+
+    def test_zero_when_nothing_persisted(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            assert store.count_prior_trials("trend_pullback", "abc123") == 0
+
+    def test_counts_trials_for_the_matching_strategy_and_dataset(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            for _ in range(3):
+                self._insert(store)
+            assert store.count_prior_trials("trend_pullback", "abc123") == 3
+
+    def test_does_not_count_a_different_strategy(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            self._insert(store, strategy="trend_pullback")
+            self._insert(store, strategy="ema_crossover")
+            assert store.count_prior_trials("trend_pullback", "abc123") == 1
+
+    def test_does_not_count_a_different_dataset_version(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            self._insert(store, dataset_version="abc123")
+            self._insert(store, dataset_version="different456")
+            assert store.count_prior_trials("trend_pullback", "abc123") == 1
+
+    def test_none_dataset_version_matches_only_null_rows(self, tmp_path):
+        with TradeStore(tmp_path / "trials.db") as store:
+            self._insert(store, dataset_version=None)
+            self._insert(store, dataset_version="abc123")
+            assert store.count_prior_trials("trend_pullback", None) == 1
+            assert store.count_prior_trials("trend_pullback", "abc123") == 1
+
+
 class TestRuns:
     """The Phase 6A research API's backing table: one row per backtest/
     walk-forward/optimizer/compare run, created before completion is known

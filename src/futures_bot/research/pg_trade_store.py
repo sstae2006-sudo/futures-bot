@@ -34,6 +34,7 @@ from ..db.research_schema import (
     client_open_lots,
     client_profiles,
     config_deployments,
+    dataset_usage,
     experiments,
     import_history,
     import_staging,
@@ -177,6 +178,11 @@ class PgTradeStore:
         validation_trades: Optional[int] = None, validation_net_pnl: Optional[Decimal] = None,
         validation_profit_factor: Optional[Decimal] = None, validation_max_drawdown: Optional[Decimal] = None,
         rank: Optional[int] = None,
+        dataset_version: Optional[str] = None, git_commit: Optional[str] = None,
+        train_pnl_stdev: Optional[Decimal] = None, train_pnl_skew: Optional[Decimal] = None,
+        train_pnl_kurtosis: Optional[Decimal] = None,
+        validation_pnl_stdev: Optional[Decimal] = None, validation_pnl_skew: Optional[Decimal] = None,
+        validation_pnl_kurtosis: Optional[Decimal] = None,
     ) -> None:
         combo_key = json.dumps(_jsonable(params), sort_keys=True)
         stmt = (
@@ -189,6 +195,11 @@ class PgTradeStore:
                 validation_trades=validation_trades, validation_net_pnl=validation_net_pnl,
                 validation_profit_factor=validation_profit_factor, validation_max_drawdown=validation_max_drawdown,
                 rank=rank,
+                dataset_version=dataset_version, git_commit=git_commit,
+                train_pnl_stdev=train_pnl_stdev, train_pnl_skew=train_pnl_skew,
+                train_pnl_kurtosis=train_pnl_kurtosis,
+                validation_pnl_stdev=validation_pnl_stdev, validation_pnl_skew=validation_pnl_skew,
+                validation_pnl_kurtosis=validation_pnl_kurtosis,
             )
             .on_conflict_do_nothing(index_elements=["batch_id", "combo_key"])
         )
@@ -199,6 +210,8 @@ class PgTradeStore:
         self, *, batch_id: str, combo_key: str, validation_trades: Optional[int],
         validation_net_pnl: Optional[Decimal], validation_profit_factor: Optional[Decimal],
         validation_max_drawdown: Optional[Decimal], rank: Optional[int],
+        validation_pnl_stdev: Optional[Decimal] = None, validation_pnl_skew: Optional[Decimal] = None,
+        validation_pnl_kurtosis: Optional[Decimal] = None,
     ) -> None:
         stmt = (
             update(optimization_trials)
@@ -207,10 +220,24 @@ class PgTradeStore:
                 validation_trades=validation_trades, validation_net_pnl=validation_net_pnl,
                 validation_profit_factor=validation_profit_factor, validation_max_drawdown=validation_max_drawdown,
                 rank=rank,
+                validation_pnl_stdev=validation_pnl_stdev, validation_pnl_skew=validation_pnl_skew,
+                validation_pnl_kurtosis=validation_pnl_kurtosis,
             )
         )
         with self._engine.begin() as conn:
             conn.execute(stmt)
+
+    def count_prior_trials(self, strategy: str, dataset_version: Optional[str]) -> int:
+        """Postgres counterpart of `TradeStore.count_prior_trials` -- see
+        that method's own docstring for the exact semantics (NULL-matching
+        included, `runs` deliberately not counted)."""
+        stmt = select(func.count()).select_from(optimization_trials).where(
+            optimization_trials.c.strategy == strategy,
+            optimization_trials.c.dataset_version.is_(dataset_version) if dataset_version is None
+            else optimization_trials.c.dataset_version == dataset_version,
+        )
+        with self._engine.connect() as conn:
+            return conn.execute(stmt).scalar_one()
 
     def fetch_completed_combos(self, batch_id: str) -> dict[str, dict]:
         stmt = select(optimization_trials).where(
@@ -698,3 +725,27 @@ class PgTradeStore:
             d["warnings"] = d.get("warnings") or []
             out.append(d)
         return out
+
+    # --- Dataset usage (hold-out ledger, professional-research-pipeline plan Phase 3) ---
+
+    def insert_dataset_usage(
+        self, *, product_code: str, resolution: str, start_ts: datetime, end_ts: datetime, purpose: str,
+        strategy: Optional[str] = None, run_id_or_batch_id: Optional[str] = None,
+    ) -> None:
+        """Postgres counterpart of `TradeStore.insert_dataset_usage` -- see
+        that method's own docstring for the full rationale."""
+        stmt = dataset_usage.insert().values(
+            id=uuid.uuid4().hex, product_code=product_code, resolution=resolution,
+            start_ts=start_ts, end_ts=end_ts, purpose=purpose,
+            strategy=strategy, run_id_or_batch_id=run_id_or_batch_id,
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def fetch_dataset_usage(self, product_code: str, resolution: str) -> list[dict]:
+        stmt = select(dataset_usage).where(
+            dataset_usage.c.product_code == product_code, dataset_usage.c.resolution == resolution,
+        )
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).all()
+        return [_stringify_datetimes(_row_dict(row)) for row in rows]

@@ -1294,6 +1294,79 @@ loop cannot reach back and change how the validation slice was evaluated,
 because it never touches evaluation at all — it only ever ranks results
 that already exist.
 
+## Statistical foundation: provenance, trial inflation, and Deflated Sharpe Ratio (professional-research-pipeline plan, 2026-08-06)
+
+Built after a full sweep of all four bundled strategies (`ROADMAP.md`'s
+Critical item, `docs/EXPERIMENT_SWEEP_2026-08-05.md`) found zero validated
+edges — the statistical rigor a wider search (Phase 4, not started) needs
+*before* it runs, not applied retroactively to results it already produced.
+
+- **`src/futures_bot/provenance.py`** — `git_commit()` (relocated from
+  `api/services.py`, which is why `research/` couldn't reuse it before:
+  `research/` must never import `api/`, this package's own layering rule)
+  and `bars_dataset_version(product_code, resolution, bars)`, a sha256
+  fingerprint of a bars series. A sibling convention to
+  `research/ml/dataset.py`'s trade-row-keyed `_dataset_version` -- an
+  optimizer trial is keyed by *bars*, which have no id/`created_at` of
+  their own, so the inputs genuinely differ.
+- **`research/dsr.py`** — Probabilistic/Deflated Sharpe Ratio and minimum
+  track record length (Bailey & Lopez de Prado). Pure math: every function
+  takes plain Decimal/int arguments, never a `BacktestMetrics` or store,
+  same separation `research/safety.py`'s own check functions already
+  follow. Every formula was cross-checked against a runnable, published
+  reference implementation before being trusted (not derived from memory
+  alone) -- `tests/test_research_dsr.py` includes the papers' own worked
+  numerical example (expected max Sharpe ratio ≈3.26 after 1,000
+  independent trials with V[SR]=1) as a regression check.
+  `backtest/metrics.py::BacktestMetrics` gained matching
+  `pnl_stdev`/`pnl_skew`/`pnl_kurtosis` properties (population moments,
+  the papers' own convention -- deliberately different from `pnl_stdev`'s
+  sample/ddof=1 convention) and `daily_returns()`/`annualized_sharpe_ratio`
+  (a real, known-frequency return series, kept as a distinctly named
+  property from the existing, deliberately un-annualized `sharpe_ratio`).
+- **`research/safety.py`** gained `check_trial_inflation` (multiple-testing
+  awareness: the more trials already tried against a dataset, the less a
+  new-looking result should be trusted) and `check_deflated_sharpe_ratio`,
+  both wired into `build_safety_report` the same optional/pre-computed-
+  value pattern `commission_check` already used -- `build_safety_report`
+  itself stays a pure aggregator; `research/optimizer.py::run_optimization`
+  does the real work of querying `TradeStore.count_prior_trials` and
+  assembling `research.dsr.deflated_sharpe_ratio`'s inputs before passing
+  plain values in.
+- **`research/holdout.py`** — reads the `dataset_usage` table (below):
+  `protected_range(store, product_code, resolution, start, end)` returns
+  a truthy `HoldoutStatus` exactly when the requested range has never
+  overlapped anything already recorded. The check a wider search (Phase 4)
+  must consult before treating any result as a genuine, uncontaminated
+  final test rather than an already-seen slice being re-labeled as one.
+- **`market_data/resample.py`** — `resample_bars(bars, target_resolution)`,
+  standard OHLCV aggregation to fixed-size UTC-epoch windows, unlocking
+  `MNQ`/`M2K`'s full ~2-year `1min` history for 5-minute-resolution
+  research (KNOWN_ISSUES.md ISSUE-045) without a new vendor fetch.
+  `backtest/data.py::load_bars_from_db` gained a matching optional
+  `resample_from` parameter, an explicit caller-opted-in choice, not
+  automatic fallback detection.
+
+**Schema**: two changes, each its own explicit CLAUDE.md §8 sign-off. Eight
+new nullable columns on `optimization_trials` (`dataset_version`,
+`git_commit`, `train_`/`validation_pnl_stdev`/`pnl_skew`/`pnl_kurtosis`) and
+a new append-only `dataset_usage` table (`id`, `product_code`, `resolution`,
+`start_ts`/`end_ts`, `purpose`, `strategy`, `run_id_or_batch_id`) — both in
+SQLite (`research/trade_store.py`) and Postgres
+(`db/research_schema.py` + Alembic), matching every prior "team-deployment
+Postgres/TimescaleDB path only, never automatic on boot" migration in this
+codebase.
+
+**Known limitation, not yet fixed**: KNOWN_ISSUES.md ISSUE-046 —
+`ContextMode.ENABLED` backtests run far slower than the Context Engine's
+own 2026-07-27 performance benchmark implied (`engine.py`'s
+`_MIN_BARS_RETAINED=2000` sits 4-10x above that benchmark's own
+recommended caller-side window), discovered while re-running this
+session's context-gating experiments for persistence. Directly threatens
+Phase 4's practicality at scale; not addressed here since fixing it
+touches `engine.py`'s behavior for every `ContextMode.ENABLED` caller
+(live/paper trading included), which needs its own sign-off.
+
 ## Performance: incremental vs. batch indicators
 
 Every strategy needs the same handful of running values (an EMA, a

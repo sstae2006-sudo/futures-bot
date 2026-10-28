@@ -32,7 +32,9 @@ from ..backtest.runner import rolling_walk_forward, run_backtest, split_bars
 from ..config import Settings
 from ..journal import LOGGER_NAME
 from ..models import Bar
+from ..provenance import bars_dataset_version, git_commit
 from ..strategy.base import StrategyRegistry
+from .dsr import deflated_sharpe_ratio, sharpe_ratio_stdev, trial_sharpe_stdev
 from .safety import SafetyReport, build_safety_report, check_commission_sensitivity
 from .trade_store import TradeStore
 
@@ -266,10 +268,21 @@ def run_optimization(
     progress_callback: Optional[Callable[[int, int, Optional[dict]], None]] = None,
     max_workers: Optional[int] = None,
     min_trades: int = MIN_TRADES_FOR_SIGNIFICANCE,
+    resolution: Optional[str] = None,
 ) -> OptimizationResult:
     """Runs every combination in ``param_grid`` on the training slice, ranks
     by ``score_key``, and re-tests the top ``top_n`` on the held-out
     validation slice.
+
+    ``resolution`` (e.g. ``"5min"``) is optional bar-resolution metadata for
+    ``provenance.bars_dataset_version``'s fingerprint, persisted alongside
+    each trial when ``store`` is given -- Phase 1a's trial-inflation counter
+    (professional-research-pipeline plan) needs it to tell two searches over
+    genuinely different datasets apart. ``run_optimization`` has no other
+    source for this (``Settings`` carries ``contract`` but not resolution);
+    omitting it just means the fingerprint's resolution component is blank,
+    which degrades the counter's precision but breaks nothing -- every
+    existing caller that doesn't pass it is otherwise unaffected.
 
     ``min_trades`` (default: the same `MIN_TRADES_FOR_SIGNIFICANCE` threshold
     `BacktestMetrics.caveats()`/`research.safety.check_trade_counts` already
@@ -338,6 +351,36 @@ def run_optimization(
     batch_id = batch_id or uuid4().hex[:12]
     total = len(combos)
 
+    #: Hold-out ledger (professional-research-pipeline plan Phase 3): record
+    #: both slices' ranges once, regardless of how many combos are tried
+    #: against them -- the ledger tracks *ranges used*, not *trials run*
+    #: (that's `count_prior_trials`'s job). Only when there's a store to
+    #: write to; `resolution` is optional metadata (see its own docstring
+    #: above), recorded as an empty string when omitted rather than
+    #: skipping the ledger entry entirely -- a range with unknown
+    #: resolution is still a real range that was used.
+    if store is not None:
+        if train:
+            store.insert_dataset_usage(
+                product_code=settings.contract, resolution=resolution or "", purpose="optimizer",
+                start_ts=train[0].timestamp, end_ts=train[-1].timestamp,
+                strategy=strategy_name, run_id_or_batch_id=batch_id,
+            )
+        if validation_bars:
+            store.insert_dataset_usage(
+                product_code=settings.contract, resolution=resolution or "", purpose="validation",
+                start_ts=validation_bars[0].timestamp, end_ts=validation_bars[-1].timestamp,
+                strategy=strategy_name, run_id_or_batch_id=batch_id,
+            )
+
+    #: Computed once per call (not per trial): `bars` and `settings.contract`
+    #: are fixed for the whole search, so every trial in this batch shares
+    #: the same dataset fingerprint/commit. `None` when there's no store to
+    #: persist to -- no reason to shell out to `git` for a value nothing
+    #: will read.
+    dataset_version = bars_dataset_version(settings.contract, resolution or "", bars) if store is not None else None
+    commit = git_commit() if store is not None else None
+
     cached_by_key: dict[str, dict] = store.fetch_completed_combos(batch_id) if store is not None else {}
 
     all_trials: list[OptimizationTrial] = []
@@ -381,7 +424,10 @@ def run_optimization(
             train_trades=metrics.trade_count, train_net_pnl=metrics.net_pnl,
             train_profit_factor=metrics.profit_factor, train_max_drawdown=metrics.max_drawdown,
             train_gross_losses=metrics.gross_losses, train_win_count=len(metrics.wins),
+            dataset_version=dataset_version, git_commit=commit,
             train_largest_win=largest_win,
+            train_pnl_stdev=metrics.pnl_stdev, train_pnl_skew=metrics.pnl_skew,
+            train_pnl_kurtosis=metrics.pnl_kurtosis,
         )
 
     def _handle_fresh_result(params: dict, metrics: Optional[BacktestMetrics], exc: Optional[BaseException]) -> None:
@@ -463,12 +509,56 @@ def run_optimization(
                 return strategy_cls(settings.contract_spec, **p)
             commission_findings = check_commission_sensitivity(settings, best_factory, train)
 
+        #: Counted after every trial in this batch has already been
+        #: persisted above, so a grid of e.g. 27 combos counts as 27
+        #: trials against the winner's own significance -- exactly the
+        #: multiple-testing exposure a search that size actually created,
+        #: not just whatever ran in some earlier, separate batch. `None`
+        #: without a store (nothing to count against).
+        trial_count = store.count_prior_trials(strategy_name, dataset_version) if store is not None else None
+
+        #: Deflated Sharpe Ratio for the winner, using every *freshly
+        #: computed* trial's own Sharpe ratio in this call as the
+        #: cross-trial dispersion sample. `CachedTrialMetrics` (a combo
+        #: restored from a resumed batch) deliberately has no
+        #: `sharpe_ratio` attribute (see its own docstring) -- `getattr`
+        #: with a `None` default skips those rather than raising, so a
+        #: resumed batch's DSR only reflects trials computed in *this*
+        #: call, not the full historical batch. `trial_count` (the raw
+        #: persisted count) is unaffected by this narrower sample; only
+        #: the dispersion estimate feeding `expected_maximum_sharpe_ratio`
+        #: is.
+        fresh_trial_sharpes = [
+            s for s in (getattr(t.train_metrics, "sharpe_ratio", None) for t in all_trials)
+            if s is not None
+        ]
+        cross_trial_sr_stdev = trial_sharpe_stdev(fresh_trial_sharpes)
+        deflated_sharpe = None
+        if (
+            trial_count is not None
+            and cross_trial_sr_stdev is not None
+            and isinstance(best.train_metrics, BacktestMetrics)
+        ):
+            winner_sr = best.train_metrics.sharpe_ratio
+            winner_skew = best.train_metrics.pnl_skew
+            winner_kurtosis = best.train_metrics.pnl_kurtosis
+            if winner_sr is not None and winner_skew is not None and winner_kurtosis is not None:
+                winner_sr_std = sharpe_ratio_stdev(
+                    winner_sr, best.train_metrics.trade_count, winner_skew, winner_kurtosis,
+                )
+                deflated_sharpe = deflated_sharpe_ratio(
+                    winner_sr, winner_sr_std, trial_count, cross_trial_sr_stdev,
+                )
+
         safety = build_safety_report(
             train=best.train_metrics,
             validation=best.validation_metrics,
             winner_score=score_key(best.train_metrics),
             all_scores=[score_key(t.train_metrics) for t in all_trials],
             commission_check=commission_findings,
+            trial_count=trial_count,
+            strategy=strategy_name,
+            deflated_sharpe=deflated_sharpe,
         )
 
     if store is not None:
@@ -487,6 +577,9 @@ def run_optimization(
                 validation_profit_factor=v.profit_factor if v else None,
                 validation_max_drawdown=v.max_drawdown if v else None,
                 rank=trial.rank,
+                validation_pnl_stdev=v.pnl_stdev if v else None,
+                validation_pnl_skew=v.pnl_skew if v else None,
+                validation_pnl_kurtosis=v.pnl_kurtosis if v else None,
             )
 
     return OptimizationResult(

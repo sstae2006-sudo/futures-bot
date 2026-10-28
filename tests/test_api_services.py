@@ -156,6 +156,72 @@ class TestRunBacktestJob:
         result = services.run_backtest_job(req)
         assert result.trade_count == 0
 
+    def test_csv_dataset_does_not_record_dataset_usage(self, workspace):
+        """A CSV-sourced backtest has no (product_code, resolution) pair
+        the shared hold-out ledger can key on -- professional-research-
+        pipeline plan Phase 3 -- so it must be silently skipped, not
+        recorded under a fabricated key."""
+        req = BacktestRunRequest(strategy_name="vwap_reversion", dataset="data.csv", contract="MES")
+        services.run_backtest_job(req)
+        assert services.get_store().fetch_dataset_usage("MES", "5min") == []
+
+
+class TestRunBacktestJobDatasetUsage:
+    """Hold-out ledger wiring (professional-research-pipeline plan Phase 3)
+    for a `db:`-sourced backtest, which -- unlike a CSV dataset -- has a
+    real (product_code, resolution) pair to record against."""
+
+    @pytest.fixture
+    def db_workspace(self, tmp_path, monkeypatch):
+        from futures_bot.market_data.store import MarketDataStore
+
+        (tmp_path / "config.yaml").write_text(CONFIG_YAML, encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("FUTURES_BOT_RESEARCH_DB", str(tmp_path / "research.db"))
+        monkeypatch.setenv("FUTURES_BOT_MARKET_DATA_DB", str(tmp_path / "market_data.db"))
+
+        md_store = MarketDataStore(tmp_path / "market_data.db")
+        rng = random.Random(7)
+        price = Decimal("7500")
+        start = datetime(2026, 1, 5, 8, 30, tzinfo=CME_TZ)
+        bars = []
+        for i in range(500):
+            price += Decimal(str(round(rng.uniform(-5, 5), 2)))
+            from futures_bot.models import Bar
+            bars.append(Bar(
+                timestamp=start + timedelta(minutes=5 * i),
+                open=price, high=price + 2, low=price - 2, close=price,
+                volume=rng.randint(100, 1000),
+            ))
+        md_store.upsert_bars("MES", "MESZ25", "5min", "test", bars)
+        md_store.close()
+        return tmp_path
+
+    def test_non_walk_forward_records_one_exploratory_range(self, db_workspace):
+        req = BacktestRunRequest(strategy_name="vwap_reversion", dataset="db:MES:5min", contract="MES")
+        services.run_backtest_job(req)
+        rows = services.get_store().fetch_dataset_usage("MES", "5min")
+        assert len(rows) == 1
+        assert rows[0]["purpose"] == "exploratory"
+        assert rows[0]["strategy"] == "vwap_reversion"
+
+    def test_walk_forward_records_train_and_validation_ranges(self, db_workspace):
+        req = BacktestRunRequest(
+            strategy_name="vwap_reversion", dataset="db:MES:5min", contract="MES", walk_forward=True,
+        )
+        services.run_backtest_job(req)
+        rows = services.get_store().fetch_dataset_usage("MES", "5min")
+        purposes = {r["purpose"] for r in rows}
+        assert purposes == {"train", "validation"}
+
+    def test_validation_range_starts_after_train_range_ends(self, db_workspace):
+        req = BacktestRunRequest(
+            strategy_name="vwap_reversion", dataset="db:MES:5min", contract="MES", walk_forward=True,
+        )
+        services.run_backtest_job(req)
+        rows = {r["purpose"]: r for r in services.get_store().fetch_dataset_usage("MES", "5min")}
+        assert rows["train"]["end_ts"] < rows["validation"]["start_ts"]
+
     def test_risk_overrides_take_effect(self, workspace):
         req = BacktestRunRequest(
             strategy_name="vwap_reversion", dataset="data.csv", contract="MES",

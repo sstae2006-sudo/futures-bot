@@ -38,6 +38,18 @@ SUSPICIOUSLY_HIGH_PROFIT_FACTOR = Decimal("4")
 #: If commission is doubled and net P&L falls by more than this fraction,
 #: the edge is mostly a function of today's cost assumptions, not the signal.
 COMMISSION_SENSITIVITY_WARNING_PCT = Decimal("50")
+#: Prior-trial counts against the exact same (strategy, dataset_version)
+#: pair above which a new result's apparent significance should be
+#: discounted for multiple testing -- see `check_trial_inflation`.
+TRIAL_INFLATION_WARNING_COUNT = 20
+TRIAL_INFLATION_SEVERE_COUNT = 50
+#: Deflated Sharpe Ratio thresholds -- see `check_deflated_sharpe_ratio`.
+#: 0.95 is the conventional "genuinely significant" bar in the DSR
+#: literature (Bailey & Lopez de Prado); below 0.5 means the result
+#: doesn't even clear what a skill-less search this size would be
+#: expected to produce by chance alone.
+DSR_WARNING_THRESHOLD = Decimal("0.95")
+DSR_SEVERE_THRESHOLD = Decimal("0.5")
 
 
 @dataclass(frozen=True)
@@ -257,6 +269,108 @@ def check_commission_sensitivity(
     return []
 
 
+def check_trial_inflation(trial_count: int, strategy: str = "") -> list[Finding]:
+    """Multiple-testing awareness: the more hypotheses/parameter
+    combinations already tried against the same (strategy, dataset) pair,
+    the less any single new-looking result should be trusted at face
+    value -- a result that looks good after the 50th attempt is far more
+    likely to be a false positive than the identical-looking result on
+    the first attempt, even though nothing about how the metric itself
+    was computed changed.
+
+    ``trial_count`` is the number of PRIOR trials already recorded for
+    this exact (strategy, dataset_version) pair -- see
+    `trade_store.TradeStore.count_prior_trials` -- not counting whatever
+    new result this check is being run for.
+
+    Deliberately does not compute a formal Bonferroni/Deflated-Sharpe-style
+    corrected significance threshold here -- that needs each trial's own
+    return distribution (mean/stdev/skew/kurtosis), which `research/dsr.py`
+    (professional-research-pipeline plan Phase 1c, not yet built as of
+    this function) will provide. This is the honest, plain-language
+    interim: surfacing the raw count so a human reader applies their own
+    judgment, the same spirit `check_parameter_fitting` already applies to
+    isolated grid spikes. Harvey, Liu & Zhu ("...and the Cross-Section of
+    Expected Returns," Review of Financial Studies, 2016) is the field's
+    own convention this loosely maps to: as published factor claims
+    accumulate, the community-recommended significance bar rises from a
+    t-stat of 2.0 toward 3.0 -- the same idea, applied here to one
+    project's own accumulating trial count instead of the whole published
+    literature.
+    """
+    if trial_count <= 0:
+        return []
+    label = f"{strategy} " if strategy else ""
+    if trial_count >= TRIAL_INFLATION_SEVERE_COUNT:
+        return [
+            Finding(
+                f"This is at least the {trial_count + 1}th trial tried against this exact "
+                f"{label}dataset -- at this many attempts, a result that merely 'looks good' is "
+                f"expected to appear by chance alone. Treat any single result here as a starting "
+                f"hypothesis to re-validate on new data, not as evidence on its own.",
+                severe=True,
+            )
+        ]
+    if trial_count >= TRIAL_INFLATION_WARNING_COUNT:
+        return [
+            Finding(
+                f"This is at least the {trial_count + 1}th trial tried against this exact "
+                f"{label}dataset -- with this many attempts already made, the bar for trusting a "
+                f"new result should be higher than usual (the more trials tried, the more likely a "
+                f"good-looking one is chance).",
+                severe=False,
+            )
+        ]
+    return []
+
+
+def check_deflated_sharpe_ratio(dsr: Optional[Decimal]) -> list[Finding]:
+    """Flags a winning trial whose Deflated Sharpe Ratio doesn't clear the
+    bar for genuine, search-adjusted significance.
+
+    ``dsr`` is `research.dsr.deflated_sharpe_ratio`'s output: the
+    probability the true Sharpe ratio exceeds what a skill-less search
+    this size would be expected to produce by chance alone -- computed by
+    the caller (`optimizer.run_optimization`), not here, since assembling
+    its inputs (per-trial Sharpe ratios across the whole grid, the
+    winner's own skew/kurtosis) needs context only that caller has. Same
+    pattern `commission_check` already uses: this function judges an
+    already-computed result rather than computing one itself.
+
+    ``None`` (undefined -- not enough inputs were available to compute it,
+    e.g. fewer than 2 trials or an undefined Sharpe estimate) produces no
+    finding; that silence is a real limitation of what could be checked,
+    not evidence the result is fine.
+
+    Thresholds: below 0.5 -- the result doesn't even clear the "expected
+    by chance" bar for a search this size, worse than a coin flip on
+    whether this is genuine skill. Below 0.95 -- under the conventional
+    significance bar this literature uses once trial count is accounted
+    for, without being as bad as the 0.5 case.
+    """
+    if dsr is None:
+        return []
+    if dsr < DSR_SEVERE_THRESHOLD:
+        return [
+            Finding(
+                f"Deflated Sharpe Ratio is {dsr:.2f} -- after accounting for how many trials "
+                f"were already tried against this data, this result doesn't even clear what a "
+                f"skill-less search this size would be expected to produce by chance alone.",
+                severe=True,
+            )
+        ]
+    if dsr < DSR_WARNING_THRESHOLD:
+        return [
+            Finding(
+                f"Deflated Sharpe Ratio is {dsr:.2f} -- below the {DSR_WARNING_THRESHOLD} bar this "
+                f"literature treats as genuinely significant once the number of trials already "
+                f"tried is accounted for.",
+                severe=False,
+            )
+        ]
+    return []
+
+
 def build_safety_report(
     *,
     train: BacktestMetrics,
@@ -264,6 +378,9 @@ def build_safety_report(
     winner_score: Optional[Decimal] = None,
     all_scores: Optional[Sequence[Decimal]] = None,
     commission_check: Optional[list[Finding]] = None,
+    trial_count: Optional[int] = None,
+    strategy: str = "",
+    deflated_sharpe: Optional[Decimal] = None,
 ) -> SafetyReport:
     """Combines every check that has data available into one report.
 
@@ -272,7 +389,13 @@ def build_safety_report(
     re-run a backtest), so they're passed in already computed rather than
     this function reaching out to run more backtests itself -- keeps this a
     pure aggregator, callable from a test with plain `BacktestMetrics`
-    objects and no strategy/bars required.
+    objects and no strategy/bars required. ``trial_count``/``deflated_sharpe``
+    (professional-research-pipeline plan Phase 1a/1c) follow the same
+    pattern: the caller does the real work (querying
+    `trade_store.TradeStore.count_prior_trials`, assembling
+    `research.dsr.deflated_sharpe_ratio`'s inputs) and passes plain values
+    in; omitted, `check_trial_inflation`/`check_deflated_sharpe_ratio`
+    simply aren't run.
     """
     findings: list[Finding] = []
     findings += check_trade_counts(train, validation)
@@ -284,5 +407,9 @@ def build_safety_report(
         findings += check_parameter_fitting(winner_score, all_scores)
     if commission_check:
         findings += commission_check
+    if trial_count is not None:
+        findings += check_trial_inflation(trial_count, strategy)
+    if deflated_sharpe is not None:
+        findings += check_deflated_sharpe_ratio(deflated_sharpe)
 
     return SafetyReport(confidence=_confidence_from(findings), findings=findings)

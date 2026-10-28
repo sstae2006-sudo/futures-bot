@@ -15,11 +15,17 @@ from futures_bot.config import BrokerSettings, RiskSettings, SessionSettings, Se
 from futures_bot.contracts import CME_TZ, MES
 from futures_bot.models import Bar, Position, Side, Signal, Trade
 from futures_bot.research.safety import (
+    DSR_SEVERE_THRESHOLD,
+    DSR_WARNING_THRESHOLD,
+    TRIAL_INFLATION_SEVERE_COUNT,
+    TRIAL_INFLATION_WARNING_COUNT,
     build_safety_report,
     check_commission_sensitivity,
+    check_deflated_sharpe_ratio,
     check_degradation,
     check_parameter_fitting,
     check_trade_counts,
+    check_trial_inflation,
     check_unrealistic_gains,
 )
 from futures_bot.strategy.base import Strategy
@@ -202,6 +208,54 @@ class TestCheckCommissionSensitivity:
         assert findings == []
 
 
+class TestCheckTrialInflation:
+    def test_zero_or_negative_prior_trials_produces_no_finding(self):
+        assert check_trial_inflation(0) == []
+        assert check_trial_inflation(-1) == []
+
+    def test_below_warning_threshold_produces_no_finding(self):
+        assert check_trial_inflation(TRIAL_INFLATION_WARNING_COUNT - 1) == []
+
+    def test_at_warning_threshold_produces_a_non_severe_finding(self):
+        findings = check_trial_inflation(TRIAL_INFLATION_WARNING_COUNT)
+        assert len(findings) == 1
+        assert findings[0].severe is False
+        assert "trial" in findings[0].message.lower()
+
+    def test_at_severe_threshold_produces_a_severe_finding(self):
+        findings = check_trial_inflation(TRIAL_INFLATION_SEVERE_COUNT)
+        assert len(findings) == 1
+        assert findings[0].severe is True
+
+    def test_strategy_name_is_included_in_the_message_when_given(self):
+        findings = check_trial_inflation(TRIAL_INFLATION_WARNING_COUNT, strategy="trend_pullback")
+        assert "trend_pullback" in findings[0].message
+
+
+class TestCheckDeflatedSharpeRatio:
+    def test_none_produces_no_finding(self):
+        assert check_deflated_sharpe_ratio(None) == []
+
+    def test_at_or_above_warning_threshold_produces_no_finding(self):
+        assert check_deflated_sharpe_ratio(DSR_WARNING_THRESHOLD) == []
+        assert check_deflated_sharpe_ratio(Decimal("0.99")) == []
+
+    def test_below_warning_threshold_produces_a_non_severe_finding(self):
+        findings = check_deflated_sharpe_ratio(Decimal("0.8"))
+        assert len(findings) == 1
+        assert findings[0].severe is False
+
+    def test_below_severe_threshold_produces_a_severe_finding(self):
+        findings = check_deflated_sharpe_ratio(Decimal("0.3"))
+        assert len(findings) == 1
+        assert findings[0].severe is True
+
+    def test_at_exactly_the_severe_threshold_is_not_yet_severe(self):
+        findings = check_deflated_sharpe_ratio(DSR_SEVERE_THRESHOLD)
+        assert len(findings) == 1
+        assert findings[0].severe is False
+
+
 class TestBuildSafetyReport:
     def test_no_findings_means_high_confidence(self):
         train = make_metrics([Decimal("10"), Decimal("-5")] * 25)
@@ -240,3 +294,35 @@ class TestBuildSafetyReport:
             all_scores=[Decimal("-100"), Decimal("-50"), Decimal("10"), Decimal("-20"), Decimal("5"), Decimal("-80")],
         )
         assert any("isolated spike" in r for r in report.reasons)
+
+    def test_trial_count_omitted_by_default(self):
+        """Every existing caller that doesn't pass trial_count is unaffected --
+        no trial-inflation finding appears just because trials have happened
+        somewhere the caller didn't report."""
+        train = make_metrics([Decimal("10"), Decimal("-5")] * 25)
+        validation = make_metrics([Decimal("10"), Decimal("-5")] * 15)
+        report = build_safety_report(train=train, validation=validation)
+        assert not any("trial" in r.lower() for r in report.reasons)
+
+    def test_trial_count_included_when_given(self):
+        train = make_metrics([Decimal("10"), Decimal("-5")] * 25)
+        validation = make_metrics([Decimal("10"), Decimal("-5")] * 15)
+        report = build_safety_report(
+            train=train, validation=validation,
+            trial_count=TRIAL_INFLATION_SEVERE_COUNT, strategy="trend_pullback",
+        )
+        assert report.confidence == "Low"
+        assert any("trend_pullback" in r for r in report.reasons)
+
+    def test_deflated_sharpe_omitted_by_default(self):
+        train = make_metrics([Decimal("10"), Decimal("-5")] * 25)
+        validation = make_metrics([Decimal("10"), Decimal("-5")] * 15)
+        report = build_safety_report(train=train, validation=validation)
+        assert not any("Deflated Sharpe" in r for r in report.reasons)
+
+    def test_deflated_sharpe_included_when_given(self):
+        train = make_metrics([Decimal("10"), Decimal("-5")] * 25)
+        validation = make_metrics([Decimal("10"), Decimal("-5")] * 15)
+        report = build_safety_report(train=train, validation=validation, deflated_sharpe=Decimal("0.3"))
+        assert report.confidence == "Low"
+        assert any("Deflated Sharpe" in r for r in report.reasons)

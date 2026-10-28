@@ -25,8 +25,8 @@ version is bumped by hand.
   clean stop, missing-venv hard-failure, missing-database
   degraded-but-successful boot). See `BOOT_CHECKLIST.md` section 4 and
   `CLAUDE.md` section 9.
-- Test suite: **1776 tests as of 2026-08-04** (default run, no
-  `FUTURES_BOT_DATABASE_URL`: 1725 passed, 51 skipped, 0 failed). The 51
+- Test suite: **1881 tests as of 2026-08-06** (default run, no
+  `FUTURES_BOT_DATABASE_URL`: 1830 passed, 51 skipped, 0 failed). The 51
   skips are every team-deployment live-server test (`test_pg_market_data_store_live.py`,
   `test_pg_trade_store_live.py`, `test_pg_account_store_live.py`,
   `test_pg_collaboration_store_live.py`, `test_db_health.py`'s live cases,
@@ -177,6 +177,49 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-08-06: **Professional-research-pipeline plan: all seven foundation
+phases complete (0, 1a/1b/1c/1d, 2a/2b, 3) — Phase 4 (widening the
+search) not started.** Requested after the full experiment sweep below
+found zero validated edges — the user asked for the industry-proven path
+to an actually-trustworthy pipeline, not "try harder on the same four
+strategies." Full detail in CHANGELOG.md's matching entry; headline
+pieces: new `src/futures_bot/provenance.py` (git_commit/dataset
+fingerprinting), new `research/dsr.py` (Deflated/Probabilistic Sharpe
+Ratio, every formula cross-checked against a runnable reference
+implementation of Bailey & Lopez de Prado's papers, including their own
+published worked example as a regression test), new `research/holdout.py`
+(hold-out/data-snooping ledger read side), new `market_data/resample.py`
+(local OHLCV bar resampling), new
+`BacktestMetrics.daily_returns`/`annualized_sharpe_ratio`/`pnl_stdev`/
+`pnl_skew`/`pnl_kurtosis` properties, new
+`research/safety.py::check_trial_inflation`/`check_deflated_sharpe_ratio`.
+Two schema changes, each its own explicit sign-off per CLAUDE.md §8: 8 new
+nullable columns on `optimization_trials` (provenance + return-
+distribution stats) and a new append-only `dataset_usage` table (both
+SQLite + Postgres + Alembic). `research/optimizer.py::run_optimization`
+now persists per-trial provenance/moments, records the hold-out ledger,
+and computes the winning trial's Deflated Sharpe Ratio; `api/services.py`
+records the ledger for `db:`-sourced ad hoc backtests. **Phase 0**
+(`docs/EXPERIMENT_REGIME_AND_EXCURSION_PASS.md`) persisted all five
+2026-08-05 context-gating scripts plus the tuning sweep (~5 hours
+wall-clock, dominated by `ContextMode.ENABLED`'s per-call cost) and ran
+two free diagnostics: MAE/MFE efficiency (winners capture 55-90% of their
+own peak favorable move everywhere; losers give back 1.3-3.2x theirs
+before closing — a real, untested exit-management lever) and regime
+performance (`trend_pullback` + `regime_trend=bearish`, 28 trades,
++$647.78, 71.4% win rate — flagged explicitly as a lead, not a finding,
+given the sample size and how many implicit comparisons this diagnostic
+pass itself ran). Also recorded, not yet fixed: KNOWN_ISSUES.md ISSUE-045
+(MES/MNQ/M2K 1-minute history predates their own coarser resolutions by
+up to a year), ISSUE-046 (`ContextMode.ENABLED`'s per-call cost, directly
+responsible for Phase 0's ~5-hour runtime), and ISSUE-047 (found and
+fixed for today's data, general gap still open:
+`TradeStore.insert_trades` has no dedup protection, so an interrupted-
+then-restarted persisting script can silently double-count — caught via
+exact-duplicate detection in `research_experiments.db`, corrected, and
+verified). Test suite: 1725 -> 1830 passed (+105 new tests), 0 failures,
+full suite re-run clean after every phase.
 
 2026-08-05: **Full experiment sweep — all four bundled strategies tested,
 zero validated edges.** Requested as "try everything" following Experiments

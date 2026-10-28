@@ -29,6 +29,7 @@ from ..contracts import CME_TZ
 from ..journal import LOGGER_NAME
 from ..market_data.store import MarketDataStore, default_db_path
 from ..models import Bar
+from ..provenance import git_commit
 from ..research.comparison import compare_strategies
 from ..research.features import build_trade_records
 from ..research.optimizer import run_optimization
@@ -307,14 +308,40 @@ def run_backtest_job(
             train_metrics, train_journal = _run_with_journal(settings, train, progress_callback, signal_filter)
             test_metrics, _ = _run_with_journal(settings, test, signal_filter=signal_filter)
             _persist_completed_run(store, run_id, settings, train_metrics, train_journal, train, validation=test_metrics)
+            _record_dataset_usage(store, req.dataset, train, "train", settings.strategy_name, run_id)
+            _record_dataset_usage(store, req.dataset, test, "validation", settings.strategy_name, run_id)
         else:
             metrics, journal = _run_with_journal(settings, bars, progress_callback, signal_filter)
             _persist_completed_run(store, run_id, settings, metrics, journal, bars)
+            _record_dataset_usage(store, req.dataset, bars, "exploratory", settings.strategy_name, run_id)
     except Exception as exc:  # noqa: BLE001 -- record the failure, then re-raise for the route to map to a 4xx/5xx
         store.fail_run(run_id, str(exc))
         raise
 
     return get_run(run_id)
+
+
+def _record_dataset_usage(
+    store: TradeStore, dataset: str, bars: Sequence[Bar], purpose: str, strategy: str, run_id: str,
+) -> None:
+    """Hold-out ledger entry (professional-research-pipeline plan Phase 3)
+    for one ad hoc API/CLI backtest slice. Only meaningful for a `db:`
+    dataset (`is_db_dataset`) -- a CSV-sourced backtest has no
+    ``(product_code, resolution)`` pair the shared ledger can key on, so
+    it's silently skipped rather than recorded under a fabricated key. A
+    non-walk-forward run is tagged ``"exploratory"``, not ``"train"``: it
+    never had a held-out validation slice held back from it, so treating
+    it as a completed train/validation pair would overstate what was
+    actually tested.
+    """
+    if not bars or not is_db_dataset(dataset):
+        return
+    product_code, resolution = parse_db_dataset(dataset)
+    store.insert_dataset_usage(
+        product_code=product_code, resolution=resolution, purpose=purpose,
+        start_ts=bars[0].timestamp, end_ts=bars[-1].timestamp,
+        strategy=strategy, run_id_or_batch_id=run_id,
+    )
 
 
 def _run_with_journal(
@@ -919,18 +946,6 @@ def update_experiment_notes(experiment_id: str, notes: str) -> ExperimentOut:
 
 # --- ML research workstation (Phase 9) ---
 
-def _git_commit() -> Optional[str]:
-    """Best-effort provenance for a trained model's `app_version` -- never a
-    reason training itself should fail (no git installed, not a checkout,
-    a shallow clone without HEAD, ...)."""
-    import subprocess
-    try:
-        result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
-        return result.stdout.strip() if result.returncode == 0 else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def get_ml_dataset_health(strategy: str) -> DatasetHealthOut:
     from ..research.ml.dataset import dataset_health
     health = dataset_health(strategy)
@@ -1083,7 +1098,7 @@ def submit_model_training_job(req: ModelTrainRequest) -> tuple[str, str]:
 
             worker_store.complete_model(
                 model_id, metrics=metrics, feature_importance=result.feature_importance,
-                artifact_path=artifact_path, app_version=__version__, git_commit=_git_commit(),
+                artifact_path=artifact_path, app_version=__version__, git_commit=git_commit(),
                 overfit_warning=result.overfit_warning, overfit_note=result.overfit_note,
             )
             return model_id, None

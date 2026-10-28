@@ -50,6 +50,46 @@ than duplicate it.
   platform's honest current state and move to a different `ROADMAP.md`
   priority (auth, journal retention, etc.).
 
+  **Update 2026-08-06 — professional-research-pipeline plan, Phases
+  0-3 complete, Phase 4 not started.** The user chose to pursue the
+  industry-proven path to a trustworthy pipeline rather than either of
+  the two options above. Statistical foundation (trial-inflation
+  counter, Deflated/Probabilistic Sharpe Ratio, annualized Sharpe),
+  provenance (dataset fingerprinting, git commit), local bar resampling,
+  and a hold-out/data-snooping ledger are all built and tested (full
+  detail in CHANGELOG.md's 2026-08-06 entry). **Phase 4 (widening the
+  search across strategies/contracts/resolutions using this new
+  machinery) is next but not started** — see this section's own
+  Phase 4 description below, added as its own priority now that its
+  prerequisites exist. Also discovered mid-build, not yet fixed:
+  KNOWN_ISSUES.md ISSUE-046 (`ContextMode.ENABLED` backtests run far
+  slower than the Context Engine's own benchmark implied) directly
+  threatens Phase 4's practicality at any real scale and should be
+  looked at before or alongside it, not after; ISSUE-047
+  (`TradeStore.insert_trades` has no dedup protection) fixed for
+  today's data but the general gap is still open. Phase 0's free
+  diagnostics (`docs/EXPERIMENT_REGIME_AND_EXCURSION_PASS.md`) surfaced
+  one lead worth a real, pre-registered follow-up before or during
+  Phase 4: `trend_pullback` entries during `regime_trend=bearish`
+  conditions (28 trades, +$647.78, 71.4% win rate) — explicitly not
+  validated, sample size sits at the edge of significance and the
+  diagnostic pass itself ran enough implicit comparisons that this
+  should count as a real trial, not free evidence, if pursued.
+
+- **Widen the strategy search using the new statistical/hold-out
+  machinery** (professional-research-pipeline plan Phase 4, added
+  2026-08-06) — extend `research/optimizer.py::run_optimization`
+  across more strategy/contract/resolution combinations and
+  `research/comparison.py::compare_strategies` to rank already-optimized
+  results, now that `check_trial_inflation`/`check_deflated_sharpe_ratio`
+  and `research/holdout.py::protected_range` exist to keep a wider search
+  honest. Not a new orchestration layer — the existing optimizer/
+  comparison split already maps onto this. Every sweep call must consult
+  `protected_range()` before touching a candidate's true final test slice.
+  Should address KNOWN_ISSUES.md ISSUE-046 (Context Engine per-call cost)
+  first or alongside, given how much `ContextMode.ENABLED` inflates the
+  cost of the exact wider sweep this phase calls for.
+
 **High**
 - Walk-forward testing
 - Monte Carlo

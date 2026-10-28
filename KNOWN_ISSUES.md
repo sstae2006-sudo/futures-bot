@@ -1728,3 +1728,158 @@ verified fixed — instead mark it Resolved with a date and commit.
   untouched. `ExitReason` members are valid `str` values (StrEnum), so
   this needed no changes anywhere `exit_reason` is read, serialized, or
   stored. Full suite re-confirmed green after this change too.
+
+---
+
+### ISSUE-045 — MES 5-minute bars only cover ~13 months; a full extra year of 1-minute data already sits unused at that resolution (OPEN, informational)
+
+- **Severity:** Low — a data-completeness gap, not a bug. Directly limits
+  every backtest/experiment run so far, since `trend_pullback` and every
+  other bundled strategy trades on 5-minute bars.
+- **Description:** Verified directly against `market_data.db` on
+  2026-08-06: `MES`'s `5min` resolution starts `2025-07-24` (70,392 bars
+  through `2026-07-29`), but `MES`'s `1min` resolution — already fetched
+  and stored — starts a full year earlier, `2024-07-22` (708,536 bars).
+  Every experiment run today (`docs/EXPERIMENT_TREND_PULLBACK_RISK_STATE.md`,
+  `docs/EXPERIMENT_TREND_PULLBACK_REGIME_ALIGNMENT.md`,
+  `docs/EXPERIMENT_SWEEP_2026-08-05.md`) used only the ~13 months of
+  native 5-minute data, none of the extra year already sitting in `1min`.
+  Same pattern on `MNQ` (`1min` since `2024-07-22`, coarser resolutions
+  only since `2025-06-24`) and `M2K` (`1min` since `2024-07-22`, coarser
+  resolutions only since `2025-07-29`) — both currently unusable for
+  `trend_pullback`-resolution research at all without a resample.
+  (Note: an earlier planning pass claimed CLAUDE.md documents MES history
+  "since 2019" — checked, and no file in this repository currently makes
+  that claim; that specific premise didn't hold up and is not the basis
+  for this entry. This entry only records what was directly verified
+  against `market_data.db`.)
+- **Files involved:** `market_data.db` (table `bars`) — no code files;
+  this is a data-coverage gap, not a defect in `market_data/sync.py`.
+- **Possible cause:** Coarser resolutions were presumably backfilled
+  starting from whenever each was first requested/synced, rather than
+  bulk-resampled from the `1min` history that was already being pulled
+  from the start.
+- **Current status:** Open. The professional-research-pipeline plan's
+  Phase 2a (local bar resampling, `market_data/resample.py`) would close
+  most of this gap without any new vendor pull — see ROADMAP.md's
+  matching entry. Whether the vendor (Massive) can also backfill `MES`
+  further back than `2024-07-22` at any resolution is a separate,
+  unverified question — would need a direct check with the vendor, not
+  assumed either way.
+
+---
+
+### ISSUE-046 — `ContextMode.ENABLED` backtests are far more expensive than the Context Engine's own benchmark implied, because `engine.py`'s window is 4-10x larger than the benchmark's own recommendation (OPEN, not fixed)
+
+- **Severity:** Medium — no incorrect behavior, but a real, measured
+  throughput problem that directly blocks re-running today's
+  context-gating experiments at any scale and threatens the
+  professional-research-pipeline plan's Phase 4 ("widen the search").
+- **Description:** `docs/CONTEXT_ENGINE_PERFORMANCE_BENCHMARK.md` (Phase 8
+  Part 5, 2026-07-27) already measured and documented that
+  `ContextEngine.build_context` is O(n) per call in the size of the `bars`
+  window it's given — `volatility`/`regime`/`trend`/`timeframe` all
+  re-derive ATR/ADX/trend from scratch on every single call, because
+  Wilder's smoothing can't be safely truncated without changing the
+  numeric result. That doc explicitly recommended "have the *caller* pass
+  a bounded trailing window (e.g. the last 200-500 bars) rather than the
+  full history accumulated so far... No classifier's default parameters
+  need more than ~60 bars." When `ContextGatedStrategy` (2026-08-04)
+  became the first real caller to exercise `ContextMode.ENABLED` at
+  backtest scale, nobody revisited that recommendation:
+  `engine.py`'s `_MIN_BARS_RETAINED = 2000` (line 89) is the actual
+  window every `ContextMode.ENABLED` backtest uses today, 4-10x above
+  what the benchmark said was needed.
+  Measured directly against real MES data on 2026-08-06:
+  ~6.87ms per `build_context` call at the real 2000-bar window (vs.
+  the benchmark's own ~28ms/1000-bars implying ~56ms would be expected
+  at 2000 without the `liquidity` optimization already landed — so this
+  is in the right ballpark, not a separate regression). Each
+  `tools/experiment_context_*.py` script runs 5 separate full-or-large
+  `ContextMode.ENABLED` backtests (the full-dataset `compare_context_impact`,
+  gated train, gated validation, and 2 commission-shock reruns) —
+  extrapolated to ~30 minutes per script, ~2.5 hours to regenerate all 5
+  of today's experiments. One experiment script observed running 24+
+  minutes without finishing its first backtest before this was diagnosed.
+- **Files involved:** `src/futures_bot/engine.py` (`_MIN_BARS_RETAINED`,
+  line 89; `TradingEngine.__init__` already accepts an optional
+  `max_bars_retained` override, just nothing outside tests passes one);
+  `src/futures_bot/backtest/runner.py::run_backtest` (does not currently
+  expose a passthrough for that override); `src/futures_bot/context/`
+  (`volatility.py`/`regime.py`/`trend.py`/`timeframe.py` are the O(n)
+  dimensions named in the original benchmark).
+- **Possible cause:** The Context Engine's own Phase 8 explicitly did not
+  integrate into `TradingEngine` (see that benchmark doc's own wording) —
+  the integration happened later, and `_MIN_BARS_RETAINED`'s value of
+  2000 appears to have been chosen independently of the benchmark's
+  documented recommendation rather than in response to it.
+- **Current status:** Open — not fixed. Deliberately not touched during
+  Phase 0 of the professional-research-pipeline plan: reducing
+  `_MIN_BARS_RETAINED` changes what history `structure`/`regime`/etc. can
+  see for every `ContextMode.ENABLED` caller including live/paper trading,
+  not just backtests, and is exactly the kind of `engine.py` change
+  CLAUDE.md section 8 requires explicit sign-off on before starting. One
+  low-risk option already identified: add an additive, default-unchanged
+  `max_bars_retained` passthrough parameter to `run_backtest` (the
+  underlying `TradingEngine` constructor arg already exists) so research
+  scripts can opt into a smaller window without changing the default for
+  anyone else — not yet built, needs a decision on whether a smaller
+  window changing `MarketContext` values is acceptable for reproducing
+  already-published experiment numbers before doing so.
+
+---
+
+### ISSUE-047 — `TradeStore.insert_trades` has no dedup protection, unlike `insert_optimization_trial`; an interrupted-then-restarted persisting script silently double-counts trades (RESOLVED for today's data, OPEN as a general gap)
+
+- **Severity:** Medium — silently corrupts aggregate analysis (net P&L,
+  win rate, regime buckets) with no error or warning; only detectable by
+  manually checking for exact-duplicate rows.
+- **Description:** Found 2026-08-06 while writing
+  `docs/EXPERIMENT_REGIME_AND_EXCURSION_PASS.md` (Phase 0 of the
+  professional-research-pipeline plan): `research_experiments.db`'s
+  `trend-pullback-risk-state-baseline-train`/`-baseline-validation`/
+  `-gated-train` run_ids each had exactly double the expected trade count
+  (112 vs. an expected 56, etc.) — the earlier attempt at running
+  `tools/experiment_context_trend_pullback_risk_state.py` (killed after
+  ~24 minutes once `ContextMode.ENABLED`'s real cost was diagnosed, see
+  ISSUE-046) had already persisted these three slices before being
+  interrupted; the full clean re-run then persisted the *same* trades a
+  second time under the same `run_id`. Verified by exact match: for each
+  affected `run_id`, every `(entry_time, exit_time, net_pnl)` triple
+  appeared in exactly 2 rows, with no unmatched or off-by-one rows —
+  confirmed genuine duplication, not coincidental overlap. Root cause:
+  `research/features.py::TradeRecord.trade_id` defaults to a fresh random
+  UUID (`uuid.uuid4().hex[:12]`) on every construction, so re-persisting
+  the identical logical trade twice produces two *different* `trade_id`
+  values — the unique index on `trades.trade_id`
+  (`_TRADE_STORAGE_COLUMNS`) can't catch a duplicate it never sees as one.
+  `optimization_trials` doesn't have this problem: `insert_optimization_trial`
+  uses `INSERT OR IGNORE` against a real content-derived uniqueness key
+  (`batch_id`, `combo_key`), so a resumed/re-run optimizer batch is
+  naturally idempotent; nothing analogous exists for `trades`.
+- **Files involved:** `src/futures_bot/research/trade_store.py`
+  (`insert_trades`/`_insert_trades_no_commit`), `src/futures_bot/research/features.py`
+  (`TradeRecord.trade_id`).
+- **Possible cause:** `trade_id` was added (Phase 10.3) as a stable
+  identity for a trade record, not originally designed as a dedup key for
+  re-persisting the same backtest twice — this failure mode wasn't a
+  scenario any existing caller (a single API/CLI backtest run, always a
+  fresh `run_id`) could hit before exploratory research scripts started
+  persisting to a shared scratch DB across possibly-interrupted runs.
+- **Current status:** Today's specific duplicate rows deleted directly
+  from `research_experiments.db` (a scratch/throwaway DB, not `research.db`
+  — see that database's own "must never show up in Mission Control/Trade
+  Explorer" comment in the experiment scripts) and verified clean
+  (`trend_pullback`'s baseline now matches byte-for-byte between the two
+  experiment scripts that both ran it). **The general gap is still open**:
+  nothing prevents this from recurring for any future interrupted-then-
+  restarted persisting script. Two options for a real fix, neither
+  implemented: (a) derive `trade_id` deterministically from trade content
+  (entry/exit time + price + side) instead of a random UUID, so a
+  genuine re-persist collides against the existing unique index and is
+  silently skipped, matching `optimization_trials`' own idempotency; (b)
+  give experiment scripts a resume-aware `run_id` scheme (checking
+  `store.fetch_trades(run_id=...)` before persisting) similar to
+  `run_optimization`'s `batch_id` resume. Neither attempted here — this
+  entry exists so Phase 4 (or any future script written against
+  `insert_trades`) knows this isn't a solved problem yet.

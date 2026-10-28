@@ -23,6 +23,7 @@ from typing import Iterator, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from ..contracts import CME_TZ
+from ..market_data.resample import resample_bars
 from ..market_data.store import get_market_data_store
 from ..models import Bar
 
@@ -257,6 +258,7 @@ def iter_bars(bars: Sequence[Bar]) -> Iterator[Bar]:
 def load_bars_from_db(
     product_code: str, resolution: str,
     start: Optional[datetime] = None, end: Optional[datetime] = None,
+    resample_from: Optional[str] = None,
 ) -> tuple[list[Bar], DataQualityReport]:
     """Phase 8A: the market-data database's equivalent of `load_bars` --
     same return shape, so every existing caller (CLI `--backtest`/
@@ -269,12 +271,26 @@ def load_bars_from_db(
     detection already has its own richer, persistent home in
     `market_data.sync.verify`/the `gaps` table rather than being
     recomputed here on every load.
+
+    ``resample_from``, if given, fetches bars at that (finer) resolution
+    instead of ``resolution`` and locally resamples them up via
+    `market_data.resample.resample_bars` -- for a ``(product_code,
+    resolution)`` pair not natively stored but a finer resolution already
+    is (e.g. `MNQ`/`M2K` have full-history `1min` bars but only ~13 months
+    at `5min`; see KNOWN_ISSUES.md ISSUE-045). This is an explicit,
+    caller-opted-in choice, not automatic fallback detection -- the caller
+    already knows which finer resolution it wants resampled. Defaults to
+    ``None``: every existing caller is unaffected, and native
+    ``resolution`` bars are loaded exactly as before.
     """
     store = get_market_data_store()
     try:
-        bars = store.fetch_bars(product_code, resolution, start=start, end=end)
+        bars = store.fetch_bars(product_code, resample_from or resolution, start=start, end=end)
     finally:
         store.close()
+
+    if resample_from is not None:
+        bars = resample_bars(bars, resolution)
 
     zero_volume = sum(1 for b in bars if b.volume == 0)
     report = DataQualityReport(

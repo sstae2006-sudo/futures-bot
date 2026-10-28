@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional, Sequence
 
+from ..contracts import session_date
 from ..models import Side, Trade
 from ..session import SessionSummary
 
@@ -208,6 +209,124 @@ class BacktestMetrics:
         if downside_dev == 0:
             return None
         return mean / downside_dev
+
+    #: Trading days per year used to annualize `daily_returns()` -- the
+    #: conventional value (252) for a market that trades roughly 5 days a
+    #: week, 52 weeks a year. CME equity index futures trade close enough
+    #: to this (holidays aside) that a more precise, calendar-specific
+    #: count would be false precision for what this number is used for.
+    TRADING_DAYS_PER_YEAR = 252
+
+    def daily_returns(self) -> list[Decimal]:
+        """Net P&L bucketed by CME session date (`contracts.session_date`,
+        not calendar date -- see that function's own docstring for why:
+        a fill after the 17:00 CT session open belongs to the next
+        session), in chronological order.
+
+        A real, evenly-spaced return series, unlike `_trade_returns()`'s
+        per-trade P&L -- `sharpe_ratio` is deliberately *not* annualized
+        because per-trade observations have no fixed sampling frequency
+        (a strategy trading 50 times a day and one trading twice a week
+        would get the same, meaningless annualization factor). Daily
+        returns do have a real, known frequency (`TRADING_DAYS_PER_YEAR`),
+        which is what makes `annualized_sharpe_ratio` below meaningfully
+        different from just scaling `sharpe_ratio` by a constant.
+
+        A day with zero trades has no entry -- this is an active-trading-
+        day return series, not a full calendar series with implicit zeros
+        for idle days, matching how a real track record only has an
+        observation on days the strategy actually traded.
+        """
+        if not self.trades:
+            return []
+        buckets: dict = {}
+        order: list = []
+        for t in self.trades:
+            day = session_date(t.entry_time)
+            if day not in buckets:
+                buckets[day] = Decimal("0")
+                order.append(day)
+            buckets[day] += t.net_pnl
+        return [buckets[d] for d in order]
+
+    @property
+    def annualized_sharpe_ratio(self) -> Optional[Decimal]:
+        """Mean daily return / stdev of daily return, annualized by
+        sqrt(`TRADING_DAYS_PER_YEAR`) -- the standard Sharpe Ratio
+        definition, and deliberately a separate, separately-named metric
+        from `sharpe_ratio` above rather than a replacement for it.
+
+        `sharpe_ratio` stays un-annualized on purpose (see its own
+        docstring); this one exists because Minimum Track Record Length /
+        Deflated Sharpe Ratio calculations (Bailey & Lopez de Prado --
+        professional-research-pipeline plan Phase 1c, `research/dsr.py`,
+        not yet built as of this property) require a real, known-frequency
+        annualized Sharpe as an input, which `sharpe_ratio` cannot
+        honestly provide. Both live on this class as distinctly named
+        properties so a report or API response can never silently
+        conflate the two.
+
+        Returns ``None`` with fewer than 2 daily observations (stdev
+        undefined) or zero variance, same convention as `sharpe_ratio`.
+        """
+        returns = self.daily_returns()
+        sd = self._stdev(returns)
+        if not sd or sd == 0:
+            return None
+        mean = sum(returns) / Decimal(len(returns))
+        return (mean / sd) * Decimal(self.TRADING_DAYS_PER_YEAR).sqrt()
+
+    @property
+    def pnl_stdev(self) -> Optional[Decimal]:
+        """Sample standard deviation (ddof=1) of per-trade net P&L -- the
+        same figure `sharpe_ratio`'s own denominator already computes,
+        exposed as its own property so it can be persisted alongside
+        `pnl_skew`/`pnl_kurtosis` for `research/dsr.py`'s Probabilistic/
+        Deflated Sharpe Ratio (professional-research-pipeline plan
+        Phase 1c) without that module reaching into a private helper."""
+        return self._stdev(self._trade_returns())
+
+    @property
+    def pnl_skew(self) -> Optional[Decimal]:
+        """Population (biased, Fisher-Pearson) skewness of per-trade net
+        P&L -- the exact convention `research/dsr.py`'s PSR/DSR formula
+        (and the published Bailey & Lopez de Prado papers it implements)
+        expects. Deliberately a *different* convention from `pnl_stdev`
+        above: skewness/kurtosis' own second moment divides by ``n``, not
+        ``n - 1`` -- not an inconsistency, a match to the source formula,
+        which was itself derived using population moments throughout
+        (verified against a runnable reference implementation of the
+        published paper, not assumed). ``None`` with fewer than 2 trades
+        or zero variance (undefined, matching `sharpe_ratio`'s own
+        convention for these edge cases).
+        """
+        returns = self._trade_returns()
+        n = len(returns)
+        if n < 2:
+            return None
+        mean = sum(returns) / Decimal(n)
+        m2 = sum((r - mean) ** 2 for r in returns) / Decimal(n)
+        if m2 == 0:
+            return None
+        m3 = sum((r - mean) ** 3 for r in returns) / Decimal(n)
+        return m3 / (m2.sqrt() ** 3)
+
+    @property
+    def pnl_kurtosis(self) -> Optional[Decimal]:
+        """Population excess kurtosis (Fisher convention, normal
+        distribution = 0) of per-trade net P&L -- same population-moment
+        convention as `pnl_skew` above, for the same reason. ``None`` with
+        fewer than 2 trades or zero variance."""
+        returns = self._trade_returns()
+        n = len(returns)
+        if n < 2:
+            return None
+        mean = sum(returns) / Decimal(n)
+        m2 = sum((r - mean) ** 2 for r in returns) / Decimal(n)
+        if m2 == 0:
+            return None
+        m4 = sum((r - mean) ** 4 for r in returns) / Decimal(n)
+        return (m4 / (m2 ** 2)) - 3
 
     # --- R-multiples ---
 

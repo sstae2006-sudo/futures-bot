@@ -4,6 +4,150 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-08-06 — Professional-research-pipeline plan: all seven foundation phases complete (0, 1a/1b/1c/1d, 2a/2b, 3)
+
+Following the full experiment sweep below (six runs, zero validated edges),
+the user asked for the industry-proven path to an actually-trustworthy
+research pipeline rather than "try harder on the same four strategies" --
+this is that plan's foundation phases, before any wider strategy search
+(Phase 4, not started) is allowed to run. Full plan in the session's saved
+plan file; summary of what shipped:
+
+**Phase 1d -- provenance** (`src/futures_bot/provenance.py`, new module):
+`git_commit()` relocated from `api/services.py::_git_commit` (research/
+must never import api/ -- the codebase's own layering rule, which the old
+location violated the moment research code needed it) and
+`bars_dataset_version(product_code, resolution, bars)`, a sha256
+fingerprint of a bars series (first/last timestamp + count) -- a
+deliberately different convention from `research/ml/dataset.py`'s
+trade-row-keyed `_dataset_version`, since an optimizer trial is keyed by
+bars, which have no id/created_at of their own.
+
+**Phase 1a -- trial-inflation counter** (`research/safety.py`):
+`check_trial_inflation`, a new `Finding`-producing check warning when a
+result is the Nth attempt against the same (strategy, dataset_version)
+pair -- the multiple-testing awareness Harvey/Liu/Zhu's t-stat-3.0
+convention informs, applied to one project's own accumulating trial count.
+New `TradeStore.count_prior_trials` query (no new table). Does not yet
+count ad hoc `runs`-table backtests (that table has no `dataset_version`
+column -- a separate, not-yet-requested schema decision).
+
+**Phase 1b -- annualized Sharpe** (`backtest/metrics.py`):
+`BacktestMetrics.daily_returns()` (net P&L bucketed by CME session date,
+not calendar date) and `annualized_sharpe_ratio`, kept as a distinctly
+named property from the existing, deliberately un-annualized
+`sharpe_ratio` -- the two must never be silently conflated in any report
+or API response.
+
+**Phase 1c -- Deflated/Probabilistic Sharpe Ratio** (new module
+`research/dsr.py`, **SCHEMA CHANGE**): implements Bailey & Lopez de
+Prado's PSR/DSR/minimum-track-record-length formulas, every one
+cross-checked against a runnable, published reference implementation
+before being trusted (not derived from memory alone) -- the module's own
+test suite includes the papers' own worked numerical example (expected
+max Sharpe ratio ~3.26 after 1,000 independent trials with V[SR]=1,
+E[SR]=0) as a regression check. New `BacktestMetrics.pnl_stdev`/
+`pnl_skew`/`pnl_kurtosis` properties (population moments, matching the
+papers' own convention -- deliberately different from `pnl_stdev`'s
+sample/ddof=1 convention, not an inconsistency). New, explicitly-approved
+migration (`alembic/versions/c511c0ab8227_...py` + matching
+`trade_store.py`/`db/research_schema.py` changes): 8 new nullable columns
+on `optimization_trials` -- `dataset_version`, `git_commit`, and
+`train_`/`validation_pnl_stdev`/`pnl_skew`/`pnl_kurtosis`. `run_optimization`
+now persists every trial's own train-side moments, every validated trial's
+validation-side moments, and computes the winning trial's Deflated Sharpe
+Ratio against the cross-trial Sharpe dispersion of every freshly-computed
+trial in that call (`CachedTrialMetrics`-restored trials from a resumed
+batch are excluded from that dispersion sample -- deliberately narrower,
+not a bug, since resumed rows don't carry raw per-trade returns). New
+`check_deflated_sharpe_ratio` safety check, wired into `build_safety_report`
+the same optional/pass-in-a-computed-value pattern `commission_check`
+already uses.
+
+**Phase 2a -- local bar resampling** (new module `market_data/resample.py`):
+`resample_bars(bars, target_resolution)`, standard OHLCV aggregation
+(first open/max high/min low/last close/summed volume) bucketed to
+fixed-size UTC-epoch windows. New optional `resample_from` parameter on
+`backtest/data.py::load_bars_from_db` -- an explicit, caller-opted-in
+choice to fetch a finer stored resolution and resample it locally instead
+of a vendor fetch. Unlocks `MNQ`/`M2K` (full ~2-year `1min` history, but
+only ~13 months at coarser resolutions) and roughly doubles `MES`'s own
+usable 5-minute-equivalent history. Verified against a hand-built series
+with a known answer and against real stored MNQ 1-minute bars.
+
+**Phase 2b -- data-completeness finding** (KNOWN_ISSUES.md ISSUE-045,
+docs-only): verified `MES`'s `5min` resolution only starts `2025-07-24`
+while its own `1min` resolution (already fetched) starts a full year
+earlier, `2024-07-22` -- an earlier planning pass's claim that CLAUDE.md
+documents "MES history since 2019" did not check out against any file in
+this repository and is not the basis for this entry.
+
+**Also discovered and recorded, not yet fixed** (KNOWN_ISSUES.md
+ISSUE-046): `ContextMode.ENABLED` backtests are far slower than the
+Context Engine's own 2026-07-27 performance benchmark implied, because
+`engine.py`'s `_MIN_BARS_RETAINED = 2000` sits 4-10x above that
+benchmark's own documented recommendation of a ~200-500 bar caller-side
+window. Measured directly: ~6.87ms per `build_context` call at the real
+2000-bar window, extrapolating to ~30 minutes per context-gating
+experiment script (5 separate full-or-large `ContextMode.ENABLED`
+backtests each) -- one script observed running 24+ minutes without
+finishing its first backtest before this was diagnosed. Not fixed this
+session: reducing the window changes live/paper trading behavior for
+every `ContextMode.ENABLED` caller, not just backtests, and needs its own
+explicit sign-off per CLAUDE.md section 8.
+
+**Phase 3 -- hold-out/data-snooping ledger** (new module `research/holdout.py`,
+**SCHEMA CHANGE**, approved as its own separate checkpoint from Phase 1c's --
+a new table, not more columns on an already-approved one): a new
+append-only `dataset_usage` table (SQLite `trade_store.py` + Postgres
+`db/research_schema.py` + `alembic/versions/5599858fb02d_...py`) records
+every bar range a backtest/optimizer run has ever touched --
+`product_code`, `resolution`, `start_ts`/`end_ts`, `purpose`
+('train'/'validation'/'optimizer'/'exploratory'), `strategy`,
+`run_id_or_batch_id`. `research/optimizer.py::run_optimization` records
+its train/validation slices once per call (not once per combo tried);
+`api/services.py::run_backtest_job` records a walk-forward run's
+train/validation slices, or a plain backtest's single slice as
+'exploratory' -- CSV-sourced backtests are silently skipped (no
+`(product_code, resolution)` pair to key on). New
+`research.holdout.protected_range(store, product_code, resolution, start,
+end)` read helper: `HoldoutStatus` (truthy exactly when the requested
+range has never overlapped anything already recorded) -- the check
+Phase 4's wider strategy search must consult before treating any result
+as a genuine, uncontaminated final test rather than an already-seen slice
+being re-labeled as one.
+
+**Phase 0 -- persist today's (2026-08-05) experiments + free diagnostics**
+(`docs/EXPERIMENT_REGIME_AND_EXCURSION_PASS.md`): all five
+`tools/experiment_context_*.py` scripts and `tools/tune_trend_pullback.py`
+re-run with `store=`/`resolution=` now wired through (already present in
+the recovered pre-crash code, just never actually exercised with
+persistence on) -- ~5 hours of wall-clock time total, almost entirely
+`ContextMode.ENABLED`'s per-call cost (ISSUE-046) across the four
+context-gating scripts. Two free diagnostics against the now-persisted
+767 trades: MAE/MFE efficiency (winners capture 55-90% of their own peak
+favorable move across every strategy -- exits on winners look fine;
+losers give back 1.3-3.2x their own peak favorable move before finally
+closing, a real and previously-untested lever, distinct from anything the
+2026-08-05 entry-gating experiments touched) and regime performance
+(`trend_pullback` + `regime_trend=bearish` is the one bucket worth a
+second look -- 28 trades, +$647.78, 71.4% win rate -- explicitly flagged
+as a lead, not a finding: the sample sits right at the edge of
+`MIN_TRADES_FOR_SIGNIFICANCE`, and this diagnostic pass itself ran dozens
+of implicit comparisons, the exact multiple-testing exposure
+`check_trial_inflation` above exists to formalize). Also surfaced and
+fixed: `research_experiments.db` had exact-duplicate trades under three
+`trend-pullback-risk-state-*` run_ids (an earlier interrupted-then-
+restarted run double-persisted before the interruption was diagnosed) --
+confirmed as clean 2x duplication and removed; root cause filed as
+KNOWN_ISSUES.md ISSUE-047 (`TradeStore.insert_trades` has no dedup
+protection, unlike `insert_optimization_trial`'s `INSERT OR IGNORE`
+against a real uniqueness key) since nothing prevents this recurring for
+any future interrupted persisting script, not just today's.
+
+Full backend suite green throughout (exact before/after counts in
+PROJECT_STATE.md).
+
 ## 2026-08-05 — Full experiment sweep: all four strategies, zero validated edges
 
 Requested as "try everything" after Experiments 1-2 (below). Three more

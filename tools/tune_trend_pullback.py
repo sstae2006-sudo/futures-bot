@@ -62,7 +62,9 @@ def main() -> None:
 
     settings = make_mes_settings(JOURNAL_DIR)
     store = TradeStore(EXPERIMENTS_DB)
-    result = run_optimization(settings, "trend_pullback", PARAM_GRID, bars, store=store, batch_id=BATCH_ID)
+    result = run_optimization(
+        settings, "trend_pullback", PARAM_GRID, bars, store=store, batch_id=BATCH_ID, resolution="5min",
+    )
 
     print(format_optimization_report(result))
 
