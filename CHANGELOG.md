@@ -4,6 +4,20 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-10-28 — Fix: desktop launcher died silently when it had to rebuild
+
+- **Fixed:** `scripts/launch-app.ps1` ran `npm run build` as
+  `& npm ... *>> log`. In Windows PowerShell 5.1, redirecting a native
+  command's stderr under `$ErrorActionPreference = "Stop"` turns any stderr
+  line into a terminating error; vite's chunk-size warning did exactly that,
+  so the launcher exited mid-build with no window, no message box and no
+  log line. Earlier tests missed it because the build was already fresh.
+  npm now runs via `Start-Process -Wait` with file redirection
+  (`.startup/app-build.log` + `app-build.err.log`, plain text instead of
+  UTF-16). Added a `trap` so any unexpected terminating error still shows
+  the failure message box. Verified: stale build detected, rebuilt (~6s),
+  window opened.
+
 ## 2026-10-28 — Desktop-app launcher (Windows)
 
 - **Added:** `scripts/launch-app.ps1` opens futures-bot in its own window:

@@ -106,6 +106,15 @@ function Test-ServesDashboard {
     }
 }
 
+# Last line of defence for "no silent failures": the console is hidden, so an
+# unexpected terminating error would otherwise just end the script with no
+# window, no message and no log line.
+trap {
+    Write-Failure `
+        "Unexpected error: $($_.Exception.Message)" `
+        "See .startup\app-launcher.log. If it keeps happening, run scripts\launch-app.ps1 from a PowerShell window to see the full error."
+}
+
 # 1. Repository + venv
 $RepoRoot = Assert-RepoRoot
 Set-Location $RepoRoot
@@ -135,24 +144,28 @@ if ($sourceTime -gt $buildTime) {
             "npm.cmd not found on PATH, and the dashboard needs rebuilding" `
             "Install Node.js from https://nodejs.org (npm comes with it), then open the app again."
     }
+    # Run npm through Start-Process with file redirection, never `& npm ... *>> log`:
+    # in Windows PowerShell 5.1, redirecting a native command's stderr under
+    # $ErrorActionPreference = "Stop" turns any stderr line (vite's chunk-size
+    # warning, npm notices) into a terminating error, which killed this script
+    # silently mid-build. Start-Process also writes plain UTF-8/ANSI logs.
     $BuildLog = Join-Path $StartupDir "app-build.log"
-    Push-Location $FrontendDir
-    try {
-        if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
-            & $npmCmd.Source install --no-fund --no-audit *> $BuildLog
-            if ($LASTEXITCODE -ne 0) {
-                Write-Failure "npm install failed (exit code $LASTEXITCODE)" "See $BuildLog, or run: cd frontend; npm install"
-            }
+    $BuildErrLog = Join-Path $StartupDir "app-build.err.log"
+    if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
+        $install = Start-Process -FilePath $npmCmd.Source -ArgumentList "install", "--no-fund", "--no-audit" `
+            -WorkingDirectory $FrontendDir -WindowStyle Hidden -Wait -PassThru `
+            -RedirectStandardOutput $BuildLog -RedirectStandardError $BuildErrLog
+        if ($install.ExitCode -ne 0) {
+            Write-Failure "npm install failed (exit code $($install.ExitCode))" "See $BuildErrLog, or run: cd frontend; npm install"
         }
-        & $npmCmd.Source run build *>> $BuildLog
-        $buildExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
     }
-    if ($buildExit -ne 0) {
+    $build = Start-Process -FilePath $npmCmd.Source -ArgumentList "run", "build" `
+        -WorkingDirectory $FrontendDir -WindowStyle Hidden -Wait -PassThru `
+        -RedirectStandardOutput $BuildLog -RedirectStandardError $BuildErrLog
+    if ($build.ExitCode -ne 0) {
         Write-Failure `
-            "Building the dashboard failed (exit code $buildExit)" `
-            "See $BuildLog for the error (usually a TypeScript error from a recent change), or run: cd frontend; npm run build"
+            "Building the dashboard failed (exit code $($build.ExitCode))" `
+            "See $BuildLog and $BuildErrLog (usually a TypeScript error from a recent change), or run: cd frontend; npm run build"
     }
     Write-Ok "Dashboard built"
 }
