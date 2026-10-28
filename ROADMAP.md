@@ -13,6 +13,13 @@ technical debt, scalability concerns, and the ranked "next architectural
 leap" analysis) — the bullets below fold its verdict into this list rather
 than duplicate it.
 
+**Status note (2026-10-27):** Team Mode (Tailscale + shared TimescaleDB)
+is **shelved** by user decision — the code and `TEAM_DEPLOYMENT.md` stay
+intact, but no Team Mode work is a current priority. ISSUE-048
+(date-bound test fixtures) was fixed 2026-10-28, and the frontend got a
+visual redesign the same day (light/dark themes, simplified nav). Next up:
+an optional page-by-page design-audit polish pass, then Phase 4 below.
+
 **Critical**
 - Importer reliability (turtle-data corruption in KNOWN_ISSUES.md
   ISSUE-001 resolved 2026-07-26 — see Completed; other import paths

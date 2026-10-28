@@ -68,6 +68,11 @@ version is bumped by hand.
   `frontend/`, not `npm run dev`, until the underlying script is fixed.
 - `npm run lint` (oxlint) and `npm test` (vitest) are wired up; there's
   no `npm run format` script.
+- **Visual design (2026-10-28 redesign):** all styling lives in
+  `frontend/src/index.css` as tokens with light + dark themes; the theme
+  preference is `frontend/src/theme.ts`. Sidebar = 5 primary pages + a
+  collapsible "More" in `components/Layout.tsx`. Use the tokens and
+  never hardcode hex in components.
 
 ## Completed Features
 
@@ -177,6 +182,30 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-10-28: **ISSUE-048 fixed and frontend redesigned.** The 18 date-bound
+contract-fixture failures are fixed (test-only change): the full backend
+suite is green again, **1830 passed, 51 skipped, 0 failed**. The frontend
+got a visual redesign at the user's request: light and dark themes with a
+System/Light/Dark switch, a brass accent, IBM Plex type, and a sidebar
+trimmed to 5 primary pages plus a collapsible "More". No page or behavior
+was removed, and a new test checks that every route stays reachable.
+Frontend: **157 tests passed**, `tsc -b` clean. Also installed (user scope,
+not part of this repo) three bencium-marketplace design plugins:
+design-audit, typography and bencium-impact-designer. **Recommended
+next task:** a design-audit pass page by page (inline styles in a few
+pages, e.g. `Profile.tsx`/`Register.tsx`, still bypass the tokens), then
+resume Phase 4.
+
+2026-10-27: **Returned after a ~3-month break.** Committed the 2026-08-06
+pipeline work below as `e753024`. **Team Mode is shelved** — the persisted
+`FUTURES_BOT_DATABASE_URL` was removed (ISSUE-049); this machine runs local
+SQLite only until it's deliberately re-enabled per `TEAM_DEPLOYMENT.md`.
+The suite was red that day (18 date-bound fixture failures, ISSUE-048);
+fixed 2026-10-28, see above. Also open:
+ISSUE-050 (scikit-learn model pickle version mismatch) and ISSUE-051
+(backward `MESZ6` → `MESU6` roll, deferred by user). **Recommended next
+task:** fix ISSUE-048 so the suite is green again, then resume Phase 4.
 
 2026-08-06: **Professional-research-pipeline plan: all seven foundation
 phases complete (0, 1a/1b/1c/1d, 2a/2b, 3) — Phase 4 (widening the

@@ -4,6 +4,66 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-10-28 — Frontend visual redesign: light/dark themes + simplified navigation
+
+User-requested ("massively simplified… sleek, modern" instead of a
+cluttered, clinical look). Visual only -- no page, route, API call or
+behavior removed.
+
+- **Changed:** `frontend/src/index.css` rewritten around one token set with
+  two themes (cool light default; slate-ink dark) and a single brass
+  accent (`--accent-solid #d9a84e`) for "you are here" and primary
+  actions -- P&L green/red stay separate. IBM Plex Sans with tabular
+  figures replaces system UI + monospace-everywhere; labels are sentence
+  case instead of tiny all-caps; panels separate by tone with lighter
+  borders; tables keep only a rule under the header. Every existing class
+  name was kept, so all pages restyle without per-page edits. The
+  Mission Control `--mc-*` tokens now simply alias the base tokens in
+  both themes (its separate deeper-dark background was dropped).
+- **Changed:** `frontend/src/components/Layout.tsx` -- sidebar shows 5
+  primary destinations (Home, Dashboard, Backtest, Trades, Live) with
+  inline SVG icons; the other 14 pages live under a collapsible "More"
+  (Research / Data & system / Account) that opens by itself on any of
+  its pages. Mobile (≤860px) collapses the sidebar behind a Menu button.
+- **Added:** `frontend/src/theme.ts` (System/Light/Dark preference,
+  `data-theme` on `<html>`, best-effort localStorage) and a pre-paint
+  script in `frontend/index.html` so a pinned theme never flashes;
+  System/Light/Dark switch at the bottom of the sidebar. IBM Plex fonts
+  load from Google Fonts (falls back to system fonts offline).
+- **Added:** `frontend/src/__tests__/Layout.test.tsx` (8 tests),
+  including a guard that every authenticated route stays reachable.
+- **Tests:** frontend 149 → 157 passed; `tsc -b` clean; oxlint has only the
+  pre-existing `session.tsx` warning.
+
+## 2026-10-28 — Fix ISSUE-048: date-bound contract test fixtures
+
+- **Fixed (tests only):** the 18 suite failures from 2026-10-27. Contract
+  fixtures now compute their trading window relative to the current date
+  instead of a hardcoded `MESU6` window that expired 2026-09-18.
+  Removed `test_research_server_ml_deployment.py`'s duplicate
+  `FakeContractsSession` in favor of the shared one.
+- Files: `tests/test_research_server_paper_trader.py`,
+  `tests/test_research_server_ml_deployment.py`,
+  `tests/test_api_market_data.py`, `tests/test_cli_market_data.py`.
+- No production code, schema, API or frontend changes.
+
+## 2026-10-27 — Return after a ~3-month break: commit the pipeline work, shelve Team Mode, triage suite failures
+
+- **Committed** the 2026-08-06 professional-research-pipeline work
+  (uncommitted since that session) as `e753024`.
+- **Team Mode shelved** (user decision): removed the User-scope
+  `FUTURES_BOT_DATABASE_URL` that was making `scripts\start.ps1` fail
+  against a stopped TimescaleDB container (ISSUE-049). Value was the
+  documented dev default, restorable from `TEAM_DEPLOYMENT.md`. No code
+  changed; Team Mode code/docs remain intact.
+- **Full suite:** 18 failed / 1812 passed / 51 skipped. All 18 traced to
+  date-bound contract fixtures that expired 2026-09-18 (ISSUE-048), not to
+  any code change.
+- **Logged, not fixed:** ISSUE-050 (scikit-learn 1.7.2 → 1.9.0 model
+  pickle mismatch), ISSUE-051 (paper trader rolled `MESZ6` → expired
+  `MESU6`; deferred by user).
+- No code, schema, API or frontend changes.
+
 ## 2026-08-06 — Professional-research-pipeline plan: all seven foundation phases complete (0, 1a/1b/1c/1d, 2a/2b, 3)
 
 Following the full experiment sweep below (six runs, zero validated edges),
