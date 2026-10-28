@@ -79,7 +79,7 @@ export default function Live() {
         </p>
       </div>
 
-      {!status && <LoadingState label="Connecting to live session…" />}
+      {!status && <LoadingState label="Connecting to live session…" variant="text" />}
 
       {status && (
         <>
@@ -89,22 +89,22 @@ export default function Live() {
               {status.strategy && <span>{status.strategy} on {status.contract} ({status.broker})</span>}
               {status.live_symbol && <span>· {status.live_symbol} @ {status.resolution}, polling every {status.poll_seconds}s</span>}
             </div>
-            {status.run_id && <p style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>Run: <code>{status.run_id}</code></p>}
+            {status.run_id && <p className="mt-2 text-xs text-dim">Run: <code>{status.run_id}</code></p>}
             {status.halted && (
-              <p style={{ marginTop: 8 }}>
+              <p className="mt-2">
                 <Badge tone="bad">Halted</Badge> {status.halt_reason}
               </p>
             )}
             {status.error_message && (
-              <p style={{ marginTop: 8 }} role="alert">{status.error_message}</p>
+              <p className="mt-2" role="alert">{status.error_message}</p>
             )}
             {status.last_feed_error && (
-              <p style={{ marginTop: 8 }}>
+              <p className="mt-2">
                 <Badge tone="warn">Feed warning</Badge> {status.last_feed_error}
               </p>
             )}
             {status.warnings.length > 0 && (
-              <ul style={{ marginTop: 8 }}>
+              <ul className="mt-2">
                 {status.warnings.map((w, i) => <li key={i}>{w}</li>)}
               </ul>
             )}
@@ -112,7 +112,7 @@ export default function Live() {
 
           {status.status === 'starting' && (
             <div className="panel">
-              <LoadingState label="Starting the live session… (detecting the active contract, connecting the feed)" />
+              <LoadingState label="Starting the live session… (detecting the active contract, connecting the feed)" variant="text" />
             </div>
           )}
 
@@ -134,7 +134,7 @@ export default function Live() {
                 </div>
               </div>
 
-              <h3 style={{ marginTop: 16 }}>Position</h3>
+              <h3 className="mt-4">Position</h3>
               {!status.position && <p>Flat.</p>}
               {status.position && (
                 <div className="field-row">
@@ -157,7 +157,7 @@ export default function Live() {
                 </div>
               )}
 
-              <button type="button" className="btn btn-secondary" style={{ marginTop: 16 }} disabled={!canStop || submitting || busy} onClick={handleStop}>
+              <button type="button" className="btn btn-secondary mt-4" disabled={!canStop || submitting || busy} onClick={handleStop}>
                 {status.status === 'stopping' ? 'Stopping…' : 'Stop session'}
               </button>
             </div>
@@ -173,7 +173,7 @@ export default function Live() {
                     id="live-symbol" value={liveSymbol} onChange={(e) => setLiveSymbol(e.target.value)}
                     placeholder="e.g. MESU6 -- the CURRENT front-month contract" required
                   />
-                  <p style={{ fontSize: 11, opacity: 0.6, marginTop: 2, maxWidth: 260 }}>
+                  <p className="text-xs text-dim mt-1" style={{ maxWidth: 260 }}>
                     Must be the currently active contract, not a past/expired one -- an expired ticker
                     starts the session fine but never receives any live data. Quarterly codes: H=Mar,
                     M=Jun, U=Sep, Z=Dec (e.g. MESU6 = September 2026).
@@ -188,8 +188,8 @@ export default function Live() {
                   <input id="live-poll" type="number" value={pollSeconds} onChange={(e) => setPollSeconds(e.target.value)} />
                 </div>
               </div>
-              {formError && <p role="alert" style={{ marginTop: 8 }}>{formError}</p>}
-              <button type="submit" className="btn btn-primary" style={{ marginTop: 16 }} disabled={submitting || busy}>
+              {formError && <p role="alert" className="mt-2">{formError}</p>}
+              <button type="submit" className="btn btn-primary mt-4" disabled={submitting || busy}>
                 {submitting || status.status === 'starting' ? 'Starting…' : 'Start session'}
               </button>
             </form>

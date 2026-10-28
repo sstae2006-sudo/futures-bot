@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { listDatasets, listStrategies, runCompare } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, StatTile } from '../components/UI'
+import { LoadingState, ErrorState, StatTile, ApiErrorState } from '../components/UI'
 import { EquityCurveChart } from '../components/Charts'
+import { SERIES_PALETTE } from '../chartColors'
 import { money, num, pct, int, tone } from '../format'
 import type { CompareResult } from '../types'
 
-const COLORS = ['#5b9dff', '#2ecc71', '#e2b93b', '#ff5c5c', '#c084fc', '#40c4d0']
+const COLORS = SERIES_PALETTE
 
 export default function Compare() {
   const strategies = useApi(listStrategies)
@@ -47,8 +48,8 @@ export default function Compare() {
         <p>Run every registered strategy (or a chosen subset) on the same data and risk settings.</p>
       </div>
 
-      {(strategies.loading || datasets.loading) && <LoadingState label="Loading strategies and datasets…" />}
-      {strategies.error && <ErrorState message={strategies.error} onRetry={strategies.refetch} />}
+      {(strategies.loading || datasets.loading) && <LoadingState label="Loading strategies and datasets…" variant="lines" />}
+      <ApiErrorState api={strategies} />
 
       {strategies.data && datasets.data && (
         <div className="panel">

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createExperiment, listExperiments, listModels, listStrategies, updateExperimentNotes } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, EmptyState, Badge } from '../components/UI'
+import { LoadingState, ErrorState, EmptyState, Badge, ApiErrorState } from '../components/UI'
 import { dateTime } from '../format'
 import type { ExperimentOut } from '../types'
 
@@ -124,8 +124,8 @@ export default function Experiments() {
       </form>
 
       {experiments.loading && <LoadingState label="Loading experiments…" />}
-      {experiments.error && <ErrorState message={experiments.error} onRetry={experiments.refetch} />}
-      {experiments.data && experiments.data.length === 0 && <EmptyState label="No experiments recorded yet." />}
+      <ApiErrorState api={experiments} />
+      {experiments.data && experiments.data.length === 0 && <EmptyState label="No experiments recorded yet." hint="Use the form to log a hypothesis before you test it." />}
 
       {experiments.data && experiments.data.length > 0 && (
         <div className="grid grid-2">
@@ -155,7 +155,7 @@ export default function Experiments() {
                 ))}
               </tbody>
             </table>
-            <p style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 8 }}>
+            <p className="text-xs text-faint mt-2">
               Check 2 or more to compare them side-by-side below.
             </p>
           </div>

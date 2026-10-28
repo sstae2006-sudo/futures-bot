@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local dev helper: seeds a session user + theme for headless screenshots.
+# Hardcodes a user id, so never commit it.
+public/__seed.html

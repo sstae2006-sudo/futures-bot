@@ -29,7 +29,7 @@ export function ParameterHeatmap({ trials }: { trials: TrialOut[] }) {
   const [yParam, setYParam] = useState(paramNames[1] ?? paramNames[0] ?? '')
 
   if (paramNames.length < 1) {
-    return <p style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>No swept parameter varied enough to plot.</p>
+    return <p className="text-faint text-xs">No swept parameter varied enough to plot.</p>
   }
 
   const xValues = Array.from(new Set(trials.map((t) => String(t.params[xParam])))).sort()
@@ -54,16 +54,15 @@ export function ParameterHeatmap({ trials }: { trials: TrialOut[] }) {
 
   function colorFor(score: number | null): string {
     if (score === null) return 'transparent'
-    if (maxScore === minScore) return '#5b9dff'
-    const t = (score - minScore) / (maxScore - minScore) // 0..1
-    // Red (worst) -> yellow (mid) -> green (best), matching the badge palette.
-    const hue = t * 120 // 0=red, 120=green
-    return `hsl(${hue}, 65%, 50%)`
+    // Single-hue brass ramp (2026-10 design audit F3C): intensity only, no
+    // good/bad colour judgement -- the $ label in each cell carries the sign.
+    const t = maxScore === minScore ? 0.5 : (score - minScore) / (maxScore - minScore) // 0..1
+    return `color-mix(in srgb, var(--accent-solid) ${Math.round(8 + t * 72)}%, var(--bg-panel))`
   }
 
   return (
     <div>
-      <div className="field-row" style={{ maxWidth: 400, marginBottom: 8 }}>
+      <div className="field-row mb-2" style={{ maxWidth: 400 }}>
         <div className="field">
           <label htmlFor="heatmap-x">X axis</label>
           <select id="heatmap-x" value={xParam} onChange={(e) => setXParam(e.target.value)}>
@@ -107,9 +106,10 @@ export function ParameterHeatmap({ trials }: { trials: TrialOut[] }) {
           </Fragment>
         ))}
       </div>
-      <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
-        Color: red = worst training net P&L in this grid, green = best. A wide patch of similar
-        color is a robust region; one bright cell surrounded by dull ones is an isolated spike —
+      <p className="text-xs text-faint mt-2">
+        Shade: lightest = lowest training net P&L in this grid, darkest = highest. The scale is
+        relative, so a dark cell can still be a loss; check its $ value. A wide patch of similar
+        shade is a robust region; one dark cell surrounded by light ones is an isolated spike —
         treat it as likely overfit, not a real edge.
       </p>
     </div>

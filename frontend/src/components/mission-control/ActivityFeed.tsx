@@ -41,9 +41,9 @@ export default function ActivityFeed() {
       <div className="mc-panel-head">
         <h3>Live Activity</h3>
       </div>
-      {!entries && <p style={{ fontSize: 13, opacity: 0.7 }}>Loading…</p>}
+      {!entries && <p className="text-sm text-dim">Loading…</p>}
       {entries && entries.length === 0 && (
-        <p style={{ fontSize: 13, opacity: 0.7 }}>No recent activity.</p>
+        <p className="text-sm text-dim">No recent activity.</p>
       )}
       {entries && entries.length > 0 && (
         <div>

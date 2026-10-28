@@ -10,13 +10,14 @@ export function ConfusionMatrix({ tn, fp, fn, tp }: { tn: number; fp: number; fn
       <div
         className="heatmap-cell"
         style={{
-          background: good ? 'hsla(120, 60%, 45%, 0.30)' : 'hsla(0, 60%, 45%, 0.30)',
+          // Brass for correct predictions, neutral for errors (design audit F3C).
+          background: good ? 'color-mix(in srgb, var(--accent-solid) 38%, var(--bg-panel))' : 'var(--bg-panel-2)',
           flexDirection: 'column', height: 56,
         }}
         title={`${label}: ${value} (${pct(value)})`}
       >
-        <div style={{ fontWeight: 600, fontSize: 15 }}>{value}</div>
-        <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{label} · {pct(value)}</div>
+        <div style={{ fontWeight: 600, fontSize: 'var(--text-base)' }}>{value}</div>
+        <div className="text-faint" style={{ fontSize: 'var(--text-xs)' }}>{label} · {pct(value)}</div>
       </div>
     )
   }

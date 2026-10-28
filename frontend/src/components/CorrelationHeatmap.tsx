@@ -12,16 +12,14 @@ const METRICS: { key: 'corr_vs_win' | 'corr_vs_pnl' | 'corr_vs_r'; label: string
 function colorFor(value: number | null): string {
   if (value === null) return 'transparent'
   const clamped = Math.max(-1, Math.min(1, value))
-  // -1 -> red (hue 0), 0 -> yellow (hue 60), +1 -> green (hue 120), matching
-  // the red/yellow/green convention ParameterHeatmap/Badge already use.
-  const hue = (clamped + 1) * 60
-  const alpha = 0.2 + Math.abs(clamped) * 0.6
-  return `hsla(${hue}, 70%, 50%, ${alpha})`
+  // Single-hue brass ramp by strength |r| (2026-10 design audit F3C); the
+  // number in the cell carries the sign.
+  return `color-mix(in srgb, var(--accent-solid) ${Math.round(6 + Math.abs(clamped) * 74)}%, var(--bg-panel))`
 }
 
 export function CorrelationHeatmap({ rows }: { rows: CorrelationRow[] }) {
   if (rows.length === 0) {
-    return <p style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>No features to correlate yet.</p>
+    return <p className="text-xs text-faint">No features to correlate yet.</p>
   }
 
   return (
@@ -48,7 +46,7 @@ export function CorrelationHeatmap({ rows }: { rows: CorrelationRow[] }) {
           </div>
         ))}
       </div>
-      <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+      <p className="text-xs text-faint mt-2">
         Color: red = negative correlation, yellow = none, green = positive. R multiple is an
         approximation (net P&amp;L ÷ this strategy&apos;s average loss size) since initial risk
         isn&apos;t logged per trade.

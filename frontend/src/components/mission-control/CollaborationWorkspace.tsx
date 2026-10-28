@@ -31,14 +31,14 @@ const RISK_TONE: Record<string, 'good' | 'warn' | 'bad' | 'neutral'> = {
 }
 
 function TimelineList({ entries }: { entries: TimelineEntry[] }) {
-  if (entries.length === 0) return <p style={{ fontSize: 13, opacity: 0.7 }}>No recent activity.</p>
+  if (entries.length === 0) return <p className="text-sm text-dim">No recent activity.</p>
   return (
-    <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: 13 }}>
+    <ul className="m-0 text-sm" style={{ listStyle: 'none', padding: 0 }}>
       {entries.map((e, i) => (
         <li key={i} style={{ padding: '4px 0', borderBottom: '1px solid var(--border, rgba(128,128,128,0.15))' }}>
           <Badge tone={e.kind === 'commit' ? 'neutral' : 'good'}>{e.kind === 'commit' ? 'commit' : e.title}</Badge>{' '}
           {e.kind === 'commit' ? e.title : (e.detail ?? '')}
-          <div style={{ opacity: 0.6, fontSize: 11 }}>
+          <div className="text-dim text-xs">
             {e.actor ?? 'unknown'} · {e.timestamp}
           </div>
         </li>
@@ -48,13 +48,13 @@ function TimelineList({ entries }: { entries: TimelineEntry[] }) {
 }
 
 function ConflictList({ conflicts }: { conflicts: ConflictPair[] }) {
-  if (conflicts.length === 0) return <p style={{ fontSize: 13, opacity: 0.7 }}>No conflicts detected across active work.</p>
+  if (conflicts.length === 0) return <p className="text-sm text-dim">No conflicts detected across active work.</p>
   return (
-    <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: 13 }}>
+    <ul className="m-0 text-sm" style={{ listStyle: 'none', padding: 0 }}>
       {conflicts.map((c, i) => (
         <li key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border, rgba(128,128,128,0.15))' }}>
           <Badge tone={RISK_TONE[c.risk]}>{c.risk.replace('_', ' ')}</Badge> {c.item_a_title} ↔ {c.item_b_title}
-          <div style={{ opacity: 0.7, marginTop: 2 }}>{c.reason}</div>
+          <div className="mt-1" style={{ opacity: 0.7 }}>{c.reason}</div>
         </li>
       ))}
     </ul>
@@ -104,7 +104,7 @@ export default function CollaborationWorkspace() {
         <h3>Collaboration Workspace</h3>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+      <div className="mb-2" style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {TABS.map((t) => {
           const counts: Partial<Record<Tab, number>> = {
             'My Active Work': myItems.length,

@@ -73,6 +73,13 @@ version is bumped by hand.
   preference is `frontend/src/theme.ts`. Sidebar = 5 primary pages + a
   collapsible "More" in `components/Layout.tsx`. Use the tokens and
   never hardcode hex in components.
+- **Design audit implemented (2026-10-28):** type scale
+  (`--text-*`), spacing scale (`--space-*`) + utility classes, chart
+  series tokens (`--series-*`, via `src/chartColors.ts`), brass heatmaps,
+  grid-less charts, zebra tables, skeleton loading (`LoadingState
+  variant`), empty-state hints, a featured stat tile, an onboarding card,
+  and stale-data banners (`useApi().updatedAt` + `ApiErrorState`). New
+  components should use these rather than inline styles. See CHANGELOG.
 
 ## Completed Features
 
@@ -182,6 +189,14 @@ version is bumped by hand.
 See ROADMAP.md.
 
 ## Last Completed Work
+
+2026-10-28 (later): **Design audit implemented.** The user picked options
+for all 13 audit findings and everything is built (see CHANGELOG for the
+per-finding list). Frontend 166 tests pass, `tsc -b` clean, checked in
+headless Chrome against the running app. Also fixed ISSUE-052 (with user
+approval): the walk-forward verdict now says red "No edge" instead of green
+"Validated" for a run that loses money in both periods. Backend suite
+1833 passed / 51 skipped / 0 failed. Committed and pushed. **Recommended next task:** resume Phase 4.
 
 2026-10-28: **ISSUE-048 fixed and frontend redesigned.** The 18 date-bound
 contract-fixture failures are fixed (test-only change): the full backend

@@ -1962,3 +1962,32 @@ verified fixed — instead mark it Resolved with a date and commit.
   2026-09-18, so a backward roll looks wrong. Possibly related to the
   stale-contract data behind ISSUE-048 but not verified. The user chose to
   defer this on 2026-10-27; recorded so it isn't lost.
+
+### ISSUE-052 — Overfit verdict says "Validated" for a strategy that loses money in-sample and out-of-sample (RESOLVED 2026-10-28)
+
+- **Severity:** Medium — a misleading label on the page meant to make users
+  skeptical. No wrong numbers, but a green "Validated" badge next to two
+  losing figures invites the wrong conclusion.
+- **Files:** `src/futures_bot/api/services.py::overfit_verdict` (label map
+  near line 849); shown in `frontend/src/components/BacktestResults.tsx`.
+- **Observed:** 2026-10-28, run `39e66ef40e85` (trend_pullback on MNQ):
+  net P&L -$219.54 in-sample, -$291.08 out-of-sample over 92 trades,
+  verdict badge "Validated".
+- **Cause:** the verdict only tests for *overfitting* (profitable in
+  training but not out-of-sample, too few validation trades, drawdown over
+  30%). A strategy that loses in both periods trips none of those, falls
+  through to `green`, and `green` is labelled "Validated". The reason text
+  ("No automated warnings fired. This does not prove the result is
+  correct.") is accurate; the label is not.
+- **Possible fix (needs approval, changes API response wording):** a
+  separate "No edge" / "Unprofitable" outcome when validation net P&L is
+  <= 0, or rename `green` to something like "No overfit warnings".
+- **Status:** Resolved 2026-10-28 (user approved the API wording change),
+  committed with the design-audit work. `overfit_verdict` now returns
+  `level="red"`, `label="No edge"` with the reason "Not profitable in
+  training or out-of-sample -- no edge to validate." when validation net P&L
+  is <= 0 and training wasn't profitable. Profitable-in-training-only stays
+  "Likely overfit"; `level` is still one of green/yellow/red, so the schema
+  and frontend `VerdictBadge` are unchanged. Tests:
+  `tests/test_api_services.py::TestOverfitVerdict` (3 new cases).
+

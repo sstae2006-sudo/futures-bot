@@ -72,15 +72,15 @@ export default function IntegrationQueuePanel() {
       <div className="mc-panel-head">
         <h3>Integration Queue</h3>
       </div>
-      <p style={{ fontSize: 11, opacity: 0.6, marginTop: -4, marginBottom: 8 }}>
+      <p className="text-xs text-dim mb-2" style={{ marginTop: -4 }}>
         Ordered by merge-readiness confidence score
       </p>
-      {!entries && <p style={{ fontSize: 13, opacity: 0.7 }}>Loading…</p>}
+      {!entries && <p className="text-sm text-dim">Loading…</p>}
       {entries && entries.length === 0 && (
-        <p style={{ fontSize: 13, opacity: 0.7 }}>Nothing in testing or ready for review.</p>
+        <p className="text-sm text-dim">Nothing in testing or ready for review.</p>
       )}
       {entries && entries.length > 0 && (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        <ul className="m-0" style={{ listStyle: 'none', padding: 0 }}>
           {entries.map((e, i) => {
             const expanded = expandedId === e.work_item.id
             const reviews = reviewsByItem[e.work_item.id]
@@ -105,44 +105,44 @@ export default function IntegrationQueuePanel() {
                   <Badge tone={LEVEL_TONE[e.merge_readiness.level]}>{e.merge_readiness.score}/100</Badge>
                 </button>
                 {e.readiness_note && (
-                  <div style={{ opacity: 0.6, fontSize: 11, marginTop: 2 }}>{e.readiness_note}</div>
+                  <div className="text-dim text-xs mt-1">{e.readiness_note}</div>
                 )}
                 {expanded && (
-                  <div style={{ marginTop: 4 }}>
-                    <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: '0 0 0 12px', fontSize: 12 }}>
+                  <div className="mt-1">
+                    <ul className="text-xs" style={{ listStyle: 'none', margin: '6px 0 0', padding: '0 0 0 12px' }}>
                       {e.merge_readiness.factors.map((f) => (
-                        <li key={f.name} style={{ marginBottom: 2 }}>
+                        <li key={f.name} className="mb-1">
                           <strong>{f.name}</strong>{f.penalty !== 0 ? ` (${f.penalty})` : ''}: {f.explanation}
                         </li>
                       ))}
                     </ul>
 
-                    <div style={{ marginTop: 8, paddingLeft: 12 }}>
+                    <div className="mt-2" style={{ paddingLeft: 12 }}>
                       <button
                         type="button"
                         onClick={() => handleGenerateReview(e.work_item.id)}
                         disabled={generatingId === e.work_item.id}
-                        style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}
+                        className="text-xs" style={{ padding: '2px 8px', cursor: 'pointer' }}
                       >
                         {generatingId === e.work_item.id ? 'Generating…' : 'Generate Integration Review'}
                       </button>
 
                       {reviews && reviews.length === 0 && (
-                        <div style={{ marginTop: 6, fontSize: 11, opacity: 0.6 }}>No Integration Reviews generated yet.</div>
+                        <div className="mt-1 text-xs text-dim">No Integration Reviews generated yet.</div>
                       )}
 
                       {latest && (
-                        <div style={{ marginTop: 6, fontSize: 12 }}>
+                        <div className="mt-1 text-xs">
                           <div>{latest.summary}</div>
-                          <div style={{ fontWeight: 600, marginTop: 2 }}>{latest.recommendation}</div>
+                          <div className="mt-1" style={{ fontWeight: 600 }}>{latest.recommendation}</div>
 
                           {latest.affected_subsystems.length > 0 && (
-                            <div style={{ marginTop: 4, opacity: 0.85 }}>
+                            <div className="mt-1" style={{ opacity: 0.85 }}>
                               <strong>Affects:</strong> {latest.affected_subsystems.join(', ')}
                             </div>
                           )}
 
-                          <div style={{ marginTop: 4, opacity: 0.85 }}>
+                          <div className="mt-1" style={{ opacity: 0.85 }}>
                             {latest.validation_recommendation.recommend_full_suite
                               ? 'Recommends running the full backend suite (some changed files have no direct test mapping).'
                               : latest.validation_recommendation.recommended_tests.length > 0
@@ -153,7 +153,7 @@ export default function IntegrationQueuePanel() {
                           {latest.conflict_resolutions.length > 0 && (
                             <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0 }}>
                               {latest.conflict_resolutions.map((c) => (
-                                <li key={c.work_item_id} style={{ marginTop: 4 }}>
+                                <li key={c.work_item_id} className="mt-1">
                                   <Badge tone={RISK_TONE[c.risk]}>{c.risk}</Badge>{' '}
                                   <span style={{ opacity: 0.85 }}>{c.suggested_resolution}</span>
                                 </li>
@@ -162,7 +162,7 @@ export default function IntegrationQueuePanel() {
                           )}
 
                           {reviews.length > 1 && (
-                            <div style={{ marginTop: 6, opacity: 0.6, fontSize: 11 }}>
+                            <div className="mt-1 text-dim text-xs">
                               Confidence trend (oldest → newest): {reviews.slice().reverse().map((r) => r.confidence_score).join(' → ')}
                             </div>
                           )}

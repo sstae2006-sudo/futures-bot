@@ -17,8 +17,9 @@ than duplicate it.
 is **shelved** by user decision — the code and `TEAM_DEPLOYMENT.md` stay
 intact, but no Team Mode work is a current priority. ISSUE-048
 (date-bound test fixtures) was fixed 2026-10-28, and the frontend got a
-visual redesign the same day (light/dark themes, simplified nav). Next up:
-an optional page-by-page design-audit polish pass, then Phase 4 below.
+visual redesign the same day (light/dark themes, simplified nav), and the
+design-audit polish pass and the ISSUE-052 verdict-wording fix landed
+the same day too. Next up: Phase 4 below.
 
 **Critical**
 - Importer reliability (turtle-data corruption in KNOWN_ISSUES.md

@@ -50,12 +50,12 @@ export default function WorkforcePanel() {
       <div className="mc-panel-head">
         <h3>Workforce</h3>
       </div>
-      {!workers && <p style={{ fontSize: 13, opacity: 0.7 }}>Loading…</p>}
+      {!workers && <p className="text-sm text-dim">Loading…</p>}
       {workers && workers.length === 0 && (
-        <p style={{ fontSize: 13, opacity: 0.7 }}>No workers have reported in yet.</p>
+        <p className="text-sm text-dim">No workers have reported in yet.</p>
       )}
       {workers && workers.length > 0 && (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        <ul className="m-0" style={{ listStyle: 'none', padding: 0 }}>
           {workers.map((w) => (
             <li
               key={w.id}
@@ -67,21 +67,21 @@ export default function WorkforcePanel() {
                   {w.is_stale ? 'stale' : w.status}
                 </Badge>
               </div>
-              <div style={{ opacity: 0.7, fontSize: 12, marginTop: 2 }}>
+              <div className="text-dim text-xs mt-1">
                 {WORKER_TYPE_LABEL[w.worker_type]}
                 {w.subsystem ? ` · ${w.subsystem}` : ''}
                 {w.current_work_item_id ? ` · working on ${w.current_work_item_id}` : ''}
               </div>
               {w.capabilities.length > 0 && (
-                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                <div className="mt-1" style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {w.capabilities.map((c) => (
-                    <span key={c} className="badge badge-neutral" style={{ fontSize: 10 }}>
+                    <span key={c} className="badge badge-neutral text-xs">
                       {c}
                     </span>
                   ))}
                 </div>
               )}
-              <div style={{ opacity: 0.5, fontSize: 11, marginTop: 2 }}>
+              <div className="text-dim text-xs mt-1">
                 last heartbeat {timeAgo(w.seconds_since_heartbeat)}
               </div>
             </li>

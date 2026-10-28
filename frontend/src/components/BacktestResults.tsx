@@ -1,7 +1,8 @@
 import { useApi } from '../useApi'
 import { generateReport, getOverfitVerdict, getPerformance, reportViewUrl } from '../api'
-import { LoadingState, ErrorState, StatTile, VerdictBadge } from './UI'
+import { LoadingState, ErrorState, StatTile, VerdictBadge, ApiErrorState } from './UI'
 import { EquityCurveChart, DrawdownChart } from './Charts'
+import { SERIES_COLOR } from '../chartColors'
 import { money, num, pct, int, tone } from '../format'
 import type { RunDetail } from '../types'
 import { useState } from 'react'
@@ -28,8 +29,19 @@ export default function BacktestResults({ run }: { run: RunDetail }) {
 
   return (
     <div>
-      <div className="grid grid-stats" style={{ marginBottom: 16 }}>
-        <StatTile label="Net P&L" value={money(run.net_pnl)} tone={tone(run.net_pnl)} />
+      <div className="grid grid-stats has-featured mb-4">
+        {/* Lead figure (design audit F7B). Its subline always states the
+            out-of-sample result, or that there isn't one, so the biggest
+            number on the page is never read without its validation context. */}
+        <StatTile
+          featured
+          label="Net P&L (in-sample)"
+          value={money(run.net_pnl)}
+          tone={tone(run.net_pnl)}
+          sub={run.walk_forward
+            ? `Out-of-sample: ${money(run.validation_net_pnl)} over ${int(run.validation_trade_count)} trades`
+            : 'In-sample only. No walk-forward validation on this run.'}
+        />
         <StatTile label="Profit Factor" value={num(run.profit_factor)} />
         <StatTile label="Win Rate" value={pct(run.win_rate)} />
         <StatTile label="Expectancy" value={money(run.expectancy)} />
@@ -49,17 +61,17 @@ export default function BacktestResults({ run }: { run: RunDetail }) {
       {run.walk_forward && verdict.data && (
         <div className="panel">
           <h3>Overfit Verdict</h3>
-          <div style={{ marginBottom: 8 }}>
+          <div className="mb-2">
             <VerdictBadge level={verdict.data.level} label={verdict.data.label} />
           </div>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: 'var(--text-dim)' }}>
+          <ul className="m-0 text-xs text-dim" style={{ paddingLeft: 18 }}>
             {verdict.data.reasons.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
         </div>
       )}
 
       {run.caveats.length > 0 && (
-        <div className="caveats" style={{ marginBottom: 16 }}>
+        <div className="caveats mb-4">
           <h3>Read this before trusting the numbers above</h3>
           <ul>
             {run.caveats.map((c, i) => <li key={i}>{c}</li>)}
@@ -67,13 +79,13 @@ export default function BacktestResults({ run }: { run: RunDetail }) {
         </div>
       )}
 
-      {perf.loading && <LoadingState label="Loading performance data…" />}
-      {perf.error && <ErrorState message={perf.error} onRetry={perf.refetch} />}
+      {perf.loading && <LoadingState label="Loading performance data…" variant="chart" />}
+      <ApiErrorState api={perf} />
       {perf.data && (
         <div className="grid grid-2">
           <div className="panel">
             <h3>Equity Curve</h3>
-            <EquityCurveChart series={[{ name: run.strategy, color: 'var(--accent)', points: perf.data.equity_curve }]} />
+            <EquityCurveChart series={[{ name: run.strategy, color: SERIES_COLOR, points: perf.data.equity_curve }]} />
           </div>
           <div className="panel">
             <h3>Drawdown</h3>
@@ -100,9 +112,9 @@ export default function BacktestResults({ run }: { run: RunDetail }) {
       <div className="panel">
         <h3>Report</h3>
         <button className="btn" onClick={handleGenerateReport}>Generate HTML report</button>
-        {reportError && <p style={{ color: 'var(--bad)', marginTop: 8 }}>{reportError}</p>}
+        {reportError && <p className="form-error mt-2">{reportError}</p>}
         {reportUrl && (
-          <p style={{ marginTop: 8 }}>
+          <p className="mt-2">
             <a href={reportUrl} target="_blank" rel="noreferrer">Open report ↗</a>
           </p>
         )}

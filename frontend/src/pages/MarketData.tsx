@@ -4,7 +4,7 @@ import {
   startMarketDataScheduler, stopMarketDataScheduler, ApiRequestError,
 } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, EmptyState, StatTile, Badge } from '../components/UI'
+import { LoadingState, EmptyState, StatTile, Badge, ApiErrorState } from '../components/UI'
 import { dateTime, int } from '../format'
 
 function bytesToMb(bytes: number): string {
@@ -49,8 +49,8 @@ export default function MarketData() {
         </p>
       </div>
 
-      {overview.loading && <LoadingState label="Loading market data overview…" />}
-      {overview.error && <ErrorState message={overview.error} onRetry={overview.refetch} />}
+      {overview.loading && <LoadingState label="Loading market data overview…" variant="tiles" />}
+      <ApiErrorState api={overview} />
 
       {overview.data && (
         <>
@@ -128,7 +128,7 @@ export default function MarketData() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            <div className="mt-3" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button" className="btn btn-primary" disabled={busy !== null}
                 onClick={() => run('sync', () => syncMarketDataNow({ product_code: product, resolution }), (r) => `Synced ${r.product_code} ${r.resolution}: ${r.bars_fetched} new bar(s).`)}
@@ -174,8 +174,8 @@ export default function MarketData() {
               )}
             </div>
 
-            {message && <p style={{ marginTop: 12 }}>{message}</p>}
-            {error && <p role="alert" style={{ marginTop: 12 }}>{error}</p>}
+            {message && <p className="mt-3">{message}</p>}
+            {error && <p role="alert" className="mt-3">{error}</p>}
           </div>
         </>
       )}

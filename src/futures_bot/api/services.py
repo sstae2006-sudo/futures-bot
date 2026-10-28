@@ -823,6 +823,10 @@ def overfit_verdict(run: RunDetail) -> OverfitVerdict:
     """
     reasons: list[str] = []
     level = "green"
+    # Losing out-of-sample without having been profitable in training isn't
+    # overfitting -- there's no edge to overfit -- so it gets its own label
+    # rather than falling through to "Validated" (KNOWN_ISSUES.md ISSUE-052).
+    no_edge = False
 
     if run.validation_trade_count is None:
         return OverfitVerdict(level="yellow", label="Not validated", reasons=["No out-of-sample validation was run for this result."])
@@ -835,6 +839,10 @@ def overfit_verdict(run: RunDetail) -> OverfitVerdict:
         if run.net_pnl > 0 and run.validation_net_pnl <= 0:
             reasons.append("Profitable in training but not out-of-sample.")
             level = "red"
+        elif run.validation_net_pnl <= 0:
+            reasons.append("Not profitable in training or out-of-sample -- no edge to validate.")
+            level = "red"
+            no_edge = True
         elif run.expectancy and run.expectancy > 0:
             pass  # degradation-by-expectancy needs both expectancies; trade_count-based checks above cover the common case here
 
@@ -846,7 +854,7 @@ def overfit_verdict(run: RunDetail) -> OverfitVerdict:
     if not reasons:
         reasons.append("No automated warnings fired. This does not prove the result is correct.")
 
-    label = {"green": "Validated", "yellow": "Questionable", "red": "Likely overfit"}[level]
+    label = "No edge" if no_edge else {"green": "Validated", "yellow": "Questionable", "red": "Likely overfit"}[level]
     return OverfitVerdict(level=level, label=label, reasons=reasons)
 
 

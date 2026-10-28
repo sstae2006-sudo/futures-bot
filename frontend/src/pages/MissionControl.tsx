@@ -31,7 +31,7 @@ export default function MissionControl() {
     <div className="mission-control">
       <div className="mc-cta">
         <div>
-          <h2 style={{ marginBottom: 2 }}>Mission Control</h2>
+          <h2 className="mb-1">Mission Control</h2>
           <p>Platform overview. Head to the research dashboard for backtests, the leaderboard, and system stats.</p>
         </div>
         <Link to="/dashboard" className="btn">Continue to Dashboard →</Link>

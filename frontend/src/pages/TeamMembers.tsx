@@ -39,17 +39,20 @@ export default function TeamMembers() {
   }
 
   if (!organization) {
-    return <p style={{ fontSize: 13, opacity: 0.7 }}>Loading organization…</p>
+    return <p className="text-sm text-dim">Loading organization…</p>
   }
 
   return (
     <div style={{ maxWidth: 720 }}>
-      <h2>Team Members</h2>
-      <p style={{ opacity: 0.7, fontSize: 13, marginBottom: 16 }}>{organization.name}</p>
+      <div className="page-header">
+        <h1>Team members</h1>
+        <p>Everyone in your organization and their role.</p>
+      </div>
+      <p className="text-dim text-sm mb-4">{organization.name}</p>
 
-      {members && members.length === 0 && <p style={{ fontSize: 13, opacity: 0.7 }}>No members yet.</p>}
+      {members && members.length === 0 && <p className="text-sm text-dim">No members yet.</p>}
       {members && members.length > 0 && (
-        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <table className="text-sm" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ textAlign: 'left', opacity: 0.6 }}>
               <th style={{ padding: '4px 0' }}>Name</th>
@@ -86,7 +89,7 @@ export default function TeamMembers() {
                     <Badge tone={ROLE_TONE[member.role]}>{member.role}</Badge>
                   )}
                   {member.id === currentUser?.id && (
-                    <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.6 }}>
+                    <span className="text-xs text-dim" style={{ marginLeft: 6 }}>
                       (ask a teammate to change your role)
                     </span>
                   )}

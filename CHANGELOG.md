@@ -4,6 +4,78 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-10-28 — Design audit implementation (frontend, visual + one small behavior change)
+
+The user reviewed a 13-finding design audit (published as a private claude.ai
+artifact) and picked one option per finding: F1A F2B F3C F4C F5A F6B F7B F8A
+F9C F10C F11B F12C F13C. F5A/F8A meant "keep current".
+
+- **Note:** `frontend/public/__seed.html` (dev helper that seeds a session
+  user for headless screenshots) is now gitignored, not committed.
+- **Changed (F6B):** six-step type scale as tokens (`--text-xs…--text-2xl`:
+  12/14/16/20/24/30). Every `font-size` in `index.css` now uses a token; body
+  text is 16px (was 14.5), page titles 30px (was 26).
+- **Added (F1A):** spacing tokens (`--space-1…6`, 4px base) and utility
+  classes (`.mt-*`, `.mb-*`, `.m-0`, `.stack-*`, `.text-xs/-sm`,
+  `.text-dim/-faint`, `.text-plain`). A one-off codemod moved 151 inline
+  `style={{…}}` props onto them (spacing snapped to the nearest step, so
+  some gaps moved by 1-2px). 183 inline styles remain: dynamic or
+  structural ones (widths, grid templates, flex layouts) with no utility
+  equivalent.
+- **Changed (F2B):** chart series use new `--series-1…8` tokens (brass-led,
+  muted, retuned per theme, no pure green/red). The palette lives in
+  `frontend/src/chartColors.ts`; Compare, ML Research and backtest charts
+  use it. All `#5b9dff`-style hex fallbacks removed.
+- **Changed (F3C):** parameter, correlation and confusion heatmaps use a
+  single-hue brass ramp (`color-mix` with `--accent-solid`) in place of the
+  red-to-green hue sweep. Parameter heatmap caption rewritten: the scale is
+  relative, so a dark cell can still be a loss.
+- **Changed (F10C):** charts have no background grid; money axes get a
+  dashed $0 reference line; single-series equity curves and the drawdown
+  chart get a soft area fill. Ticks are 12px.
+- **Changed (F7B):** `StatTile` gained a `featured` prop (plus
+  `.grid-stats.has-featured`). Backtest results lead with "Net P&L
+  (in-sample)", whose subline always states the out-of-sample result or
+  that there was no walk-forward validation. The validation tiles are kept.
+- **Changed (F9C):** tables use zebra rows; hover uses the accent tint.
+- **Changed (F11B):** `LoadingState` gained `variant`
+  (`table` default / `tiles` / `chart` / `lines` / `text`): shape-of-content
+  skeletons with the label kept as screen-reader text. `text` keeps the old
+  visible message for multi-second steps (connecting, parsing, starting the
+  live session).
+- **Changed (F12C):** `EmptyState` gained an optional `hint`; Dashboard,
+  Jobs, Reports, Experiments, Trade Explorer and Market Regime empty states
+  now name the next step with an inline link.
+- **Changed (F13C, small behavior change):** `useApi` now returns
+  `updatedAt`. New `ApiErrorState`/`StaleBanner` in `UI.tsx`: when a
+  refresh fails but earlier data exists, a slim "Showing data from HH:MM /
+  Refresh failed: ... / Retry" banner shows above the still-rendered data in
+  place of the full error block. 26 `useApi` error slots across 15 files
+  switched over. `useApi` already kept `data` on error; only the
+  presentation changed. Not applied to Live (SSE via `useLiveStream`, which
+  has no error surface) or to destructured `useApi` calls in Mission Control.
+- **Changed (F4C):** Welcome and Register use a centred `.onboarding-card`;
+  Profile, Organization settings and Team members use the standard
+  `.page-header`. Ad-hoc `var(--danger, #d33)` errors became `.form-error`;
+  API-key boxes became `.code-field`.
+- **Fixed:** `a.btn-secondary` (router `<Link>`s) rendered as solid primary
+  buttons because only `button.btn-secondary` was styled. Profile's
+  "Email notifications" checkbox stretched full width (now `.checkbox-field`).
+- **Tests:** frontend 157 -> 166 (new `UI.test.tsx` cases for skeleton
+  variants, `ApiErrorState`/`StaleBanner`, empty-state hint, featured tile).
+  `tsc -b` clean; oxlint shows only the pre-existing `session.tsx` warning.
+  Checked visually with headless Chrome against the running app: Dashboard
+  (light/dark), Backtest result (dark), Welcome, Profile.
+- **Fixed (backend, API response wording, user-approved):** ISSUE-052.
+  `GET /api/walk-forward/{run_id}/verdict` returned a green "Validated" for
+  a run that lost money in-sample and out-of-sample. It now returns red
+  "No edge" in that case. Same route, same schema (`level` is still
+  green/yellow/red); only the label/reason for that case changed. 3 new
+  tests in `tests/test_api_services.py`.
+  Full backend suite: 1833 passed, 51 skipped, 0 failed. Verified live:
+  run `39e66ef40e85` now returns red "No edge".
+- No schema or route changes.
+
 ## 2026-10-28 — Frontend visual redesign: light/dark themes + simplified navigation
 
 User-requested ("massively simplified… sleek, modern" instead of a

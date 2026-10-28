@@ -10,9 +10,10 @@ import {
 } from '../api'
 import { useApi } from '../useApi'
 import { useJobStream } from '../useJobStream'
-import { LoadingState, ErrorState, EmptyState, StatTile, Badge } from '../components/UI'
+import { LoadingState, ErrorState, EmptyState, StatTile, Badge, ApiErrorState } from '../components/UI'
 import { JobProgressBar } from '../components/JobProgress'
 import { HistogramChart, FeatureScatterChart, ROCCurveChart, PRCurveChart, CalibrationChart } from '../components/Charts'
+import { SERIES_PALETTE } from '../chartColors'
 import { CorrelationHeatmap } from '../components/CorrelationHeatmap'
 import { ConfusionMatrix } from '../components/ConfusionMatrix'
 import { dateTime, money, num, tone } from '../format'
@@ -33,7 +34,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'terminal', label: 'Terminal' },
 ]
 
-const LINE_COLORS = ['#5b9dff', '#2ecc71', '#e2b93b', '#ff5c5c', '#a78bfa', '#38bdf8', '#fb923c', '#f472b6']
+const LINE_COLORS = SERIES_PALETTE
 
 export default function MlResearch() {
   const strategies = useApi(listStrategies)
@@ -64,7 +65,7 @@ export default function MlResearch() {
             {(strategies.data ?? []).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
           </select>
         </div>
-        <div className="pill-row" style={{ marginTop: 8, marginBottom: 0 }}>
+        <div className="pill-row mt-2" style={{ marginBottom: 0 }}>
           {TABS.map((t) => (
             <button key={t.key} type="button" className={`pill${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
               {t.label}
@@ -73,8 +74,8 @@ export default function MlResearch() {
         </div>
       </div>
 
-      {strategies.loading && <LoadingState label="Loading strategies…" />}
-      {strategies.error && <ErrorState message={strategies.error} onRetry={strategies.refetch} />}
+      {strategies.loading && <LoadingState label="Loading strategies…" variant="lines" />}
+      <ApiErrorState api={strategies} />
 
       {strategy && tab === 'dataset' && <DatasetTab strategy={strategy} />}
       {strategy && tab === 'features' && <FeatureExplorerTab strategy={strategy} />}
@@ -100,11 +101,11 @@ function DatasetTab({ strategy }: { strategy: string }) {
 
   return (
     <div>
-      {health.loading && <LoadingState label="Loading dataset health…" />}
-      {health.error && <ErrorState message={health.error} onRetry={health.refetch} />}
+      {health.loading && <LoadingState label="Loading dataset health…" variant="tiles" />}
+      <ApiErrorState api={health} />
       {health.data && (
         <>
-          <div className="grid grid-stats" style={{ marginBottom: 16 }}>
+          <div className="grid grid-stats mb-4">
             <StatTile label="Total Trades" value={health.data.trade_count} />
             <StatTile label="Wins" value={health.data.win_count} tone="good" />
             <StatTile label="Losses" value={health.data.loss_count} tone="bad" />
@@ -118,7 +119,7 @@ function DatasetTab({ strategy }: { strategy: string }) {
 
           <div className="panel">
             <h3 style={{ marginTop: 0 }}>Deduplication</h3>
-            <p style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: -4 }}>
+            <p className="text-xs text-dim" style={{ marginTop: -4 }}>
               Rows across every backtest run recorded for this strategy, collapsed to one row per unique
               market opportunity before training (see below) — a rerun or overlapping walk-forward window
               must not double-count the same trade.
@@ -143,18 +144,18 @@ function DatasetTab({ strategy }: { strategy: string }) {
               </Badge>
             </p>
             {health.data.date_range && (
-              <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+              <p className="text-xs text-dim">
                 Date range: {dateTime(health.data.date_range[0])} — {dateTime(health.data.date_range[1])}
               </p>
             )}
             {health.data.reasons.length > 0 && (
-              <ul style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+              <ul className="text-xs text-dim">
                 {health.data.reasons.map((r) => <li key={r}>{r}</li>)}
               </ul>
             )}
             <a
-              className="btn btn-secondary" href={mlDatasetExportUrl(strategy)}
-              style={{ display: 'inline-block', marginTop: 8, textDecoration: 'none' }}
+              className="btn btn-secondary mt-2" href={mlDatasetExportUrl(strategy)}
+              style={{ display: 'inline-block', textDecoration: 'none' }}
             >
               Export dataset (CSV)
             </a>
@@ -192,7 +193,7 @@ function FeatureExplorerTab({ strategy }: { strategy: string }) {
   return (
     <div>
       {correlation.loading && <LoadingState label="Loading features…" />}
-      {correlation.error && <ErrorState message={correlation.error} onRetry={correlation.refetch} />}
+      <ApiErrorState api={correlation} />
       {correlation.data && correlation.data.length === 0 && (
         <EmptyState label="No features yet — record more trades for this strategy." />
       )}
@@ -215,10 +216,10 @@ function FeatureExplorerTab({ strategy }: { strategy: string }) {
           <div className="panel">
             <h3 style={{ marginTop: 0 }}>{selected ?? 'Select a feature'}</h3>
             {!selected && <EmptyState label="Click a feature on the left to see its distribution and stats." />}
-            {selected && distribution.loading && <LoadingState label="Loading distribution…" />}
+            {selected && distribution.loading && <LoadingState label="Loading distribution…" variant="chart" />}
             {selected && distribution.data && (
               <div>
-                <div className="grid grid-stats" style={{ marginBottom: 12 }}>
+                <div className="grid grid-stats mb-3">
                   <StatTile label="Mean" value={distribution.data.mean !== null ? distribution.data.mean.toFixed(3) : '—'} />
                   <StatTile label="Std Dev" value={distribution.data.std !== null ? distribution.data.std.toFixed(3) : '—'} />
                   <StatTile label="Min" value={distribution.data.min !== null ? distribution.data.min.toFixed(3) : '—'} />
@@ -227,13 +228,13 @@ function FeatureExplorerTab({ strategy }: { strategy: string }) {
                   <StatTile label="Loss Avg" value={distribution.data.loss_average !== null ? distribution.data.loss_average.toFixed(3) : '—'} tone="bad" />
                 </div>
                 {selectedRow && (
-                  <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+                  <p className="text-xs text-dim">
                     Correlation with win/loss: <strong>{selectedRow.corr_vs_win?.toFixed(3) ?? '—'}</strong>
                     {' · '}with net P&amp;L: <strong>{selectedRow.corr_vs_pnl?.toFixed(3) ?? '—'}</strong>
                   </p>
                 )}
                 {importanceRow && (
-                  <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+                  <p className="text-xs text-dim">
                     Feature importance (from {latestFinished?.model_type.replace(/_/g, ' ')} v{latestFinished?.version}):{' '}
                     <strong>{importanceRow.importance.toFixed(4)}</strong>
                   </p>
@@ -280,7 +281,7 @@ function CorrelationTab({ strategy }: { strategy: string }) {
   return (
     <div>
       {correlation.loading && <LoadingState label="Computing correlations…" />}
-      {correlation.error && <ErrorState message={correlation.error} onRetry={correlation.refetch} />}
+      <ApiErrorState api={correlation} />
       {correlation.data && correlation.data.length === 0 && <EmptyState label="No features yet." />}
       {correlation.data && correlation.data.length > 0 && (
         <>
@@ -491,7 +492,7 @@ function ModelsTrainingTab({
         </div>
         <button className="btn" type="submit" disabled={submitting}>{submitting ? 'Submitting…' : 'Train'}</button>
         {submitError && <ErrorState message={submitError} />}
-        {streamedJob && <div style={{ marginTop: 12 }}><JobProgressBar job={streamedJob} /></div>}
+        {streamedJob && <div className="mt-3"><JobProgressBar job={streamedJob} /></div>}
       </form>
 
       {deployment.data && <DeploymentPanel status={deployment.data} onRollback={handleRollback} />}
@@ -503,7 +504,7 @@ function ModelsTrainingTab({
       </div>
 
       {models.loading && <LoadingState label="Loading models…" />}
-      {models.error && <ErrorState message={models.error} onRetry={models.refetch} />}
+      <ApiErrorState api={models} />
       {models.data && models.data.length === 0 && <EmptyState label="No models trained yet for this strategy." />}
 
       {(models.data ?? []).map((m) => (
@@ -590,11 +591,11 @@ function ModelReportCard({
     <div className="panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <h3 style={{ marginBottom: 4, marginTop: 0 }}>
+          <h3 className="mb-1" style={{ marginTop: 0 }}>
             {model.model_type.replace(/_/g, ' ')} · v{model.version}{' '}
             {isDeployed && <Badge tone="good">deployed</Badge>}
           </h3>
-          <p style={{ fontSize: 11.5, color: 'var(--text-faint)', margin: 0 }}>
+          <p className="text-xs text-faint m-0">
             {strategy} · trained {dateTime(model.created_at)} · dataset v{model.dataset_version.slice(0, 8)} · {model.dataset_size} trades
           </p>
         </div>
@@ -602,28 +603,28 @@ function ModelReportCard({
       </div>
 
       {model.overfit_warning && (
-        <div className="caveats" style={{ marginTop: 8 }}>
+        <div className="caveats mt-2">
           <h3>Overfitting Warning</h3>
-          <p style={{ margin: 0 }}>{model.overfit_note}</p>
+          <p className="m-0">{model.overfit_note}</p>
         </div>
       )}
 
       {model.status === 'failed' && model.error_message && <ErrorState message={model.error_message} />}
 
       {model.metrics && (
-        <div className="grid grid-2" style={{ marginTop: 12 }}>
+        <div className="grid grid-2 mt-3">
           <MetricsPanel title="In-Sample (Train)" metrics={model.metrics.train} />
           <MetricsPanel title={outOfSampleTitle} metrics={outOfSampleMetrics} />
         </div>
       )}
       {model.metrics?.test && (
-        <div style={{ marginTop: 8 }}>
+        <div className="mt-2">
           <MetricsPanel title="Out-of-Sample (Test)" metrics={model.metrics.test} />
         </div>
       )}
 
       {diagnostics && (
-        <div className="grid grid-2" style={{ marginTop: 12 }}>
+        <div className="grid grid-2 mt-3">
           <div>
             <h4>Confusion Matrix (validation)</h4>
             <ConfusionMatrix {...diagnostics.confusion_matrix} />
@@ -650,14 +651,14 @@ function ModelReportCard({
       )}
 
       {model.feature_importance && model.feature_importance.length > 0 && (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <h4>Feature Importance</h4>
           <FeatureImportanceBars rows={model.feature_importance} />
         </div>
       )}
 
-      <details style={{ marginTop: 12 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 12.5, color: 'var(--text-dim)' }}>Hyperparameters &amp; provenance</summary>
+      <details className="mt-3">
+        <summary className="text-xs text-dim" style={{ cursor: 'pointer' }}>Hyperparameters &amp; provenance</summary>
         <dl className="detail-list">
           <Row label="Hyperparameters" value={JSON.stringify(model.hyperparameters)} />
           <Row label="Feature columns" value={`${model.feature_columns.length}: ${model.feature_columns.join(', ')}`} />
@@ -667,11 +668,11 @@ function ModelReportCard({
       </details>
 
       {model.derived_backtest_metrics && (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <h4>Backtest Impact (with vs. without AI filter)</h4>
           <div className="grid grid-2">
             <div>
-              <h4 style={{ marginBottom: 4 }}>Without AI</h4>
+              <h4 className="mb-1">Without AI</h4>
               <dl className="detail-list">
                 <Row label="Trades" value={String(model.derived_backtest_metrics.without_ai.trade_count ?? '—')} />
                 <Row label="Net P&L" value={money(model.derived_backtest_metrics.without_ai.net_pnl)} />
@@ -679,7 +680,7 @@ function ModelReportCard({
               </dl>
             </div>
             <div>
-              <h4 style={{ marginBottom: 4 }}>With AI</h4>
+              <h4 className="mb-1">With AI</h4>
               <dl className="detail-list">
                 <Row label="Trades" value={String(model.derived_backtest_metrics.with_ai.trade_count ?? '—')} />
                 <Row label="Net P&L" value={money(model.derived_backtest_metrics.with_ai.net_pnl)} />
@@ -687,7 +688,7 @@ function ModelReportCard({
               </dl>
             </div>
           </div>
-          <p style={{ fontSize: 11.5, color: 'var(--text-faint)', margin: '8px 0 0' }}>
+          <p className="text-xs text-faint" style={{ margin: '8px 0 0' }}>
             Good ROC AUC on the classifier doesn't guarantee the filter helps the strategy — these numbers say
             whether it actually did.
           </p>
@@ -716,7 +717,7 @@ function ModelReportCard({
         </div>
       )}
 
-      <div className="field-row" style={{ marginTop: 12, alignItems: 'flex-end' }}>
+      <div className="field-row mt-3" style={{ alignItems: 'flex-end' }}>
         <div className="field" style={{ maxWidth: 220 }}>
           <label htmlFor={`bt-dataset-${model.id}`}>Compute backtest metrics on</label>
           <select id={`bt-dataset-${model.id}`} value={datasetForBacktest} onChange={(e) => setDatasetForBacktest(e.target.value)}>
@@ -729,12 +730,12 @@ function ModelReportCard({
         </button>
       </div>
 
-      <div className="field" style={{ marginTop: 12 }}>
+      <div className="field mt-3">
         <label htmlFor={`notes-${model.id}`}>Notes</label>
         <input id={`notes-${model.id}`} value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} />
       </div>
 
-      <div className="pill-row" style={{ marginTop: 8 }}>
+      <div className="pill-row mt-2">
         <button className="btn btn-secondary" type="button" onClick={() => onSaveNotes(notesDraft)}>Save Notes</button>
         {(model.status === 'queued' || model.status === 'training') && (
           <button className="btn btn-secondary" type="button" onClick={onStop}>Stop</button>
@@ -753,7 +754,7 @@ function ModelReportCard({
 
 function MetricsPanel({ title, metrics }: { title: string; metrics?: ClassificationMetrics }) {
   return (
-    <div className="panel" style={{ margin: 0 }}>
+    <div className="panel m-0">
       <h4 style={{ marginTop: 0 }}>{title}</h4>
       {!metrics ? (
         <EmptyState label="Not available." />
@@ -777,8 +778,8 @@ function FeatureImportanceBars({ rows }: { rows: FeatureImportanceRow[] }) {
   return (
     <div>
       {sorted.map((r, i) => (
-        <div key={r.feature} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 11.5 }}>
-          <span style={{ width: 22, color: 'var(--text-faint)' }}>#{i + 1}</span>
+        <div key={r.feature} className="mb-1 text-xs" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="text-faint" style={{ width: 22 }}>#{i + 1}</span>
           <span className="mono" style={{ width: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.feature}>
             {r.feature}
           </span>
@@ -799,8 +800,8 @@ function FeatureImportanceBars({ rows }: { rows: FeatureImportanceRow[] }) {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 12.5, gap: 12 }}>
-      <span style={{ color: 'var(--text-faint)' }}>{label}</span>
+    <div className="text-xs" style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+      <span className="text-faint">{label}</span>
       <span className="mono" style={{ textAlign: 'right', wordBreak: 'break-word' }}>{value}</span>
     </div>
   )
@@ -832,7 +833,7 @@ function ComparisonTab({ strategy }: { strategy: string }) {
   return (
     <div>
       {models.loading && <LoadingState label="Loading models…" />}
-      {models.error && <ErrorState message={models.error} onRetry={models.refetch} />}
+      <ApiErrorState api={models} />
       {finished.length === 0 && <EmptyState label="No finished models yet for this strategy." />}
 
       {finished.length > 0 && (
@@ -1016,7 +1017,7 @@ function PredictionSandboxTab({ strategy }: { strategy: string }) {
               />
             </div>
             {prediction.calibration_bucket && (
-              <p style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 8 }}>
+              <p className="text-xs text-dim mt-2">
                 At this probability, similarly-scored historical trades won{' '}
                 {(prediction.calibration_bucket.actual_win_rate * 100).toFixed(0)}% of the time
                 (model predicted {(prediction.calibration_bucket.predicted * 100).toFixed(0)}%).
@@ -1054,13 +1055,13 @@ function TerminalTab({ jobId, lines }: { jobId: string | null; lines: string[] }
         <EmptyState label="Nothing logged yet — train a model to see live progress here." />
       ) : (
         <pre
-          className="mono"
-          style={{ maxHeight: 420, overflowY: 'auto', fontSize: 12, lineHeight: 1.6, background: 'var(--bg-panel-2)', padding: 12, borderRadius: 6 }}
+          className="mono text-xs"
+          style={{ maxHeight: 420, overflowY: 'auto', lineHeight: 1.6, background: 'var(--bg-panel-2)', padding: 12, borderRadius: 6 }}
         >
           {lines.join('\n')}
         </pre>
       )}
-      {jobId && <p style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 8 }}>Watching job <code>{jobId}</code>.</p>}
+      {jobId && <p className="text-xs text-faint mt-2">Watching job <code>{jobId}</code>.</p>}
     </div>
   )
 }

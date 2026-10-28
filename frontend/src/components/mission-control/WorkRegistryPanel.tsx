@@ -60,7 +60,7 @@ export default function WorkRegistryPanel() {
         <h3>Active Work</h3>
       </div>
 
-      <form onSubmit={handleCreate} style={{ marginBottom: 12 }}>
+      <form onSubmit={handleCreate} className="mb-3">
         <div className="field-row">
           <div className="field" style={{ flex: 2 }}>
             <input
@@ -99,9 +99,9 @@ export default function WorkRegistryPanel() {
       </form>
 
       {warnings.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
+        <div className="mb-3">
           {warnings.map((w) => (
-            <p key={w.work_item_id} role="alert" style={{ fontSize: 12, margin: '2px 0' }}>
+            <p key={w.work_item_id} role="alert" className="text-xs" style={{ margin: '2px 0' }}>
               <Badge tone={RISK_TONE[w.risk]}>{w.risk.replace('_', ' ')}</Badge> {w.reason}
             </p>
           ))}

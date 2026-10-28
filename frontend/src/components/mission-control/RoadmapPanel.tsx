@@ -9,7 +9,7 @@ export default function RoadmapPanel() {
     <div className="mc-panel">
       <div className="mc-panel-head">
         <h3>Roadmap</h3>
-        <span style={{ fontSize: 10, opacity: 0.5 }}>static reference</span>
+        <span className="text-xs text-dim">static reference</span>
       </div>
       <div className="mc-roadmap-milestone">
         <span className="k">Current Milestone</span>
@@ -19,7 +19,7 @@ export default function RoadmapPanel() {
         <span className="k">Next Priority</span>
         {roadmap.nextPriority}
       </div>
-      <span className="k" style={{ display: 'block', marginBottom: 4 }}>Upcoming</span>
+      <span className="k mb-1" style={{ display: 'block' }}>Upcoming</span>
       <ul className="mc-roadmap-list">
         {roadmap.upcoming.map((item) => (
           <li key={item}>{item}</li>

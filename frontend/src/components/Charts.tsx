@@ -1,11 +1,17 @@
 import {
-  Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart as RechartsScatterChart,
+  Area, Bar, BarChart, ComposedChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart as RechartsScatterChart,
   Tooltip, XAxis, YAxis, Legend, ZAxis,
 } from 'recharts'
 import type { DrawdownPoint, EquityPoint } from '../types'
+import { SERIES_COLOR } from '../chartColors'
 
+// 2026-10 design audit F10C: no background grid. Charts read levels from the
+// axis ticks, a single $0 reference line marks breakeven where the y-axis is
+// money, and single-series P&L curves get a soft area fill. F2B: colours come
+// from the --series-* tokens via chartColors.ts, never hex.
 const AXIS_COLOR = 'var(--text-faint)'
-const GRID_COLOR = 'var(--border)'
+const ZERO_COLOR = 'var(--text-faint)'
+const TICK = { fontSize: 12 }
 
 export function EquityCurveChart({
   series,
@@ -24,19 +30,23 @@ export function EquityCurveChart({
 
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <LineChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis dataKey="trade_number" stroke={AXIS_COLOR} tick={{ fontSize: 11 }} label={{ value: 'Trade #', position: 'insideBottom', offset: -4, fontSize: 11, fill: AXIS_COLOR }} />
-        <YAxis stroke={AXIS_COLOR} tick={{ fontSize: 11 }} domain={['auto', 'auto']} tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
+      <ComposedChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+        <XAxis dataKey="trade_number" stroke={AXIS_COLOR} tick={TICK} label={{ value: 'Trade #', position: 'insideBottom', offset: -4, fontSize: 12, fill: AXIS_COLOR }} />
+        <YAxis stroke={AXIS_COLOR} tick={TICK} domain={['auto', 'auto']} tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
         <Tooltip
           contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }}
           formatter={(value) => `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
         />
         {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+        <ReferenceLine y={0} stroke={ZERO_COLOR} strokeDasharray="2 3" />
+        {series.length === 1 && (
+          <Area type="stepAfter" dataKey={series[0].name} stroke="none" fill={series[0].color} fillOpacity={0.12}
+            isAnimationActive={false} legendType="none" tooltipType="none" />
+        )}
         {series.map((s) => (
           <Line key={s.name} type="stepAfter" dataKey={s.name} stroke={s.color} dot={false} strokeWidth={1.75} isAnimationActive={false} />
         ))}
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }
@@ -45,16 +55,16 @@ export function DrawdownChart({ points }: { points: DrawdownPoint[] }) {
   const rows = points.map((p) => ({ trade_number: p.trade_number, drawdown: Number(p.drawdown) }))
   return (
     <ResponsiveContainer width="100%" height={180}>
-      <LineChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis dataKey="trade_number" stroke={AXIS_COLOR} tick={{ fontSize: 11 }} />
-        <YAxis stroke={AXIS_COLOR} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
+      <ComposedChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+        <XAxis dataKey="trade_number" stroke={AXIS_COLOR} tick={TICK} />
+        <YAxis stroke={AXIS_COLOR} tick={TICK} tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
         <Tooltip
           contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }}
           formatter={(value) => `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
         />
-        <Line type="stepAfter" dataKey="drawdown" stroke="var(--bad)" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-      </LineChart>
+        <ReferenceLine y={0} stroke={ZERO_COLOR} strokeDasharray="2 3" />
+        <Area type="stepAfter" dataKey="drawdown" stroke="var(--bad)" strokeWidth={1.5} fill="var(--bad)" fillOpacity={0.12} isAnimationActive={false} />
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }
@@ -81,9 +91,8 @@ export function HistogramChart({
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 24 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis dataKey="range" stroke={AXIS_COLOR} tick={{ fontSize: 9.5 }} interval={0} angle={-35} textAnchor="end" height={40} />
-        <YAxis stroke={AXIS_COLOR} tick={{ fontSize: 11 }} allowDecimals={false} />
+        <XAxis dataKey="range" stroke={AXIS_COLOR} tick={TICK} interval={0} angle={-35} textAnchor="end" height={40} />
+        <YAxis stroke={AXIS_COLOR} tick={TICK} allowDecimals={false} />
         <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }} />
         {showSplit ? (
           <>
@@ -92,7 +101,7 @@ export function HistogramChart({
             <Bar dataKey="losses" stackId="a" fill="var(--bad)" name="Losses" isAnimationActive={false} />
           </>
         ) : (
-          <Bar dataKey="count" fill="var(--accent, #5b9dff)" isAnimationActive={false} />
+          <Bar dataKey="count" fill="var(--series-1)" isAnimationActive={false} />
         )}
       </BarChart>
     </ResponsiveContainer>
@@ -111,11 +120,10 @@ export function FeatureScatterChart({
   return (
     <ResponsiveContainer width="100%" height={260}>
       <RechartsScatterChart margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis type="number" dataKey="value" name="Feature value" stroke={AXIS_COLOR} tick={{ fontSize: 11 }} />
-        <YAxis type="number" dataKey="net_pnl" name="Net P&L" stroke={AXIS_COLOR} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+        <XAxis type="number" dataKey="value" name="Feature value" stroke={AXIS_COLOR} tick={TICK} />
+        <YAxis type="number" dataKey="net_pnl" name="Net P&L" stroke={AXIS_COLOR} tick={TICK} tickFormatter={(v) => `$${v}`} />
         <ZAxis range={[28, 28]} />
-        <ReferenceLine y={0} stroke={AXIS_COLOR} strokeDasharray="3 3" />
+        <ReferenceLine y={0} stroke={ZERO_COLOR} strokeDasharray="2 3" />
         <Tooltip
           cursor={{ strokeDasharray: '3 3' }}
           contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }}
@@ -136,14 +144,13 @@ export function ROCCurveChart({ fpr, tpr }: { fpr: number[]; tpr: number[] }) {
   return (
     <ResponsiveContainer width="100%" height={240}>
       <LineChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis dataKey="fpr" type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={{ fontSize: 11 }}
-          label={{ value: 'False Positive Rate', position: 'insideBottom', offset: -4, fontSize: 11, fill: AXIS_COLOR }} />
-        <YAxis type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={{ fontSize: 11 }}
-          label={{ value: 'True Positive Rate', angle: -90, position: 'insideLeft', fontSize: 11, fill: AXIS_COLOR }} />
+        <XAxis dataKey="fpr" type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={TICK}
+          label={{ value: 'False Positive Rate', position: 'insideBottom', offset: -4, fontSize: 12, fill: AXIS_COLOR }} />
+        <YAxis type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={TICK}
+          label={{ value: 'True Positive Rate', angle: -90, position: 'insideLeft', fontSize: 12, fill: AXIS_COLOR }} />
         <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }} />
         <Line type="monotone" dataKey="chance" stroke={AXIS_COLOR} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="Chance" />
-        <Line type="monotone" dataKey="tpr" stroke="var(--accent, #5b9dff)" dot={false} strokeWidth={1.75} isAnimationActive={false} name="ROC" />
+        <Line type="monotone" dataKey="tpr" stroke="var(--series-1)" dot={false} strokeWidth={1.75} isAnimationActive={false} name="ROC" />
       </LineChart>
     </ResponsiveContainer>
   )
@@ -155,13 +162,12 @@ export function PRCurveChart({ precision, recall }: { precision: number[]; recal
   return (
     <ResponsiveContainer width="100%" height={240}>
       <LineChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis dataKey="recall" type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={{ fontSize: 11 }}
-          label={{ value: 'Recall', position: 'insideBottom', offset: -4, fontSize: 11, fill: AXIS_COLOR }} />
-        <YAxis type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={{ fontSize: 11 }}
-          label={{ value: 'Precision', angle: -90, position: 'insideLeft', fontSize: 11, fill: AXIS_COLOR }} />
+        <XAxis dataKey="recall" type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={TICK}
+          label={{ value: 'Recall', position: 'insideBottom', offset: -4, fontSize: 12, fill: AXIS_COLOR }} />
+        <YAxis type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={TICK}
+          label={{ value: 'Precision', angle: -90, position: 'insideLeft', fontSize: 12, fill: AXIS_COLOR }} />
         <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }} />
-        <Line type="monotone" dataKey="precision" stroke="var(--good)" dot={false} strokeWidth={1.75} isAnimationActive={false} name="Precision" />
+        <Line type="monotone" dataKey="precision" stroke={SERIES_COLOR} dot={false} strokeWidth={1.75} isAnimationActive={false} name="Precision" />
       </LineChart>
     </ResponsiveContainer>
   )
@@ -175,14 +181,13 @@ export function CalibrationChart({ predicted, actual }: { predicted: number[]; a
   return (
     <ResponsiveContainer width="100%" height={240}>
       <LineChart data={rows} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-        <XAxis dataKey="predicted" type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={{ fontSize: 11 }}
-          label={{ value: 'Predicted probability', position: 'insideBottom', offset: -4, fontSize: 11, fill: AXIS_COLOR }} />
-        <YAxis type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={{ fontSize: 11 }}
-          label={{ value: 'Actual win rate', angle: -90, position: 'insideLeft', fontSize: 11, fill: AXIS_COLOR }} />
+        <XAxis dataKey="predicted" type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={TICK}
+          label={{ value: 'Predicted probability', position: 'insideBottom', offset: -4, fontSize: 12, fill: AXIS_COLOR }} />
+        <YAxis type="number" domain={[0, 1]} stroke={AXIS_COLOR} tick={TICK}
+          label={{ value: 'Actual win rate', angle: -90, position: 'insideLeft', fontSize: 12, fill: AXIS_COLOR }} />
         <Tooltip contentStyle={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', fontSize: 12 }} />
         <Line type="monotone" dataKey="perfect" stroke={AXIS_COLOR} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="Perfectly calibrated" />
-        <Line type="monotone" dataKey="actual" stroke="var(--accent, #5b9dff)" dot={{ r: 3 }} strokeWidth={1.75} isAnimationActive={false} name="Observed" />
+        <Line type="monotone" dataKey="actual" stroke="var(--series-1)" dot={{ r: 3 }} strokeWidth={1.75} isAnimationActive={false} name="Observed" />
       </LineChart>
     </ResponsiveContainer>
   )

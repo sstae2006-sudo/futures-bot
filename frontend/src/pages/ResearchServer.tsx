@@ -6,7 +6,7 @@ import {
 } from '../api'
 import { useApi } from '../useApi'
 import { useJobStream } from '../useJobStream'
-import { LoadingState, ErrorState, EmptyState, StatTile, Badge, Panel } from '../components/UI'
+import { LoadingState, ErrorState, EmptyState, StatTile, Badge, Panel, ApiErrorState } from '../components/UI'
 import { JobProgressBar } from '../components/JobProgress'
 import { dateTime, money, num, tone } from '../format'
 import type { InsightOut, ParamsComparisonResult } from '../types'
@@ -57,8 +57,8 @@ export default function ResearchServer() {
         </p>
       </div>
 
-      {status.loading && <LoadingState label="Loading research server status…" />}
-      {status.error && <ErrorState message={status.error} onRetry={status.refetch} />}
+      {status.loading && <LoadingState label="Loading research server status…" variant="tiles" />}
+      <ApiErrorState api={status} />
 
       {status.data && (
         <>
@@ -82,7 +82,7 @@ export default function ResearchServer() {
               />
             </div>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <div className="mt-4" style={{ display: 'flex', gap: 8 }}>
               {status.data.running ? (
                 <button type="button" className="btn btn-secondary" disabled={busy !== null} onClick={() => run('stop', stopResearchServer, () => 'Research server stopped.')}>
                   {busy === 'stop' ? 'Stopping…' : 'Stop server'}
@@ -96,8 +96,8 @@ export default function ResearchServer() {
                 {busy === 'nightly' ? 'Running…' : 'Run nightly batch now'}
               </button>
             </div>
-            {message && <p style={{ marginTop: 12 }}>{message}</p>}
-            {error && <p role="alert" style={{ marginTop: 12 }}>{error}</p>}
+            {message && <p className="mt-3">{message}</p>}
+            {error && <p role="alert" className="mt-3">{error}</p>}
           </div>
 
           <div className="panel">
@@ -129,20 +129,20 @@ export default function ResearchServer() {
               </div>
             )}
             {status.data.paper_trader.last_feed_error && (
-              <p style={{ marginTop: 12 }}><Badge tone="warn">Feed warning</Badge> {status.data.paper_trader.last_feed_error}</p>
+              <p className="mt-3"><Badge tone="warn">Feed warning</Badge> {status.data.paper_trader.last_feed_error}</p>
             )}
           </div>
 
           <Panel title="Recent discoveries">
             {findings.loading && <LoadingState label="Loading findings…" />}
-            {findings.error && <ErrorState message={findings.error} onRetry={findings.refetch} />}
+            <ApiErrorState api={findings} />
             {findings.data && findings.data.length === 0 && (
               <EmptyState label="No degradation, regime-drift, or parameter-recommendation findings yet." />
             )}
             {findings.data && findings.data.length > 0 && (
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              <ul className="m-0" style={{ listStyle: 'none', padding: 0 }}>
                 {findings.data.map((f, i) => (
-                  <li key={i} style={{ marginBottom: 8 }}>
+                  <li key={i} className="mb-2">
                     <button
                       type="button"
                       onClick={() => setSelectedFinding(f)}
@@ -154,7 +154,7 @@ export default function ResearchServer() {
                     >
                       <Badge tone={f.severity === 'warning' ? 'warn' : 'neutral'}>{f.category}</Badge>{' '}
                       {f.message}
-                      {f.details && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-faint)' }}>(details →)</span>}
+                      {f.details && <span className="text-xs text-faint" style={{ marginLeft: 8 }}>(details →)</span>}
                     </button>
                   </li>
                 ))}
@@ -287,8 +287,8 @@ function FindingDetail({
       {Object.keys(details).length > 0 && (
         <dl className="detail-list">
           {Object.entries(details).filter(([k]) => k !== 'is_deployable').map(([k, v]) => (
-            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 12.5, gap: 12 }}>
-              <span style={{ color: 'var(--text-faint)' }}>{k}</span>
+            <div key={k} className="text-xs" style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+              <span className="text-faint">{k}</span>
               <span className="mono" style={{ textAlign: 'right', wordBreak: 'break-word' }}>
                 {typeof v === 'object' ? JSON.stringify(v) : String(v)}
               </span>
@@ -298,7 +298,7 @@ function FindingDetail({
       )}
 
       {isRecommendation && !isDeployable && (
-        <p style={{ fontSize: 12.5, color: 'var(--text-faint)', marginTop: 8 }}>
+        <p className="text-xs text-faint mt-2">
           {finding.strategy} is not config.yaml's active <code>strategy_name</code> -- only the active strategy has a
           config-file <code>strategy_params</code> slot, so this recommendation can't be deployed from here. See
           docs/RESEARCH_SERVER.md's "Known gaps" section.
@@ -308,7 +308,7 @@ function FindingDetail({
       {isDeployable && (
         <>
           <h4>Test More</h4>
-          <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+          <p className="text-xs text-dim">
             Runs a real backtest with the currently configured params and one with the recommended params, side by
             side, before you decide whether to deploy.
           </p>
@@ -325,12 +325,12 @@ function FindingDetail({
             </button>
           </div>
           {testError && <ErrorState message={testError} />}
-          {testJob && testJob.status !== 'completed' && <div style={{ marginTop: 8 }}><JobProgressBar job={testJob} /></div>}
+          {testJob && testJob.status !== 'completed' && <div className="mt-2"><JobProgressBar job={testJob} /></div>}
           {testResult && (
-            <div style={{ marginTop: 12 }}>
+            <div className="mt-3">
               <div className="grid grid-2">
                 <div>
-                  <h4 style={{ marginBottom: 4 }}>Current Params</h4>
+                  <h4 className="mb-1">Current Params</h4>
                   <div className="grid grid-stats">
                     <StatTile label="Trades" value={testResult.current.trade_count ?? '—'} />
                     <StatTile label="Net P&L" value={money(testResult.current.net_pnl)} />
@@ -338,7 +338,7 @@ function FindingDetail({
                   </div>
                 </div>
                 <div>
-                  <h4 style={{ marginBottom: 4 }}>Recommended Params</h4>
+                  <h4 className="mb-1">Recommended Params</h4>
                   <div className="grid grid-stats">
                     <StatTile label="Trades" value={testResult.recommended.trade_count ?? '—'} />
                     <StatTile label="Net P&L" value={money(testResult.recommended.net_pnl)} />
@@ -346,7 +346,7 @@ function FindingDetail({
                   </div>
                 </div>
               </div>
-              <p style={{ fontSize: 11.5, color: 'var(--text-faint)', margin: '8px 0 0' }}>
+              <p className="text-xs text-faint" style={{ margin: '8px 0 0' }}>
                 Net P&amp;L alone can look better while quietly trading a thinner sample, a worse profit
                 factor, or a bigger drawdown — these numbers say whether it actually did.
               </p>
@@ -375,7 +375,7 @@ function FindingDetail({
             </div>
           )}
 
-          <h4 style={{ marginTop: 16 }}>Deploy</h4>
+          <h4 className="mt-4">Deploy</h4>
           {!confirmingDeploy ? (
             <button className="btn" type="button" onClick={() => setConfirmingDeploy(true)}>Deploy Recommended Params</button>
           ) : (
@@ -386,7 +386,7 @@ function FindingDetail({
                 <code className="mono">{JSON.stringify(details.recommended_params)}</code>. A full backup of the current
                 file is taken first (comments included) and can be restored with one click below at any time.
               </p>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div className="mt-2" style={{ display: 'flex', gap: 8 }}>
                 <button className="btn" type="button" disabled={deploying} onClick={handleDeploy}>
                   {deploying ? 'Deploying…' : 'Confirm Deploy'}
                 </button>
@@ -395,9 +395,9 @@ function FindingDetail({
             </div>
           )}
           {deployError && <ErrorState message={deployError} />}
-          {deployedMessage && <p style={{ marginTop: 8 }}>{deployedMessage}</p>}
+          {deployedMessage && <p className="mt-2">{deployedMessage}</p>}
 
-          <h4 style={{ marginTop: 16 }}>Deployment History</h4>
+          <h4 className="mt-4">Deployment History</h4>
           {deployments.loading && <LoadingState label="Loading deployment history…" />}
           {deployments.data && deployments.data.length === 0 && <EmptyState label="No deploys yet for this strategy." />}
           {deployments.data && deployments.data.length > 0 && (

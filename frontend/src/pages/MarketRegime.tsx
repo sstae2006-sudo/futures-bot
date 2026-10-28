@@ -1,7 +1,8 @@
+import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { getRegimePerformance, listStrategies } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, EmptyState } from '../components/UI'
+import { LoadingState, EmptyState, ApiErrorState } from '../components/UI'
 import { money, pct, int, tone } from '../format'
 import type { RegimeBucket } from '../types'
 
@@ -22,7 +23,7 @@ export default function MarketRegime() {
         <p>When does this strategy actually work? Performance grouped by trend, volatility, and session at entry time.</p>
       </div>
 
-      {strategies.loading && <LoadingState label="Loading strategies…" />}
+      {strategies.loading && <LoadingState label="Loading strategies…" variant="lines" />}
       {strategies.data && (
         <div className="panel">
           <div className="field" style={{ maxWidth: 260 }}>
@@ -34,8 +35,8 @@ export default function MarketRegime() {
         </div>
       )}
 
-      {perf.loading && <LoadingState label="Loading regime performance…" />}
-      {perf.error && <ErrorState message={perf.error} onRetry={perf.refetch} />}
+      {perf.loading && <LoadingState label="Loading regime performance…" variant="chart" />}
+      <ApiErrorState api={perf} />
 
       {perf.data && (
         <div className="grid grid-2">
@@ -55,7 +56,7 @@ function RegimeTable({ title, buckets }: { title: string; buckets: RegimeBucket[
     <div className="panel">
       <h3>{title}</h3>
       {buckets.length === 0 ? (
-        <EmptyState label="Not enough trades recorded yet for this strategy." />
+        <EmptyState label="Not enough trades recorded yet for this strategy." hint={<><Link to="/backtest">Run a backtest</Link> on it to record trades.</>} />
       ) : (
         <table>
           <thead>

@@ -27,13 +27,13 @@ function SchedulerStatus({
   cyclesCompleted: number
 }) {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+    <div className="mb-3">
+      <div className="mb-1" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="text-sm" style={{ fontWeight: 600 }}>{label}</span>
         <Badge tone={running ? 'good' : 'neutral'}>{running ? 'running' : 'stopped'}</Badge>
       </div>
       {running ? (
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
+        <div className="text-xs text-dim">
           <div>{cyclesCompleted} cycle{cyclesCompleted === 1 ? '' : 's'} completed{lastCycleAt ? ` · last ${dateTime(lastCycleAt)}` : ''}</div>
           {lastError ? (
             <div className="tone-bad">{lastError}</div>
@@ -42,7 +42,7 @@ function SchedulerStatus({
           ) : null}
         </div>
       ) : (
-        <div style={{ fontSize: 12, opacity: 0.6 }}>Not enabled (automation.enabled in config.yaml).</div>
+        <div className="text-xs text-dim">Not enabled (automation.enabled in config.yaml).</div>
       )}
     </div>
   )
@@ -87,7 +87,7 @@ export default function AutomationPanel() {
         <h3>Automation</h3>
       </div>
 
-      {!status && <p style={{ fontSize: 13, opacity: 0.7 }}>Loading…</p>}
+      {!status && <p className="text-sm text-dim">Loading…</p>}
       {status && (
         <>
           <SchedulerStatus
@@ -118,30 +118,30 @@ export default function AutomationPanel() {
       )}
 
       <div style={{ marginTop: 12, borderTop: '1px solid var(--border, rgba(128,128,128,0.25))', paddingTop: 12 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+        <div className="text-sm mb-1" style={{ fontWeight: 600 }}>
           Draft work items {drafts ? `(${drafts.length})` : ''}
         </div>
         {drafts && drafts.length === 0 && (
-          <p style={{ fontSize: 12, opacity: 0.7 }}>No drafts awaiting review.</p>
+          <p className="text-xs text-dim">No drafts awaiting review.</p>
         )}
         {drafts && drafts.length > 0 && (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          <ul className="m-0" style={{ listStyle: 'none', padding: 0 }}>
             {drafts.map((item) => (
-              <li key={item.id} style={{ marginBottom: 8, fontSize: 12 }}>
+              <li key={item.id} className="mb-2 text-xs">
                 <div style={{ fontWeight: 600 }}>{item.title}</div>
                 <div style={{ opacity: 0.7 }}>{item.estimated_files.length} file{item.estimated_files.length === 1 ? '' : 's'}</div>
-                <div style={{ marginTop: 4 }}>
+                <div className="mt-1">
                   <button
-                    className="btn btn-primary"
-                    style={{ fontSize: 11, padding: '2px 8px', marginRight: 6 }}
+                    className="btn btn-primary text-xs"
+                    style={{ padding: '2px 8px', marginRight: 6 }}
                     disabled={busyId === item.id}
                     onClick={() => handleApprove(item.id)}
                   >
                     Approve
                   </button>
                   <button
-                    className="btn btn-secondary"
-                    style={{ fontSize: 11, padding: '2px 8px' }}
+                    className="btn btn-secondary text-xs"
+                    style={{ padding: '2px 8px' }}
                     disabled={busyId === item.id}
                     onClick={() => handleDiscard(item.id)}
                   >

@@ -13,7 +13,7 @@ export default function RequireSession({ children }: { children: ReactNode }) {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: 14, opacity: 0.7 }}>
+      <div className="text-sm text-dim" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
         Loading your session…
       </div>
     )

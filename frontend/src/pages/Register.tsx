@@ -111,19 +111,20 @@ export default function Register() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 24px' }}>
-      <div style={{ width: '100%', maxWidth: 480 }}>
-        <h1 style={{ marginBottom: 4 }}>Register</h1>
-        <p style={{ opacity: 0.7, marginBottom: 24, fontSize: 13 }}>
+    // Onboarding card layout (2026-10 design audit F4C).
+    <div className="onboarding">
+      <div className="onboarding-card">
+        <h1>Register</h1>
+        <p className="lede text-sm">
           Step {step === 'organization' ? 1 : step === 'account' ? 2 : 3} of 3
         </p>
 
-        {error && <p role="alert" style={{ color: 'var(--danger, #d33)', marginBottom: 12 }}>{error}</p>}
+        {error && <p role="alert" className="form-error mb-3">{error}</p>}
 
         {step === 'organization' && (
           <form onSubmit={handleOrganizationSubmit}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <div className="mb-4">
+              <label className="mb-2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="radio" checked={orgMode === 'create'} onChange={() => setOrgMode('create')} />
                 Create a new organization
               </label>
@@ -136,7 +137,7 @@ export default function Register() {
                   style={{ width: '100%', marginLeft: 24, marginBottom: 8 }}
                 />
               )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <label className="mb-2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="radio" checked={orgMode === 'join'} onChange={() => setOrgMode('join')} />
                 Join an existing organization
               </label>
@@ -160,28 +161,28 @@ export default function Register() {
 
         {step === 'account' && (
           <form onSubmit={handleAccountSubmit}>
-            <div className="field" style={{ marginBottom: 12 }}>
+            <div className="field mb-3">
               <label htmlFor="reg-display-name">Display Name</label>
               <input
                 id="reg-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)}
                 style={{ width: '100%' }}
               />
             </div>
-            <div className="field" style={{ marginBottom: 12 }}>
+            <div className="field mb-3">
               <label htmlFor="reg-username">Username</label>
               <input
                 id="reg-username" value={username} onChange={(e) => setUsername(e.target.value)}
                 style={{ width: '100%' }}
               />
             </div>
-            <div className="field" style={{ marginBottom: 12 }}>
+            <div className="field mb-3">
               <label htmlFor="reg-email">Email (optional)</label>
               <input
                 id="reg-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
                 style={{ width: '100%' }}
               />
             </div>
-            <p style={{ fontSize: 12, opacity: 0.7, marginBottom: 12 }}>
+            <p className="text-xs text-dim mb-3">
               {orgMode === 'create'
                 ? "You'll be the Owner of this new organization."
                 : "You'll join as a Member -- an existing Owner/Admin can change your role later."}
@@ -197,19 +198,15 @@ export default function Register() {
 
         {step === 'success' && createdUser && (
           <div>
-            <h2 style={{ fontSize: 16, marginBottom: 8 }}>Welcome, {createdUser.display_name}!</h2>
-            <p style={{ fontSize: 13, opacity: 0.8, marginBottom: 12 }}>
+            <h2 className="mb-2">Welcome, {createdUser.display_name}!</h2>
+            <p className="text-sm text-dim mb-3">
               Here is your personal API key. Save it now -- it won't be shown again in full
               (you can always regenerate a new one from your Profile page).
             </p>
-            <div style={{
-              fontFamily: 'monospace', fontSize: 13, padding: '8px 12px', border: '1px solid var(--border, #ccc)',
-              borderRadius: 4, marginBottom: 8, wordBreak: 'break-all',
-            }}
-            >
+            <div className="code-field mb-2">
               {createdUser.api_key}
             </div>
-            <button type="button" className="btn btn-secondary" onClick={handleCopyApiKey} style={{ marginBottom: 16 }}>
+            <button type="button" className="btn btn-secondary mb-4" onClick={handleCopyApiKey}>
               {copied ? 'Copied!' : 'Copy to clipboard'}
             </button>
             <div>

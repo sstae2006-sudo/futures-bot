@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { getLogs } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, EmptyState, Badge } from '../components/UI'
+import { LoadingState, EmptyState, Badge, ApiErrorState } from '../components/UI'
 import { dateTime } from '../format'
 
 export default function Logs() {
@@ -40,7 +40,7 @@ export default function Logs() {
       </div>
 
       {logs.loading && <LoadingState label="Loading logs…" />}
-      {logs.error && <ErrorState message={logs.error} onRetry={logs.refetch} />}
+      <ApiErrorState api={logs} />
       {logs.data && filtered.length === 0 && <EmptyState label="No log entries match." />}
 
       {logs.data && filtered.length > 0 && (

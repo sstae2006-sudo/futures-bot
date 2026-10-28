@@ -22,7 +22,7 @@ export default function OrganizationSettings() {
   }, [organization])
 
   if (!organization) {
-    return <p style={{ fontSize: 13, opacity: 0.7 }}>Loading organization…</p>
+    return <p className="text-sm text-dim">Loading organization…</p>
   }
 
   const canManage = can('manage_organization')
@@ -46,18 +46,21 @@ export default function OrganizationSettings() {
 
   return (
     <div style={{ maxWidth: 560 }}>
-      <h2>Organization Settings</h2>
+      <div className="page-header">
+        <h1>Organization settings</h1>
+        <p>Your organization's overview and name.</p>
+      </div>
 
-      <div className="mc-panel" style={{ marginBottom: 16 }}>
+      <div className="mc-panel mb-4">
         <div className="mc-panel-head"><h3>Overview</h3></div>
-        <p style={{ fontSize: 13, margin: '4px 0' }}><strong>Created:</strong> {organization.created_at}</p>
-        <p style={{ fontSize: 13, margin: '4px 0' }}><strong>Members:</strong> {members ? members.length : '…'}</p>
+        <p className="text-sm" style={{ margin: '4px 0' }}><strong>Created:</strong> {organization.created_at}</p>
+        <p className="text-sm" style={{ margin: '4px 0' }}><strong>Members:</strong> {members ? members.length : '…'}</p>
       </div>
 
       <form className="mc-panel" onSubmit={handleSave}>
         <div className="mc-panel-head"><h3>Name</h3></div>
-        {error && <p role="alert" style={{ color: 'var(--danger, #d33)', marginBottom: 8 }}>{error}</p>}
-        <div className="field" style={{ marginBottom: 12 }}>
+        {error && <p role="alert" className="form-error mb-2">{error}</p>}
+        <div className="field mb-3">
           <input
             value={name} onChange={(e) => setName(e.target.value)} disabled={!canManage}
             aria-label="Organization name" style={{ width: '100%' }}
@@ -68,10 +71,10 @@ export default function OrganizationSettings() {
             <button type="submit" className="btn btn-primary" disabled={saving}>
               {saving ? 'Saving…' : 'Save'}
             </button>
-            {saved && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.7 }}>Saved.</span>}
+            {saved && <span className="text-xs text-dim" style={{ marginLeft: 8 }}>Saved.</span>}
           </>
         ) : (
-          <p style={{ fontSize: 12, opacity: 0.6 }}>Only an Owner or Admin can rename the organization.</p>
+          <p className="text-xs text-dim">Only an Owner or Admin can rename the organization.</p>
         )}
       </form>
     </div>

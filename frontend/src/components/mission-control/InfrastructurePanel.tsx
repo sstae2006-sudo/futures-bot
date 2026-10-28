@@ -9,8 +9,8 @@ import { useApi } from '../../useApi'
 function Bar({ label, percent, detail }: { label: string; percent: number; detail: string }) {
   const tone = percent >= 90 ? 'bad' : percent >= 75 ? 'warn' : 'good'
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+    <div className="mb-3">
+      <div className="text-sm mb-1" style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span>{label}</span>
         <span className={`tone-${tone}`}>{detail}</span>
       </div>
@@ -37,7 +37,7 @@ export default function InfrastructurePanel() {
       <div className="mc-panel-head">
         <h3>Infrastructure</h3>
       </div>
-      {!data && <p style={{ fontSize: 13, opacity: 0.7 }}>Loading…</p>}
+      {!data && <p className="text-sm text-dim">Loading…</p>}
       {data && (
         <>
           <Bar
@@ -55,7 +55,7 @@ export default function InfrastructurePanel() {
             percent={data.disk_percent}
             detail={`${data.disk_used_gb.toFixed(0)} / ${data.disk_total_gb.toFixed(0)} GB`}
           />
-          <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>
+          <div className="mt-2 text-sm text-dim">
             Job queue: {data.jobs_running} running · {data.jobs_queued} queued
           </div>
         </>

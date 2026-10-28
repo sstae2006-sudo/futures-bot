@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { getTradeAnalytics, listTrades } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, EmptyState, Badge } from '../components/UI'
+import { LoadingState, EmptyState, Badge, ApiErrorState } from '../components/UI'
 import { money, num, dateTime, tone } from '../format'
 import type { TradeOut } from '../types'
 
@@ -66,7 +66,7 @@ export default function TradeExplorer() {
           </div>
         </div>
 
-        <div className="pill-row" style={{ marginTop: 8, marginBottom: 0 }}>
+        <div className="pill-row mt-2" style={{ marginBottom: 0 }}>
           <button type="button" className={`pill${view === 'all' ? ' active' : ''}`} onClick={() => setView('all')}>
             All trades
           </button>
@@ -81,7 +81,7 @@ export default function TradeExplorer() {
           </button>
         </div>
         {view !== 'all' && (
-          <p style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 8 }}>
+          <p className="text-xs text-faint mt-2">
             {view === 'best_entries' && 'Highest efficiency: exits that captured most of the favorable move available.'}
             {view === 'poor_exits' && 'Lowest efficiency among trades with a real favorable move available — the entry was fine, the exit left money on the table.'}
             {view === 'missed_opportunities' && 'Losing or scratch trades where a meaningful favorable move (2+ points) was available before it reversed.'}
@@ -90,9 +90,9 @@ export default function TradeExplorer() {
       </div>
 
       {(trades.loading || (view !== 'all' && analytics.loading)) && <LoadingState label="Loading trades…" />}
-      {trades.error && <ErrorState message={trades.error} onRetry={trades.refetch} />}
-      {analytics.error && view !== 'all' && <ErrorState message={analytics.error} onRetry={analytics.refetch} />}
-      {!trades.loading && displayedTrades.length === 0 && <EmptyState label="No trades match these filters." />}
+      <ApiErrorState api={trades} />
+      {view !== 'all' && <ApiErrorState api={analytics} />}
+      {!trades.loading && displayedTrades.length === 0 && <EmptyState label="No trades match these filters." hint={<>Trades come from backtest runs and <Link to="/import">broker imports</Link>.</>} />}
 
       {displayedTrades.length > 0 && (
         <div className="grid grid-2">
@@ -162,7 +162,7 @@ function TradeDetail({ trade }: { trade: TradeOut }) {
       </dl>
 
       <h3>Market Context</h3>
-      {metadataEntries.length === 0 && <p style={{ color: 'var(--text-faint)' }}>No indicator snapshot recorded for this entry.</p>}
+      {metadataEntries.length === 0 && <p className="text-faint">No indicator snapshot recorded for this entry.</p>}
       <dl className="detail-list">
         {metadataEntries.map(([k, v]) => (
           <Row key={k} label={k} value={typeof v === 'number' ? num(String(v), 4) : String(v)} />
@@ -195,8 +195,8 @@ function TradeDetail({ trade }: { trade: TradeOut }) {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 12.5 }}>
-      <span style={{ color: 'var(--text-faint)' }}>{label}</span>
+    <div className="text-xs" style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+      <span className="text-faint">{label}</span>
       <span className="mono">{value}</span>
     </div>
   )

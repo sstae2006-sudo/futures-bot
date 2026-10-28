@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { listJobs } from '../api'
 import { useApi } from '../useApi'
 import { useJobStream } from '../useJobStream'
-import { LoadingState, ErrorState, EmptyState, Badge } from '../components/UI'
+import { LoadingState, EmptyState, Badge, ApiErrorState } from '../components/UI'
 import { JobProgressBar } from '../components/JobProgress'
 import { dateTime } from '../format'
 
@@ -49,8 +49,8 @@ function JobsList() {
       </div>
 
       {jobs.loading && <LoadingState label="Loading jobs…" />}
-      {jobs.error && <ErrorState message={jobs.error} onRetry={jobs.refetch} />}
-      {jobs.data && jobs.data.length === 0 && <EmptyState label="No jobs yet. Submit one from the Backtest Launcher or Optimizer page." />}
+      <ApiErrorState api={jobs} />
+      {jobs.data && jobs.data.length === 0 && <EmptyState label="No jobs yet." hint={<>Jobs appear when you start a <Link to="/backtest">backtest</Link> or an <Link to="/optimizer">optimizer run</Link>.</>} />}
 
       {jobs.data && jobs.data.length > 0 && (
         <div className="panel">
@@ -97,13 +97,13 @@ function JobDetail({ jobId }: { jobId: string }) {
         <h1>Job {jobId}</h1>
       </div>
 
-      {!streamed && <LoadingState label="Connecting to job stream…" />}
+      {!streamed && <LoadingState label="Connecting to job stream…" variant="text" />}
       {streamed && (
         <div className="panel">
           <p><strong>Kind:</strong> {streamed.kind}</p>
           <JobProgressBar job={streamed} />
           {streamed.status === 'completed' && streamed.result_id && (
-            <p style={{ marginTop: 12 }}>
+            <p className="mt-3">
               Result: <code>{streamed.result_id}</code>
               {(streamed.kind === 'backtest' || streamed.kind === 'walk_forward') && (
                 <> — <Link to={`/backtest/${streamed.result_id}`}>view backtest result</Link></>
@@ -114,7 +114,7 @@ function JobDetail({ jobId }: { jobId: string }) {
             </p>
           )}
           {streamed.status === 'completed' && streamed.result_payload && (
-            <pre style={{ marginTop: 12, fontSize: 11, overflowX: 'auto' }}>
+            <pre className="mt-3 text-xs" style={{ overflowX: 'auto' }}>
               {JSON.stringify(streamed.result_payload, null, 2)}
             </pre>
           )}

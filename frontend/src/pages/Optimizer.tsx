@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { getOptimizerResults, listDatasets, listStrategies, runOptimizer, submitOptimizerJob } from '../api'
 import { useApi } from '../useApi'
 import { useJobStream } from '../useJobStream'
-import { LoadingState, ErrorState, Badge } from '../components/UI'
+import { LoadingState, ErrorState, Badge, ApiErrorState } from '../components/UI'
 import { JobProgressBar } from '../components/JobProgress'
 import { ParameterHeatmap } from '../components/ParameterHeatmap'
 import { money, num, int } from '../format'
@@ -111,8 +111,8 @@ export default function Optimizer() {
         <p>Sweep parameters, validate out-of-sample, and see which combinations survive.</p>
       </div>
 
-      {(strategies.loading || datasets.loading) && <LoadingState label="Loading strategies and datasets…" />}
-      {strategies.error && <ErrorState message={strategies.error} onRetry={strategies.refetch} />}
+      {(strategies.loading || datasets.loading) && <LoadingState label="Loading strategies and datasets…" variant="lines" />}
+      <ApiErrorState api={strategies} />
 
       {strategies.data && datasets.data && (
         <form className="panel" onSubmit={handleRun}>
@@ -137,19 +137,19 @@ export default function Optimizer() {
 
           <div className="checkbox-field" style={{ margin: '8px 0' }}>
             <input id="opt-rolling" type="checkbox" checked={rolling} onChange={(e) => setRolling(e.target.checked)} />
-            <label htmlFor="opt-rolling" style={{ margin: 0, textTransform: 'none', fontSize: 13, color: 'var(--text)' }}>
+            <label htmlFor="opt-rolling" className="m-0 text-sm text-plain">
               Rolling walk-forward validation (slower, more robust)
             </label>
           </div>
           <div className="checkbox-field" style={{ margin: '0 0 16px' }}>
             <input id="opt-bg" type="checkbox" checked={runInBackground} onChange={(e) => setRunInBackground(e.target.checked)} />
-            <label htmlFor="opt-bg" style={{ margin: 0, textTransform: 'none', fontSize: 13, color: 'var(--text)' }}>
+            <label htmlFor="opt-bg" className="m-0 text-sm text-plain">
               Run in background with live progress (see also the Jobs page)
             </label>
           </div>
 
           <h3>Parameters to Sweep</h3>
-          <p style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+          <p className="text-faint text-xs">
             Comma-separated values, e.g. "5, 9, 13". Leave blank to hold a parameter at its default.
           </p>
           <div className="field-row">
@@ -166,7 +166,7 @@ export default function Optimizer() {
             ))}
           </div>
 
-          <button className="btn" type="submit" disabled={running || !strategyName || !dataset} style={{ marginTop: 12 }}>
+          <button className="btn mt-3" type="submit" disabled={running || !strategyName || !dataset}>
             {running ? 'Submitting…' : 'Run Optimizer'}
           </button>
         </form>
@@ -193,8 +193,8 @@ export default function Optimizer() {
             ) : '—'}
           </p>
           {displayConfidenceWarnings.warnings.length > 0 && (
-            <ul style={{ marginTop: 8 }}>
-              {displayConfidenceWarnings.warnings.map((w, i) => <li key={i} style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>{w}</li>)}
+            <ul className="mt-2">
+              {displayConfidenceWarnings.warnings.map((w, i) => <li key={i} className="text-xs text-dim">{w}</li>)}
             </ul>
           )}
         </div>
@@ -236,7 +236,7 @@ export default function Optimizer() {
               </tbody>
             </table>
           </div>
-          <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-faint)' }}>
+          <p className="mt-2 text-xs text-faint">
             Judge only by the validation columns — the training columns reward overfitting by construction.
           </p>
         </div>

@@ -95,7 +95,7 @@ export default function StatusBar() {
                 type="button"
                 onClick={logout}
                 title="Switch user"
-                style={{ marginLeft: 6, fontSize: 11, opacity: 0.7, background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}
+                className="text-xs" style={{ marginLeft: 6, opacity: 0.7, background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}
               >
                 Switch
               </button>

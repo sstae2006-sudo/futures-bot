@@ -61,14 +61,14 @@ export default function TeamPanel() {
       <div className="mc-panel-head">
         <h3>Team</h3>
       </div>
-      <p style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
+      <p className="text-sm text-dim mb-2">
         {health ? `${health.connected_users} distinct client${health.connected_users === 1 ? '' : 's'} in the last 15 minutes` : 'Loading…'}
       </p>
       {users && users.length === 0 && (
-        <p style={{ fontSize: 13, opacity: 0.7 }}>No users registered yet.</p>
+        <p className="text-sm text-dim">No users registered yet.</p>
       )}
       {users && users.length > 0 && (
-        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <table className="text-sm" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <tbody>
             {users.map((user) => (
               <tr key={user.id}>

@@ -100,14 +100,14 @@ export default function WorkItemTable({
   }
 
   const errorBanner = actionError && (
-    <p role="alert" style={{ fontSize: 12, color: 'var(--danger, #d33)', margin: '0 0 8px' }}>{actionError}</p>
+    <p role="alert" className="text-xs" style={{ color: 'var(--danger, #d33)', margin: '0 0 8px' }}>{actionError}</p>
   )
 
   if (items.length === 0) {
     return (
       <>
         {errorBanner}
-        <p style={{ fontSize: 13, opacity: 0.7 }}>{emptyMessage}</p>
+        <p className="text-sm text-dim">{emptyMessage}</p>
       </>
     )
   }
@@ -115,7 +115,7 @@ export default function WorkItemTable({
   return (
     <>
       {errorBanner}
-      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+      <table className="text-sm" style={{ width: '100%', borderCollapse: 'collapse' }}>
       <tbody>
         {items.map((item) => {
           const nextStage = NEXT_STAGE[item.status]
@@ -125,12 +125,12 @@ export default function WorkItemTable({
                 <div>
                   {item.title} {item.owner_type === 'ai' && <Badge tone="neutral">AI</Badge>}
                 </div>
-                <div style={{ opacity: 0.6, fontSize: 11 }}>
+                <div className="text-dim text-xs">
                   {item.owner_user_id ?? 'unclaimed'} · {item.estimated_files.length} file(s) · {item.priority}
                   {item.branch && <> · {item.branch}</>}
                 </div>
                 {showLifecycle && item.status !== 'completed' && (
-                  <div style={{ marginTop: 2 }}>
+                  <div className="mt-1">
                     <LifecycleDots status={item.status} />
                   </div>
                 )}

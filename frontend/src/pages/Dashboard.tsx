@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getInsights, getSystemOverview, listBacktests } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, StatTile, EmptyState } from '../components/UI'
+import { LoadingState, StatTile, EmptyState, ApiErrorState } from '../components/UI'
 import { money, num, pct, int, dateTime, tone } from '../format'
 import type { RunSummary } from '../types'
 
@@ -64,10 +64,10 @@ export default function Dashboard() {
         <p>System overview and best backtest per strategy so far.</p>
       </div>
 
-      {overview.loading && <LoadingState label="Loading system overview…" />}
-      {overview.error && <ErrorState message={overview.error} onRetry={overview.refetch} />}
+      {overview.loading && <LoadingState label="Loading system overview…" variant="tiles" />}
+      <ApiErrorState api={overview} />
       {overview.data && (
-        <div className="grid grid-stats" style={{ marginBottom: 20 }}>
+        <div className="grid grid-stats mb-5">
           <StatTile label="Version" value={overview.data.version} />
           <StatTile label="Strategies Available" value={overview.data.strategies_available.length}
             sub={overview.data.strategies_available.join(', ')} />
@@ -103,9 +103,9 @@ export default function Dashboard() {
       </div>
 
       {backtests.loading && <LoadingState label="Loading backtest history…" />}
-      {backtests.error && <ErrorState message={backtests.error} onRetry={backtests.refetch} />}
+      <ApiErrorState api={backtests} />
       {backtests.data && leaderboard.length === 0 && (
-        <EmptyState label="No completed backtests yet. Run one from the Backtest Launcher." />
+        <EmptyState label="No completed backtests yet." hint={<>The leaderboard fills in as runs finish. <Link to="/backtest">Run a backtest</Link>.</>} />
       )}
       {backtests.data && leaderboard.length > 0 && (
         <div className="panel">

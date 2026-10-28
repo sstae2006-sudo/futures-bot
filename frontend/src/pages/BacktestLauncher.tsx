@@ -6,7 +6,7 @@ import {
 } from '../api'
 import { useApi } from '../useApi'
 import { useJobStream } from '../useJobStream'
-import { LoadingState, ErrorState, StatTile } from '../components/UI'
+import { LoadingState, ErrorState, StatTile, ApiErrorState } from '../components/UI'
 import { JobProgressBar } from '../components/JobProgress'
 import BacktestResults from '../components/BacktestResults'
 import { money, num, tone } from '../format'
@@ -27,7 +27,7 @@ function BacktestDetailView({ runId }: { runId: string }) {
         {run.data && <p>{run.data.strategy} on {run.data.contract} — run {run.data.id}</p>}
       </div>
       {run.loading && <LoadingState label="Loading run…" />}
-      {run.error && <ErrorState message={run.error} onRetry={run.refetch} />}
+      <ApiErrorState api={run} />
       {run.data && <BacktestResults run={run.data} />}
     </div>
   )
@@ -178,9 +178,9 @@ function BacktestForm() {
         <p>Configure and run a backtest against historical data.</p>
       </div>
 
-      {(strategies.loading || datasets.loading) && <LoadingState label="Loading strategies and datasets…" />}
-      {strategies.error && <ErrorState message={strategies.error} onRetry={strategies.refetch} />}
-      {datasets.error && <ErrorState message={datasets.error} onRetry={datasets.refetch} />}
+      {(strategies.loading || datasets.loading) && <LoadingState label="Loading strategies and datasets…" variant="lines" />}
+      <ApiErrorState api={strategies} />
+      <ApiErrorState api={datasets} />
 
       {strategies.data && datasets.data && (
         <form className="panel" onSubmit={handleSubmit}>
@@ -217,7 +217,7 @@ function BacktestForm() {
             </div>
           </div>
 
-          <h3 style={{ marginTop: 16 }}>Risk &amp; Sizing</h3>
+          <h3 className="mt-4">Risk &amp; Sizing</h3>
           <div className="field-row">
             <div className="field">
               <label htmlFor="cash">Starting Balance</label>
@@ -239,7 +239,7 @@ function BacktestForm() {
 
           {currentSchema.length > 0 && (
             <>
-              <h3 style={{ marginTop: 16 }}>Strategy Parameters</h3>
+              <h3 className="mt-4">Strategy Parameters</h3>
               <div className="field-row">
                 {currentSchema.map((p) => (
                   <div className="field" key={p.name}>
@@ -269,13 +269,13 @@ function BacktestForm() {
 
           <div className="checkbox-field" style={{ margin: '16px 0 8px' }}>
             <input id="wf" type="checkbox" checked={walkForward} onChange={(e) => setWalkForward(e.target.checked)} />
-            <label htmlFor="wf" style={{ margin: 0, textTransform: 'none', fontSize: 13, color: 'var(--text)' }}>
+            <label htmlFor="wf" className="m-0 text-sm text-plain">
               Walk-forward (70/30 train/validation split)
             </label>
           </div>
           <div className="checkbox-field" style={{ margin: '0 0 16px' }}>
             <input id="bg" type="checkbox" checked={runInBackground} onChange={(e) => setRunInBackground(e.target.checked)} />
-            <label htmlFor="bg" style={{ margin: 0, textTransform: 'none', fontSize: 13, color: 'var(--text)' }}>
+            <label htmlFor="bg" className="m-0 text-sm text-plain">
               Run in background with live progress (see also the Jobs page)
             </label>
           </div>
@@ -291,7 +291,7 @@ function BacktestForm() {
       {finishedModels.length > 0 && (
         <div className="panel">
           <h3 style={{ marginTop: 0 }}>Backtest + AI</h3>
-          <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+          <p className="text-xs text-dim">
             Optionally filter entries through a trained model (see ML Research) and compare the result against
             an identical backtest with no filter.
           </p>
@@ -316,10 +316,10 @@ function BacktestForm() {
           </button>
           {comparisonError && <ErrorState message={comparisonError} />}
           {comparisonJobId && comparisonJob && comparisonJob.status !== 'completed' && (
-            <div style={{ marginTop: 12 }}><JobProgressBar job={comparisonJob} /></div>
+            <div className="mt-3"><JobProgressBar job={comparisonJob} /></div>
           )}
           {comparison && (
-            <div style={{ marginTop: 12 }}>
+            <div className="mt-3">
               <div className="grid grid-2">
                 <div>
                   <h4>Without AI</h4>
@@ -338,8 +338,8 @@ function BacktestForm() {
                   </div>
                 </div>
               </div>
-              <h4 style={{ marginBottom: 4 }}>Impact of AI filtering</h4>
-              <p style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 0 }}>
+              <h4 className="mb-1">Impact of AI filtering</h4>
+              <p className="text-xs text-dim" style={{ marginTop: 0 }}>
                 A good ROC AUC doesn't guarantee this filter helps the strategy — these five numbers say
                 whether it actually did.
               </p>
@@ -379,7 +379,7 @@ function BacktestForm() {
 
       {result && (
         <>
-          <div className="page-header" style={{ marginTop: 24 }}>
+          <div className="page-header mt-6">
             <h2>Results</h2>
             <button className="btn btn-secondary" onClick={() => navigate(`/backtest/${result.id}`)}>
               Open permanent link

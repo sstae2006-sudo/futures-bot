@@ -10,6 +10,10 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [version, setVersion] = useState(0)
+  // When `data` last loaded successfully. `data` is deliberately kept after a
+  // failed refetch, so pages can show it with a "data from HH:MM" banner
+  // (ApiErrorState / StaleBanner) instead of blanking.
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
 
   const refetch = useCallback(() => setVersion((v) => v + 1), [])
 
@@ -21,6 +25,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
       .then((result) => {
         if (!cancelled) {
           setData(result)
+          setUpdatedAt(new Date())
           setLoading(false)
         }
       })
@@ -36,5 +41,5 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version])
 
-  return { data, loading, error, refetch }
+  return { data, loading, error, refetch, updatedAt }
 }

@@ -316,6 +316,37 @@ class TestOverfitVerdict:
         )
         verdict = services.overfit_verdict(run)
         assert verdict.level == "red"
+        assert verdict.label == "Likely overfit"
+
+    @staticmethod
+    def _run(net_pnl: str, validation_net_pnl: str):
+        from futures_bot.api.schemas import RunDetail
+
+        return RunDetail(
+            id="x", kind="walk_forward", status="completed", strategy="s", contract="MES",
+            trade_count=196, net_pnl=Decimal(net_pnl), profit_factor=Decimal("0.88"), win_rate=Decimal("33"),
+            sharpe_ratio=None, max_drawdown=Decimal("530"), validation_net_pnl=Decimal(validation_net_pnl),
+            walk_forward=True, created_at="now", strategy_params={}, expectancy=Decimal("-1.12"),
+            sortino_ratio=None, max_drawdown_pct=Decimal("21"), validation_trade_count=92,
+            validation_profit_factor=Decimal("0.73"),
+        )
+
+    def test_losing_in_both_periods_is_no_edge_not_validated(self):
+        # ISSUE-052: run 39e66ef40e85 lost money in-sample and out-of-sample
+        # and was labelled "Validated" because no overfit check fired.
+        verdict = services.overfit_verdict(self._run("-219.54", "-291.08"))
+        assert verdict.level == "red"
+        assert verdict.label == "No edge"
+        assert any("no edge" in r for r in verdict.reasons)
+
+    def test_breakeven_out_of_sample_is_no_edge(self):
+        verdict = services.overfit_verdict(self._run("0", "0"))
+        assert verdict.label == "No edge"
+
+    def test_profitable_in_both_periods_is_still_validated(self):
+        verdict = services.overfit_verdict(self._run("500", "120"))
+        assert verdict.level == "green"
+        assert verdict.label == "Validated"
 
 
 class TestTradeAnalyticsSummary:

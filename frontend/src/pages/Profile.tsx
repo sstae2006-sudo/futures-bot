@@ -45,7 +45,7 @@ export default function Profile() {
   }, [me])
 
   if (!currentUser || !me) {
-    return <p style={{ fontSize: 13, opacity: 0.7 }}>Loading profile…</p>
+    return <p className="text-sm text-dim">Loading profile…</p>
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -93,23 +93,22 @@ export default function Profile() {
 
   return (
     <div style={{ maxWidth: 560 }}>
-      <h2>Profile</h2>
-
-      <div className="mc-panel" style={{ marginBottom: 16 }}>
-        <div className="mc-panel-head"><h3>Account</h3></div>
-        <p style={{ fontSize: 13, margin: '4px 0' }}><strong>Username:</strong> @{me.username}</p>
-        <p style={{ fontSize: 13, margin: '4px 0' }}><strong>Email:</strong> {me.email ?? 'not set'}</p>
-        <p style={{ fontSize: 13, margin: '4px 0' }}><strong>Role:</strong> {me.role}</p>
-        <p style={{ fontSize: 13, margin: '4px 0' }}><strong>Member since:</strong> {me.created_at}</p>
+      <div className="page-header">
+        <h1>Profile</h1>
+        <p>Your account details, personal API key and preferences.</p>
       </div>
 
-      <div className="mc-panel" style={{ marginBottom: 16 }}>
+      <div className="mc-panel mb-4">
+        <div className="mc-panel-head"><h3>Account</h3></div>
+        <p className="text-sm" style={{ margin: '4px 0' }}><strong>Username:</strong> @{me.username}</p>
+        <p className="text-sm" style={{ margin: '4px 0' }}><strong>Email:</strong> {me.email ?? 'not set'}</p>
+        <p className="text-sm" style={{ margin: '4px 0' }}><strong>Role:</strong> {me.role}</p>
+        <p className="text-sm" style={{ margin: '4px 0' }}><strong>Member since:</strong> {me.created_at}</p>
+      </div>
+
+      <div className="mc-panel mb-4">
         <div className="mc-panel-head"><h3>Personal API Key</h3></div>
-        <div style={{
-          fontFamily: 'monospace', fontSize: 13, padding: '8px 12px', border: '1px solid var(--border, #ccc)',
-          borderRadius: 4, marginBottom: 8, wordBreak: 'break-all',
-        }}
-        >
+        <div className="code-field mb-2">
           {me.api_key}
         </div>
         <button type="button" className="btn btn-secondary" onClick={handleCopyApiKey} style={{ marginRight: 8 }}>
@@ -118,54 +117,54 @@ export default function Profile() {
         <button type="button" className="btn btn-secondary" onClick={handleRegenerateApiKey} disabled={regenerating}>
           {regenerating ? 'Regenerating…' : 'Regenerate'}
         </button>
-        <p style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
+        <p className="text-xs text-dim mt-2">
           Not yet used for authorization anywhere -- a placeholder for future auth.
         </p>
       </div>
 
       <form className="mc-panel" onSubmit={handleSave}>
         <div className="mc-panel-head"><h3>Preferences</h3></div>
-        <div className="field" style={{ marginBottom: 10 }}>
+        <div className="field mb-2">
           <label htmlFor="profile-display-name">Display Name</label>
           <input id="profile-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ width: '100%' }} />
         </div>
-        <div className="field" style={{ marginBottom: 10 }}>
+        <div className="field mb-2">
           <label htmlFor="profile-avatar-url">Avatar URL</label>
           <input id="profile-avatar-url" value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} style={{ width: '100%' }} />
         </div>
-        <div className="field" style={{ marginBottom: 10 }}>
+        <div className="field mb-2">
           <label htmlFor="profile-timezone">Time Zone</label>
           <input
             id="profile-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)}
             placeholder="e.g. America/New_York" style={{ width: '100%' }}
           />
         </div>
-        <div className="field" style={{ marginBottom: 10 }}>
+        <div className="field mb-2">
           <label htmlFor="profile-ai-model">Preferred AI Model</label>
           <input
             id="profile-ai-model" value={preferredAiModel} onChange={(e) => setPreferredAiModel(e.target.value)}
             placeholder="e.g. claude-sonnet-5" style={{ width: '100%' }}
           />
-          <p style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>Stored for future use -- not yet consulted anywhere.</p>
+          <p className="text-xs text-dim mt-1">Stored for future use -- not yet consulted anywhere.</p>
         </div>
-        <div className="field" style={{ marginBottom: 10 }}>
+        <div className="field mb-2">
           <label htmlFor="profile-branch-prefix">Default Branch Naming Convention</label>
           <input
             id="profile-branch-prefix" value={defaultBranchPrefix} onChange={(e) => setDefaultBranchPrefix(e.target.value)}
             placeholder="e.g. seth/" style={{ width: '100%' }}
           />
         </div>
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="field mb-3">
+          <label className="checkbox-field">
             <input type="checkbox" checked={emailNotifications} onChange={(e) => setEmailNotifications(e.target.checked)} />
             Email notifications
           </label>
-          <p style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>Stored for future use -- no notifications are sent yet.</p>
+          <p className="text-xs text-dim mt-1">Stored for future use -- no notifications are sent yet.</p>
         </div>
         <button type="submit" className="btn btn-primary" disabled={saving}>
           {saving ? 'Saving…' : 'Save Changes'}
         </button>
-        {saved && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.7 }}>Saved.</span>}
+        {saved && <span className="text-xs text-dim" style={{ marginLeft: 8 }}>Saved.</span>}
       </form>
     </div>
   )

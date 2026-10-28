@@ -6,7 +6,7 @@ import {
 } from '../api'
 import { useApi } from '../useApi'
 import { useJobStream } from '../useJobStream'
-import { LoadingState, ErrorState, EmptyState, StatTile, Badge } from '../components/UI'
+import { LoadingState, ErrorState, EmptyState, StatTile, Badge, ApiErrorState } from '../components/UI'
 import { JobProgressBar } from '../components/JobProgress'
 import { dateTime } from '../format'
 import type { ImportUploadResponse } from '../types'
@@ -123,8 +123,8 @@ export default function ImportTrades() {
 
       <div className="panel">
         <h3 style={{ marginTop: 0 }}>Client Profile</h3>
-        {profiles.loading && <LoadingState label="Loading profiles…" />}
-        {profiles.error && <ErrorState message={profiles.error} onRetry={profiles.refetch} />}
+        {profiles.loading && <LoadingState label="Loading profiles…" variant="lines" />}
+        <ApiErrorState api={profiles} />
         <div className="field-row">
           <div className="field">
             <label htmlFor="profile-select">Profile</label>
@@ -147,12 +147,12 @@ export default function ImportTrades() {
       {profileId && (
         <div className="panel">
           <h3 style={{ marginTop: 0 }}>Upload File</h3>
-          <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+          <p className="text-xs text-dim">
             CSV (Tradovate, NinjaTrader, or generic fill/execution export) or Excel (.xlsx). One row per fill --
             round-trip trades are reconstructed automatically.
           </p>
           <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xlsm" onChange={handleFileSelected} disabled={uploading} />
-          {uploading && <LoadingState label="Parsing file…" />}
+          {uploading && <LoadingState label="Parsing file…" variant="text" />}
           {uploadError && <ErrorState message={uploadError} />}
         </div>
       )}
@@ -160,13 +160,13 @@ export default function ImportTrades() {
       {upload && (
         <div className="panel">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <h3 style={{ margin: 0 }}>
+            <h3 className="m-0">
               Detected format: <Badge tone={upload.detected_format === 'generic' ? 'warn' : 'good'}>{upload.detected_format}</Badge>
             </h3>
             <button className="btn btn-secondary" type="button" onClick={handleCancelUpload}>Cancel</button>
           </div>
 
-          <div className="grid grid-stats" style={{ marginTop: 12 }}>
+          <div className="grid grid-stats mt-3">
             <StatTile label="Total Rows" value={upload.total_rows} />
             <StatTile label="Duplicates" value={upload.duplicate_count} tone={upload.duplicate_count > 0 ? 'bad' : 'neutral'} />
             <StatTile label="Errors" value={upload.error_count} tone={upload.error_count > 0 ? 'bad' : 'neutral'} />
@@ -174,14 +174,14 @@ export default function ImportTrades() {
           </div>
 
           {upload.warnings.length > 0 && (
-            <div className="caveats" style={{ marginTop: 12 }}>
+            <div className="caveats mt-3">
               <h3>Warnings</h3>
               <ul>{upload.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
             </div>
           )}
 
           <h4>Column Mapping</h4>
-          <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>
+          <p className="text-xs text-dim">
             Confirm or correct how each field maps to a column in your file — always editable, even for a recognized format.
           </p>
           <div className="field-row">
@@ -200,7 +200,7 @@ export default function ImportTrades() {
           </div>
 
           {upload.error_count > 0 && (
-            <div style={{ marginTop: 12 }}>
+            <div className="mt-3">
               <h4>Row Errors</h4>
               <div className="table-scroll">
                 <table>
@@ -215,7 +215,7 @@ export default function ImportTrades() {
             </div>
           )}
 
-          <div className="grid grid-2" style={{ marginTop: 12 }}>
+          <div className="grid grid-2 mt-3">
             <div>
               <h4>Preview: Mapped Fills</h4>
               {upload.preview_fill_rows.length === 0 ? <EmptyState label="No valid fills to preview." /> : (
@@ -254,16 +254,16 @@ export default function ImportTrades() {
             </div>
           </div>
 
-          <button className="btn" type="button" onClick={handleConfirm} disabled={confirming || importComplete} style={{ marginTop: 12 }}>
+          <button className="btn mt-3" type="button" onClick={handleConfirm} disabled={confirming || importComplete}>
             {confirming ? 'Starting…' : 'Confirm Import'}
           </button>
           {confirmError && <ErrorState message={confirmError} />}
 
           {streamedJob && (
-            <div style={{ marginTop: 12 }}>
+            <div className="mt-3">
               <JobProgressBar job={streamedJob} />
               {importComplete && selectedProfile && (
-                <p style={{ marginTop: 8 }}>
+                <p className="mt-2">
                   Done — <Link to={`/trades?strategy=${encodeURIComponent(`import:${selectedProfile.name}`)}`}>
                     view these trades in Trade Explorer
                   </Link>.
@@ -277,7 +277,7 @@ export default function ImportTrades() {
       <div className="panel">
         <h3 style={{ marginTop: 0 }}>Import History</h3>
         {history.loading && <LoadingState label="Loading import history…" />}
-        {history.error && <ErrorState message={history.error} onRetry={history.refetch} />}
+        <ApiErrorState api={history} />
         {history.data && history.data.length === 0 && <EmptyState label="No imports yet for this profile." />}
         {history.data && history.data.length > 0 && (
           <div className="table-scroll">

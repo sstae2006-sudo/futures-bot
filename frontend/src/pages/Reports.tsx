@@ -1,6 +1,6 @@
 import { listBacktests, listReports, reportViewUrl } from '../api'
 import { useApi } from '../useApi'
-import { LoadingState, ErrorState, EmptyState } from '../components/UI'
+import { LoadingState, EmptyState, ApiErrorState } from '../components/UI'
 import { dateTime } from '../format'
 import { Link } from 'react-router-dom'
 
@@ -16,8 +16,8 @@ export default function Reports() {
       </div>
 
       {reports.loading && <LoadingState label="Loading reports…" />}
-      {reports.error && <ErrorState message={reports.error} onRetry={reports.refetch} />}
-      {reports.data && reports.data.length === 0 && <EmptyState label="No reports generated yet." />}
+      <ApiErrorState api={reports} />
+      {reports.data && reports.data.length === 0 && <EmptyState label="No reports generated yet." hint="Pick a backtest below and generate its HTML report." />}
 
       {reports.data && reports.data.length > 0 && (
         <div className="panel">
@@ -40,11 +40,11 @@ export default function Reports() {
         </div>
       )}
 
-      <div className="page-header" style={{ marginTop: 24 }}>
+      <div className="page-header mt-6">
         <h2>Generate From a Recent Backtest</h2>
       </div>
       {runs.loading && <LoadingState label="Loading recent backtests…" />}
-      {runs.data && runs.data.length === 0 && <EmptyState label="No backtests to report on yet." />}
+      {runs.data && runs.data.length === 0 && <EmptyState label="No backtests to report on yet." hint={<><Link to="/backtest">Run a backtest</Link> first.</>} />}
       {runs.data && runs.data.length > 0 && (
         <div className="panel">
           <table>
