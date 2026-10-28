@@ -1883,3 +1883,82 @@ verified fixed — instead mark it Resolved with a date and commit.
   `run_optimization`'s `batch_id` resume. Neither attempted here — this
   entry exists so Phase 4 (or any future script written against
   `insert_trades`) knows this isn't a solved problem yet.
+
+### ISSUE-048 — 18 tests fail purely because the calendar passed 2026-09-18: contract fixtures are date-bound (RESOLVED 2026-10-28)
+
+- **Severity:** Medium — no production code is wrong, but the full suite
+  is now red on every machine, which hides any real regression behind
+  "18 known failures."
+- **Description:** Found 2026-10-27 (first full-suite run after a ~3-month
+  break): 18 failed / 1812 passed / 51 skipped. Every failure's fixture
+  fakes Massive's Contracts API with a single hardcoded `MESU6` contract
+  (`first_trade_date` 2025-06-20, `last_trade_date` **2026-09-18**), while
+  the code under test asks for the active contract **as of the real
+  current date**. Once the wall clock passed 2026-09-18 no fixture
+  contract covers "today", so `contracts_client` raises "No active contract
+  found for 'MES' as of 2026-10-27" and every downstream assertion fails.
+  Verified by reading the actual tracebacks, not inferred. None of the
+  affected test files were touched by commit `e753024`.
+- **Affected tests:** `tests/test_api_market_data.py::TestOverview::test_overview_after_a_sync`,
+  `tests/test_api_research_server.py::TestStatusAndLifecycle::test_start_then_status_then_stop`,
+  `tests/test_cli_market_data.py::TestEndToEnd::test_sync_data_reports_a_roll`,
+  4 in `tests/test_research_server_ml_deployment.py::TestDeployedModelWiring`,
+  4 in `tests/test_research_server_orchestrator.py`,
+  7 in `tests/test_research_server_paper_trader.py`.
+- **Fix (2026-10-28, test-only, no production code changed):** every
+  "as of today" fixture now computes its trading window as ±180 days
+  around the date the code under test reads. `FakeContractsSession`
+  (`test_research_server_paper_trader.py`) uses `date.today()` at call
+  time, which matches `paper_trader.py`'s local-date `active_contract()`
+  call. `test_api_market_data.py`/`test_cli_market_data.py` gained a
+  `_window_covering(day)` helper keyed to the same UTC date
+  `sync.py` passes. `test_research_server_ml_deployment.py`'s duplicate
+  copy of `FakeContractsSession` was removed in favor of importing the
+  shared one, as the orchestrator/API tests already did. The ticker
+  label stays `MESU6` (assertions reference it). Tests pinned to
+  2026-07-20 backfills were left alone because their window covers their
+  own query date.
+- **Current status:** Resolved — all 43 tests in the six affected files pass.
+
+### ISSUE-049 — `scripts\start.ps1` fails with an opaque 30s timeout when `FUTURES_BOT_DATABASE_URL` points at an unreachable database (OPEN; Team Mode shelved 2026-10-27)
+
+- **Severity:** Medium — blocks the official boot path, and the message
+  ("Backend did not respond within 30 seconds") doesn't name the cause.
+- **Description:** Found 2026-10-27. `FUTURES_BOT_DATABASE_URL` was still
+  persisted at Windows **User** scope from the 2026-07 Team Mode work
+  (`TEAM_DEPLOYMENT.md` recommends persisting it), but Docker Desktop and
+  the `timescaledb` container were not running. The backend died in
+  `backend.err.log` with `psycopg.errors.ConnectionTimeout`; `start.ps1`
+  only reports the generic timeout. Nothing in the single-developer boot
+  path checks whether a Team Mode URL is set.
+- **Files involved:** `scripts/start.ps1`, `src/futures_bot/db/engine.py`.
+- **Workaround applied:** Team Mode shelved by user decision — the User-scope
+  variable was removed (its value was confirmed identical to the documented
+  dev default in `TEAM_DEPLOYMENT.md`, so nothing was lost; restore with that
+  file's `SetEnvironmentVariable(..., 'User')` line). Plain `start.ps1` now
+  boots local SQLite again.
+- **Possible fix (not attempted):** have `start.ps1` warn when
+  `FUTURES_BOT_DATABASE_URL` is set, and/or surface the last lines of
+  `backend.err.log` in its failure message.
+
+### ISSUE-050 — Saved ML models were pickled with scikit-learn 1.7.2; the venv now has 1.9.0 (OPEN, not investigated)
+
+- **Severity:** Medium — scikit-learn's own `InconsistentVersionWarning`
+  says unpickling across versions "might lead to breaking code or invalid
+  results"; any deployed ML filter's predictions are suspect until checked.
+- **Description:** Seen in `backend.err.log` on 2026-10-27 boot when a
+  `LogisticRegression` model was loaded. `pip install -e .` upgraded
+  scikit-learn because `pyproject.toml` doesn't pin it.
+- **Possible fix (not attempted):** retrain/re-save models under the
+  current version, or pin scikit-learn and record the training version
+  alongside each saved model.
+
+### ISSUE-051 — Paper trader logged a roll from `MESZ6` back to the expired `MESU6` (OPEN, not investigated by user decision)
+
+- **Severity:** Unknown — possibly High (paper trading the wrong contract).
+- **Description:** Observed once in `backend.err.log` on 2026-10-27 boot:
+  `research_server: MES rolled from MESZ6 to MESU6`. On 2026-10-27 December
+  (`Z6`) should be the front month and September (`U6`) expired on
+  2026-09-18, so a backward roll looks wrong. Possibly related to the
+  stale-contract data behind ISSUE-048 but not verified. The user chose to
+  defer this on 2026-10-27; recorded so it isn't lost.

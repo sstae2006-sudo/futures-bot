@@ -10,7 +10,7 @@ one directly, no monkeypatching needed for that half).
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -126,19 +126,27 @@ class FakeContractsResponse:
 class FakeContractsSession:
     """Serves the Contracts API only -- always answers with a single
     front-month MESU6, regardless of query date, which is all these tests
-    need."""
+    need.
+
+    "MESU6" is only a fixed label; the trading window is computed relative
+    to the real current date at call time, because
+    `MassiveContractsClient.active_contract` rejects any contract whose
+    window doesn't cover "today". A hardcoded window expired on 2026-09-18
+    and broke every test using this fake (KNOWN_ISSUES.md ISSUE-048)."""
 
     def __init__(self):
         self.calls: list[dict] = []
 
     def get(self, url, params=None, timeout=None):
         self.calls.append({"url": url, "params": dict(params or {})})
+        today = date.today()
         return FakeContractsResponse({
             "status": "OK",
             "results": [{
-                "active": True, "date": (params or {}).get("date", "2026-07-22"), "name": "MESU6 Future",
+                "active": True, "date": (params or {}).get("date", today.isoformat()), "name": "MESU6 Future",
                 "product_code": "MES", "ticker": "MESU6", "type": "single",
-                "first_trade_date": "2025-06-20", "last_trade_date": "2026-09-18",
+                "first_trade_date": (today - timedelta(days=180)).isoformat(),
+                "last_trade_date": (today + timedelta(days=180)).isoformat(),
             }],
         })
 

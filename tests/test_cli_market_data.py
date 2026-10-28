@@ -6,7 +6,7 @@ monkeypatched `requests.Session.get` (never a real network call).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import requests
@@ -35,6 +35,14 @@ def _single(ticker, first_trade_date, last_trade_date, query_date):
         "active": True, "date": query_date, "name": ticker, "product_code": "MES",
         "ticker": ticker, "type": "single", "first_trade_date": first_trade_date, "last_trade_date": last_trade_date,
     }
+
+
+def _window_covering(day: str) -> tuple[str, str]:
+    """A (first_trade_date, last_trade_date) pair around ``day``, for
+    tests that sync "as of today" -- a hardcoded window expires with the
+    calendar and silently stops covering today (KNOWN_ISSUES.md ISSUE-048)."""
+    anchor = date.fromisoformat(day)
+    return (anchor - timedelta(days=180)).isoformat(), (anchor + timedelta(days=180)).isoformat()
 
 
 @pytest.fixture
@@ -127,7 +135,7 @@ class TestEndToEnd:
         monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
         today = datetime.now(timezone.utc).date().isoformat()
         patched_requests["contracts_by_date"][today] = {
-            "status": "OK", "results": [_single("MESU6", "2025-06-20", "2026-09-18", today)],
+            "status": "OK", "results": [_single("MESU6", *_window_covering(today), today)],
         }
 
         exit_code = main(["--sync-data", "--product", "MES", "--resolution", "5min"])

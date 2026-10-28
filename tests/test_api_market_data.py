@@ -7,7 +7,7 @@ scheduler logic directly.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import requests
@@ -35,6 +35,14 @@ def _single(ticker, first_trade_date, last_trade_date, query_date):
         "active": True, "date": query_date, "name": ticker, "product_code": "MES",
         "ticker": ticker, "type": "single", "first_trade_date": first_trade_date, "last_trade_date": last_trade_date,
     }
+
+
+def _window_covering(day: str) -> tuple[str, str]:
+    """A (first_trade_date, last_trade_date) pair around ``day``, for
+    tests that sync "as of today" -- a hardcoded window expires with the
+    calendar and silently stops covering today (KNOWN_ISSUES.md ISSUE-048)."""
+    anchor = date.fromisoformat(day)
+    return (anchor - timedelta(days=180)).isoformat(), (anchor + timedelta(days=180)).isoformat()
 
 
 @pytest.fixture
@@ -77,7 +85,7 @@ class TestOverview:
     def test_overview_after_a_sync(self, client, patched_requests):
         today = datetime.now(timezone.utc).date().isoformat()
         patched_requests["contracts_by_date"][today] = {
-            "status": "OK", "results": [_single("MESU6", "2025-06-20", "2026-09-18", today)],
+            "status": "OK", "results": [_single("MESU6", *_window_covering(today), today)],
         }
         patched_requests["aggs_by_ticker"]["MESU6"] = [_agg_bar(datetime.now(timezone.utc))]
 
@@ -135,7 +143,7 @@ class TestSyncAndBackfill:
     def test_list_sync_runs(self, client, patched_requests):
         today = datetime.now(timezone.utc).date().isoformat()
         patched_requests["contracts_by_date"][today] = {
-            "status": "OK", "results": [_single("MESU6", "2025-06-20", "2026-09-18", today)],
+            "status": "OK", "results": [_single("MESU6", *_window_covering(today), today)],
         }
         client.post("/api/market-data/sync", json={"product_code": "MES", "resolution": "5min"})
 

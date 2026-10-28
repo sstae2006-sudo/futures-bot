@@ -17,6 +17,7 @@ from futures_bot.config import load_settings
 from futures_bot.contracts import CME_TZ
 from futures_bot.research.trade_store import TradeStore, default_db_path
 from futures_bot.research_server.paper_trader import AutonomousPaperTrader
+from tests.test_research_server_paper_trader import FakeContractsSession
 
 CONFIG_YAML = """
 contract: MES
@@ -86,29 +87,6 @@ class FakeMassiveBarFeed:
 
     def poll_new_bars(self):
         return []
-
-
-class FakeContractsResponse:
-    def __init__(self, payload):
-        self._payload = payload
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return self._payload
-
-
-class FakeContractsSession:
-    def get(self, url, params=None, timeout=None):
-        return FakeContractsResponse({
-            "status": "OK",
-            "results": [{
-                "active": True, "date": (params or {}).get("date", "2026-07-22"), "name": "MESU6 Future",
-                "product_code": "MES", "ticker": "MESU6", "type": "single",
-                "first_trade_date": "2025-06-20", "last_trade_date": "2026-09-18",
-            }],
-        })
 
 
 @pytest.fixture(autouse=True)
