@@ -190,6 +190,14 @@ See ROADMAP.md.
 
 ## Last Completed Work
 
+2026-10-28 (latest): **Desktop-app launcher.** `scripts\install-shortcut.ps1`
+creates a Desktop/Start Menu "futures-bot" icon that runs
+`scripts\launch-app.ps1`: one backend process on :8000 serving the built
+dashboard, shown in an Edge `--app` window, backend stopped when the window
+closes. Verified end-to-end on this machine. Windows only for now; a
+Mac/Linux equivalent would need a `.sh`/`.command` launcher (not built).
+**Recommended next task:** resume Phase 4.
+
 2026-10-28 (later): **Design audit implemented.** The user picked options
 for all 13 audit findings and everything is built (see CHANGELOG for the
 per-finding list). Frontend 166 tests pass, `tsc -b` clean, checked in

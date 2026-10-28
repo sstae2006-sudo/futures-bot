@@ -292,6 +292,18 @@ debugging during development:
   already works around this by calling `vite.cmd` directly; do the
   same manually rather than `npm run dev` until that's fixed.
 
+**Desktop-app mode (2026-10-28, for *using* the app, not developing
+it):** `scripts\install-shortcut.ps1` (run once) puts a "futures-bot" icon
+on the Desktop and in the Start Menu. It runs `scripts\launch-app.ps1`
+with a hidden console: rebuilds `frontend/dist` only when the frontend
+source is newer, starts the backend hidden (or reuses one already serving
+the dashboard), opens an Edge/Chrome `--app` window on a dedicated profile
+in `.startup\app-profile`, and stops the backend when that window closes
+(only if it started it). Single process on :8000: the backend serves the
+built dashboard itself (`api/app.py::_maybe_mount_frontend`). Failures show
+a message box and land in `.startup\app-launcher.log`. See
+`BOOT_CHECKLIST.md` section 4a.
+
 No guessing beyond this — these are the only supported entry points.
 
 ## 10. Definition of Done

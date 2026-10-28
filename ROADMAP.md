@@ -18,8 +18,11 @@ is **shelved** by user decision — the code and `TEAM_DEPLOYMENT.md` stay
 intact, but no Team Mode work is a current priority. ISSUE-048
 (date-bound test fixtures) was fixed 2026-10-28, and the frontend got a
 visual redesign the same day (light/dark themes, simplified nav), and the
-design-audit polish pass and the ISSUE-052 verdict-wording fix landed
-the same day too. Next up: Phase 4 below.
+design-audit polish pass, the ISSUE-052 verdict-wording fix and a
+Windows desktop-app launcher (`scripts\launch-app.ps1`) landed the same
+day too. Next up: Phase 4 below. Later, optional: a Mac/Linux launcher, and
+a packaged `.exe` (pywebview + PyInstaller) only if a teammate needs to run
+the app without a Python setup.
 
 **Critical**
 - Importer reliability (turtle-data corruption in KNOWN_ISSUES.md

@@ -58,6 +58,34 @@ again).
 Expect: the green summary block, ending "futures-bot is running" and
 both URLs.
 
+## 4a. Desktop-app mode (using the app, not developing it)
+
+```powershell
+scripts\install-shortcut.ps1          # once per machine; -Remove undoes it
+```
+Then double-click **futures-bot** on the Desktop or in the Start Menu. The
+shortcut runs `scripts\launch-app.ps1` with a hidden console, which:
+
+1. Verifies the repo and venv.
+2. Rebuilds `frontend\dist` only when anything under `frontend\src`,
+   `frontend\public`, `index.html`, `package.json` or `vite.config.ts` is
+   newer than `dist\index.html` (a stale build silently serves an old UI).
+3. Reuses a backend already serving the dashboard on :8000 (for example one
+   `start.ps1` started); otherwise frees :8000 and starts one hidden, with
+   `FUTURES_BOT_FRONTEND_DIST` set to the absolute `frontend\dist` path.
+4. Opens an Edge (fallback: Chrome) `--app` window on a dedicated profile,
+   `.startup\app-profile`. That profile has its own browser storage, so the
+   first launch asks you to pick your account once (Welcome page).
+5. When the window closes, stops the backend, but only if step 3 started it.
+
+Expect: the app window titled "futures-bot Research" within ~10 seconds
+(longer when a rebuild is needed). Any failure shows a message box with
+what failed and how to fix it, and is logged to `.startup\app-launcher.log`
+(backend logs: `.startup\app-backend.{out,err}.log`; build log:
+`.startup\app-build.log`). Unlike `start.ps1`, the launcher does not run
+`pip install`/`npm install` on every launch (startup speed); run
+`start.ps1` once after pulling new dependencies. Windows only.
+
 ## 5. Manual startup (fallback — isolated backend-only/frontend-only debugging)
 
 ```bash

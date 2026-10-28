@@ -4,6 +4,31 @@ Every session appends an entry here. Don't edit past entries except to
 mark something resolved with a date/commit — this is a history, not a
 scratchpad.
 
+## 2026-10-28 — Desktop-app launcher (Windows)
+
+- **Added:** `scripts/launch-app.ps1` opens futures-bot in its own window:
+  rebuilds `frontend/dist` only when stale, starts the backend hidden (or
+  reuses one already serving the dashboard on :8000), opens an Edge/Chrome
+  `--app` window on a dedicated profile (`.startup/app-profile`), and stops
+  the backend when the window closes if it started it. Overrides
+  `Write-Failure` locally so failures show a message box and go to
+  `.startup/app-launcher.log` (the console is hidden).
+- **Added:** `scripts/install-shortcut.ps1` (`-Remove` to undo) creates
+  Desktop + Start Menu shortcuts and draws the icon (brass diamond on the
+  sidebar colour) into `.startup/futures-bot.ico` with System.Drawing, so
+  no binary asset is committed.
+- **Docs:** `CLAUDE.md` section 9 and `BOOT_CHECKLIST.md` section 4a.
+- **Verified for real** on this machine: dev servers stopped, launcher
+  started its own backend (dashboard served on :8000 in ~3s), opened the
+  Edge app window, and on window exit logged "app window closed", stopped
+  the backend (port 8000 then refused connections) and exited. Icon file
+  parsed as a valid 4-entry ICO (16/32/48/256, PNG entries). Reuse path
+  also verified: with `start.ps1`'s backend running, the launcher logged
+  "reusing existing backend", opened the window at once, and left the
+  backend running after the window closed. Not tested: the message-box
+  failure path.
+- No application code, API, schema or frontend changes.
+
 ## 2026-10-28 — Design audit implementation (frontend, visual + one small behavior change)
 
 The user reviewed a 13-finding design audit (published as a private claude.ai
